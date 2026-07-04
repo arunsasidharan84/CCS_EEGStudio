@@ -1,0 +1,38 @@
+{
+  "job_type": "preprocess",
+  "input": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/sampleData/AKNLTP014_REMED1_RCB.set",
+  "output": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/.ccs_eeg_app_build/tmp_exact_test/exact_clean.ccseeg.json",
+  "format": "set",
+  "sample_rate": 1000.0,
+  "labels": [],
+  "sample_count": 118000,
+  "epoch_seconds": 1,
+  "selected_channels": [
+    "Fz",
+    "F3",
+    "F4",
+    "C3"
+  ],
+  "accepted_intervals": [
+    [
+      0,
+      3
+    ]
+  ],
+  "rejected_intervals": [],
+  "options": {},
+  "preprocessing": {
+    "backend": "pythonExact",
+    "downsample": true,
+    "downsample_freq": 250,
+    "filter": true,
+    "low_hz": 0.5,
+    "high_hz": 40,
+    "notch_hz": 50,
+    "badchannel": false,
+    "gedai": false,
+    "interpolate": false,
+    "gedai_epoch_seconds": 1,
+    "gedai_threshold": "auto"
+  }
+}

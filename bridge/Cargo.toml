@@ -1,0 +1,22 @@
+[package]
+name = "ccs_eeg_engine"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "ccs-eeg-engine"
+path = "src/main.rs"
+
+[dependencies]
+rayon = "1.10"
+rustfft = "6.2"
+nalgebra = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+matfile = "0.5.0"
+flate2 = "1.1.9"
+rand = "0.8.5"
+
+[dev-dependencies]
+approx = "0.5"

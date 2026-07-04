@@ -1,0 +1,14 @@
+time,filename,steps,duration,errorlogs,n_badchans,badchans,ncompremoved,signalslost,asrdone
+2026-06-23 09:56:23.318161,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.8772573471069336,,1,F3,0,0.0,0.0
+2026-06-23 09:57:02.301712,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.696857213973999,,1,F3,0,0.0,0.0
+2026-06-23 09:57:54.684984,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.7358880043029785,,1,F3,0,0.0,0.0
+2026-06-23 09:59:03.354300,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.7871181964874268,,1,F3,0,0.0,0.0
+2026-06-23 10:07:10.655463,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.845095157623291,,1,F3,0,0.0,0.0
+2026-06-23 22:32:24.704958,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",1.0085861682891846,,1,F3,0,0.0,0.0
+2026-06-23 23:05:46.466310,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.8349299430847168,,1,F3,0,0.0,0.0
+2026-06-23 23:13:34.878140,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.8488588333129883,,1,F3,0,0.0,0.0
+2026-06-24 06:45:00.857921,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.8292539119720459,,1,F3,0,0.0,0.0
+2026-06-24 06:46:46.824463,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.715338945388794,,1,F3,0,0.0,0.0
+2026-06-24 06:48:13.491995,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.6896510124206543,,1,F3,0,0.0,0.0
+2026-06-24 06:56:15.833927,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.7548460960388184,,1,F3,0,0.0,0.0
+2026-06-24 07:00:39.266439,AKNLTP014_REMED1_RCB.fdt,"downsample,filter,badchannel,gedai,interpolate,save",0.7249243259429932,,1,F3,0,0.0,0.0

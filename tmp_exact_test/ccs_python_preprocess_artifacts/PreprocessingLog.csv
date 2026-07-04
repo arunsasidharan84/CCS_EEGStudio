@@ -1,0 +1,2 @@
+time,filename,steps,duration,errorlogs,n_badchans,badchans,ncompremoved,signalslost,asrdone
+2026-06-23 11:28:49.409081,AKNLTP014_REMED1_RCB.set,"downsample,filter",0.006543874740600586,,0,,0,0.0,0.0

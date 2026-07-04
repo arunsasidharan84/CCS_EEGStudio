@@ -1,0 +1,10 @@
+time,filename,steps,duration,errorlogs,n_badchans,badchans,ncompremoved,signalslost,asrdone
+2026-06-24 22:17:25.547167,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.792139053344727,,7,"AF3,PO4,F4,Fz,F3,T7,AF4",0,0.0,0.0
+2026-06-24 22:47:56.746148,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",10.889044046401978,,7,"PO4,Fz,AF4,AF3,F3,T7,F4",0,0.0,0.0
+2026-06-24 23:24:31.385109,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.212485074996948,,7,"F4,F3,AF3,PO4,Fz,T7,AF4",0,0.0,0.0
+2026-06-24 23:28:48.293818,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.629903793334961,,7,"AF3,F4,Fz,F3,AF4,PO4,T7",0,0.0,0.0
+2026-06-24 23:29:45.970630,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.515505075454712,,7,"F4,T7,F3,Fz,AF3,AF4,PO4",0,0.0,0.0
+2026-06-24 23:35:24.169275,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.531123876571655,,7,"AF3,T7,F4,F3,PO4,AF4,Fz",0,0.0,0.0
+2026-06-24 23:38:01.401200,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.51678991317749,,7,"Fz,AF3,T7,PO4,F4,F3,AF4",0,0.0,0.0
+2026-06-26 22:19:40.893657,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.649186134338379,,7,"F4,F3,AF3,AF4,Fz,T7,PO4",0,0.0,0.0
+2026-06-26 22:29:50.601495,EEG_MeditationEyesClosed.edf,"downsample,filter,badchannel,gedai,interpolate,save",7.15323805809021,,7,"T7,F4,Fz,AF4,AF3,PO4,F3",0,0.0,0.0

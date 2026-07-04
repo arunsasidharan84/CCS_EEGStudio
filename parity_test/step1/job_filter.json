@@ -1,0 +1,31 @@
+{
+  "job_type": "preprocess",
+  "input": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/sampleData/EEG_MeditationEyesClosed.edf",
+  "output": "parity_test/step1/rust_filter.json",
+  "format": "edf",
+  "epoch_seconds": 1.0,
+  "options": {
+    "mode": "full",
+    "start_seconds": 0.0,
+    "end_seconds": 0.0,
+    "bin_seconds": 0.0,
+    "psd": false,
+    "fooof": false,
+    "irasa": false,
+    "nonlinear": false,
+    "acw": false,
+    "connectivity": false,
+    "remove_non_eeg": true
+  },
+  "preprocessing": {
+    "downsample": true,
+    "downsample_freq": 250.0,
+    "filter": true,
+    "low_hz": 0.5,
+    "high_hz": 40.0,
+    "notch_hz": 50.0,
+    "badchannel": false,
+    "gedai": false,
+    "interpolate": false
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "input": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/sampleData/AKNLTP014_REMED1_RCB.set",
+  "output": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/.ccs_eeg_app_build/reports/aknl_parity/rust_preprocessed.ccseeg.json",
+  "sample_rate": 250.0,
+  "channels": 10,
+  "samples": 1000,
+  "bad_channels": [
+    "F3"
+  ],
+  "sensai_score": 14.623849437572837,
+  "thresholds": [
+    10.0,
+    0.0
+  ],
+  "warnings": []
+}

@@ -1,0 +1,2 @@
+time,filename,steps,duration,errorlogs,n_badchans,badchans,ncompremoved,signalslost,asrdone
+2026-06-26 22:22:35.644465,EEG_MeditationEyesClosed.edf,"downsample,filter",0.05625605583190918,,0,,0,0.0,0.0

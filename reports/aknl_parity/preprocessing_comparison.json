@@ -1,0 +1,21 @@
+{
+  "python_rate": 250.0,
+  "rust_rate": 250.0,
+  "channels_compared": [
+    "Fz",
+    "F3",
+    "F4",
+    "C3",
+    "C4",
+    "P3",
+    "P4",
+    "Pz",
+    "O1",
+    "O2"
+  ],
+  "samples_compared": 1000,
+  "python_errors": [],
+  "rms_uv": 4.338286166863307,
+  "median_abs_uv": 2.8171044390603943,
+  "max_abs_uv": 22.123663503686796
+}

@@ -1,0 +1,53 @@
+{
+  "job_type": "extract",
+  "input": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/sampleData/AKNLTP014_REMED1_RCB.set",
+  "output": "/Users/arunsasidharan/EEGdata/EEGAnalysisCode/.ccs_eeg_app_build/tmp_exact_test/exact_conn_gc.csv",
+  "format": "set",
+  "sample_rate": 1000.0,
+  "labels": [],
+  "sample_count": 118000,
+  "epoch_seconds": 15,
+  "selected_channels": [
+    "Fz",
+    "F3",
+    "F4",
+    "C3",
+    "C4",
+    "P3",
+    "P4",
+    "Pz",
+    "O1",
+    "O2"
+  ],
+  "accepted_intervals": [
+    [
+      0,
+      15
+    ]
+  ],
+  "rejected_intervals": [],
+  "options": {
+    "backend": "pythonExact",
+    "mode": "full",
+    "start_seconds": 0,
+    "end_seconds": 15,
+    "bin_seconds": 60,
+    "psd": false,
+    "fooof": false,
+    "irasa": false,
+    "nonlinear": false,
+    "acw": false,
+    "connectivity": true,
+    "mic": false,
+    "mim": false,
+    "gc": true,
+    "gc_tr": true,
+    "coh": false,
+    "plv": false,
+    "ciplv": false,
+    "pli": false,
+    "wpli": false,
+    "remove_non_eeg": true,
+    "exclusions": []
+  }
+}
