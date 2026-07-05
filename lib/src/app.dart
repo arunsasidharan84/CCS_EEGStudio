@@ -559,20 +559,55 @@ class _FeatureHomeState extends State<FeatureHome> {
       // PDF report — separate try so a write failure doesn't shadow the extraction success
       try {
         final reportPath = path.replaceAll(RegExp(r'\.csv$', caseSensitive: false), '_report.pdf');
+
+        // Build ReportContext from current UI state so the PDF has full metadata
+        final rec = kept.isNotEmpty ? kept.first : null;
+        final rawRec = _rawRecording;
+        final ctx = ReportContext(
+          fileName: rec != null ? rec.path.split(Platform.pathSeparator).last : path.split(Platform.pathSeparator).last,
+          channelCount: rec?.labels.length ?? 0,
+          epochCount: rec?.epochCount ?? 0,
+          durationSeconds: rec?.durationSeconds ?? 0,
+          sampleRate: rec?.sampleRate ?? 0,
+          channelLabels: rec?.labels ?? [],
+          rawPreview:     rawRec?.preview,
+          cleanedPreview: rec?.preview,
+          sourceLocalized: rec != null && rec.labels.any((l) => l.contains('lh_') || l.contains('rh_')),
+          sourceRoiLabels: rec != null ? rec.labels.where((l) => l.contains('_')).toList() : [],
+          prepOptions: PreprocessingOptions(
+            downsample: _preprocessDownsample,
+            downsampleFreq: double.tryParse(_preDownsample.text) ?? 250,
+            filter: _preprocessFilter,
+            lowHz: double.tryParse(_preLow.text) ?? 0.5,
+            highHz: double.tryParse(_preHigh.text) ?? 40,
+            notchHz: double.tryParse(_preNotch.text) ?? 50,
+            badchannel: _preprocessBadChannels,
+            gedai: _preprocessGedai,
+            interpolate: _preprocessInterpolate,
+            gedaiEpochSeconds: double.tryParse(_epoch.text) ?? 1,
+            gedaiThreshold: 'auto',
+            sourceLocalization: false,
+            epochBeforeGedai: _preprocessEpochBeforeGedai,
+          ),
+          extractOptions: options,
+        );
+
+        // We need to re-read the row count from the written CSV
+        // (rows variable is not available here; ctx.epochCount is best estimate)
         await _service.writePdfReport(
           outputPath: reportPath,
           title: 'CCS EEG Feature Report',
           csvPath: path,
+          ctx: ctx,
           lines: [
             'Feature CSV: ${path.split('/').last}',
-            'Files: ${kept.length}',
-            'Features: PSD=$_psd  FOOOF=$_fooof  IRASA=$_irasa  Nonlinear=$_nonlinear  ACW=$_acw',
-            'Connectivity: MIC=$_mic  MIM=$_mim  GC=$_gc  COH=$_coh  PLV=$_plv  PLI=$_pli  wPLI=$_wpli',
+            'Files analysed: ${kept.length}',
+            'Epoch length: ${_epoch.text} s',
           ],
         );
         _log('✓ PDF report: $reportPath');
       } catch (e) {
-        _log('⚠ PDF report skipped (file permissions): use the CSV directly');
+        _log('⚠ PDF report skipped: $e');
       }
     } catch (e) {
       _log('✗ ERROR: $e');

@@ -1,0 +1,352 @@
+name: Build desktop apps
+
+# Push builds are intentionally opt-in because this workflow creates full
+# desktop installers and releases. Include "[build desktop]" in any pushed
+# commit message to run it from a branch push.
+#
+# Triggered by:
+#   - Any push to main/master with "[build desktop]" in a commit message
+#   - Any tag push matching v* (versioned release)
+#   - Manual workflow dispatch from the Actions tab
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Optional note for this manual desktop build
+        required: false
+        type: string
+
+# Cancel an in-progress run for the same ref when a new one is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Allow the release job to create and update GitHub Releases.
+permissions:
+  contents: write
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # macOS build job
+  # Runner: macos-15 (Apple Silicon + x86 universal)
+  # Output: CCSEEGStudio-macos.zip (ad-hoc signed .app bundle)
+  # ──────────────────────────────────────────────────────────────────────────
+  build-macos:
+    name: macOS
+    runs-on: macos-15
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(toJSON(github.event.commits), '[build desktop]')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # ── Rust: engine build ────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build Rust engine (macOS release binary)
+        run: cargo build --release
+        working-directory: bridge
+
+      # ── Flutter: setup + tests ────────────────────────────────────────────
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run Flutter unit tests
+        run: flutter test
+
+      # ── App bundle: package ───────────────────────────────────────────────
+      - name: Build macOS Flutter app
+        run: flutter build macos --release
+
+      - name: Copy Rust engine into macOS .app bundle
+        run: |
+          APP="build/macos/Build/Products/Release/ccs_eeg_app.app"
+          cp bridge/target/release/ccs-eeg-engine "$APP/Contents/MacOS/ccs-eeg-engine"
+          chmod +x "$APP/Contents/MacOS/ccs-eeg-engine"
+          test -x "$APP/Contents/MacOS/ccs-eeg-engine"
+
+      - name: Ad-hoc sign macOS app bundle
+        run: |
+          codesign --force --deep --sign - \
+            build/macos/Build/Products/Release/ccs_eeg_app.app
+
+      - name: Package macOS app as ZIP
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/macos/Build/Products/Release/ccs_eeg_app.app \
+            dist/CCSEEGStudio-macos.zip
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CCSEEGStudio-macos
+          path: dist/CCSEEGStudio-macos.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Windows build job
+  # Runner: windows-2022
+  # Output: CCSEEGStudio-Installer.exe (Inno Setup installer)
+  # ──────────────────────────────────────────────────────────────────────────
+  build-windows:
+    name: Windows
+    runs-on: windows-2022
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(toJSON(github.event.commits), '[build desktop]')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # ── Rust: engine build ────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build Rust engine (Windows release binary)
+        run: cargo build --release
+        working-directory: bridge
+
+      # ── Flutter: setup + tests ────────────────────────────────────────────
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run Flutter unit tests
+        run: flutter test
+
+      # ── App: build + package ──────────────────────────────────────────────
+      - name: Build Windows Flutter app
+        run: flutter build windows --release
+
+      - name: Copy Rust engine into Windows build output
+        shell: pwsh
+        run: |
+          $dest = "build\windows\x64\runner\Release"
+          Copy-Item bridge\target\release\ccs-eeg-engine.exe "$dest\ccs-eeg-engine.exe"
+          if (-not (Test-Path "$dest\ccs-eeg-engine.exe")) { exit 1 }
+
+      # Requires Inno Setup to be pre-installed on windows-2022 runner.
+      # windows-2022 includes Inno Setup in the default tool cache.
+      - name: Build Windows installer (Inno Setup)
+        run: iscc /F"CCSEEGStudio-Installer" windows\installer.iss
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CCSEEGStudio-Installer
+          path: dist\CCSEEGStudio-Installer.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Linux build job
+  # Runner: ubuntu-22.04
+  # Output: CCSEEGStudio-linux-amd64.deb + CCSEEGStudio-linux-x86_64.rpm
+  # RPM is smoke-tested in an AlmaLinux 9 Docker container.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-22.04
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(toJSON(github.event.commits), '[build desktop]')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libblkid-dev \
+            dpkg-dev rpm
+
+      # ── Rust: engine build ────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build Rust engine (Linux release binary)
+        run: cargo build --release
+        working-directory: bridge
+
+      # ── Flutter: setup + tests ────────────────────────────────────────────
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+
+      - name: Enable Linux desktop support
+        run: flutter config --enable-linux-desktop
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run Flutter unit tests
+        run: flutter test
+
+      # ── App: build + copy engine ──────────────────────────────────────────
+      - name: Build Linux Flutter app
+        run: flutter build linux --release
+
+      - name: Copy Rust engine into Linux bundle
+        run: |
+          BUNDLE="build/linux/x64/release/bundle"
+          cp bridge/target/release/ccs-eeg-engine "$BUNDLE/ccs-eeg-engine"
+          chmod +x "$BUNDLE/ccs-eeg-engine"
+          test -x "$BUNDLE/ccs-eeg-engine"
+
+      # ── Packaging: .deb ───────────────────────────────────────────────────
+      - name: Build Debian (.deb) installer
+        run: |
+          mkdir -p dist
+          bash scripts/package_linux_deb.sh \
+            build/linux/x64/release/bundle \
+            dist/CCSEEGStudio-linux-amd64.deb
+
+      # ── Packaging: .rpm ───────────────────────────────────────────────────
+      - name: Build RPM installer
+        run: |
+          bash scripts/package_linux_rpm.sh \
+            build/linux/x64/release/bundle \
+            dist/CCSEEGStudio-linux-x86_64.rpm
+
+      # ── Smoke test: AlmaLinux 9 Docker ───────────────────────────────────
+      - name: Validate RPM installer on AlmaLinux 9
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/dist:/packages:ro" \
+            almalinux:9 bash -lc '
+              dnf install -y /packages/CCSEEGStudio-linux-x86_64.rpm &&
+              test -x /usr/bin/ccseegstudio &&
+              test -f /usr/share/applications/ccseegstudio.desktop &&
+              ldd /usr/lib/ccseegstudio/ccs_eeg_app > /tmp/ldd.txt &&
+              ! grep -E "not found|version .* not found" /tmp/ldd.txt
+            '
+
+      - name: Upload Linux installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CCSEEGStudio-linux-installers
+          path: |
+            dist/CCSEEGStudio-linux-amd64.deb
+            dist/CCSEEGStudio-linux-x86_64.rpm
+          if-no-files-found: error
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Release job: aggregates all platform artifacts and creates/updates the
+  # GitHub Release.
+  #   - Branch push with [build desktop]  → updates rolling "latest" prerelease
+  #   - Tag push v*                        → creates permanent versioned release
+  # ──────────────────────────────────────────────────────────────────────────
+  release:
+    name: Release Assets
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      (startsWith(github.ref, 'refs/tags/v') || contains(toJSON(github.event.commits), '[build desktop]'))
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CCSEEGStudio-macos
+          path: dist
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CCSEEGStudio-Installer
+          path: dist
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: CCSEEGStudio-linux-installers
+          path: dist
+
+      # Determine whether this is a versioned tag release or a rolling latest.
+      - name: Generate Release tag and title
+        id: release_info
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${{ github.ref_name }}"     >> $GITHUB_OUTPUT
+            echo "title=Release ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "prerelease=false"               >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest"                     >> $GITHUB_OUTPUT
+            echo "title=Latest Development Build" >> $GITHUB_OUTPUT
+            echo "prerelease=true"                >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.title }}
+          prerelease: ${{ steps.release_info.outputs.prerelease == 'true' }}
+          files: |
+            dist/CCSEEGStudio-macos.zip
+            dist/CCSEEGStudio-Installer.exe
+            dist/CCSEEGStudio-linux-amd64.deb
+            dist/CCSEEGStudio-linux-x86_64.rpm
+          draft: false
+          make_latest: ${{ steps.release_info.outputs.tag != 'latest' && 'true' || 'false' }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
