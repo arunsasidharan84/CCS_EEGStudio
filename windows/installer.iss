@@ -1,5 +1,5 @@
 ; CCSEEGStudio-installer.iss
-; Inno Setup script for CCS EEG Feature Studio — Windows x64 installer.
+; Inno Setup script for CCS EEG Studio — Windows x64 installer.
 ;
 ; Usage (from the repository root):
 ;   iscc /F"CCSEEGStudio-Installer" windows\installer.iss
@@ -8,7 +8,7 @@
 ; ccs-eeg-engine.exe Rust binary into a single self-contained installer.
 ; Output is placed in dist\CCSEEGStudio-Installer.exe.
 
-#define AppName      "CCS EEG Feature Studio"
+#define AppName      "CCS EEG Studio"
 #define AppExeName   "ccs_eeg_app.exe"
 #define AppPublisher "Centre for Consciousness Studies, NIMHANS"
 #define AppURL       "https://github.com/arunsasidharan84/CCS_EEGApp"

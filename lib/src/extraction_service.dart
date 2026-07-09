@@ -407,7 +407,7 @@ class ExtractionService {
     p.rect(0, 672, 612, 120, fill: _Rgb(0.055, 0.11, 0.25));
     p.rect(0, 668, 612, 4, fill: _Rgb(0.23, 0.51, 0.97));
 
-    p.text('CCS EEG Feature Studio', x: 36, y: 748, size: 20, bold: true, rgb: _Rgb.white);
+    p.text('CCS EEG Studio', x: 36, y: 748, size: 20, bold: true, rgb: _Rgb.white);
     p.text('Quantitative EEG Analysis Report', x: 36, y: 726, size: 12, rgb: _Rgb(0.7, 0.82, 1.0));
     final ts = DateTime.now().toLocal().toString().substring(0, 19);
     p.text(ts, x: 36, y: 710, size: 9, rgb: _Rgb(0.55, 0.68, 0.88));
@@ -1321,7 +1321,7 @@ class _PdfRenderer {
       // Footer
       final footer = StringBuffer();
       footer.write('0.16 0.22 0.35 RG 0.5 w 36 38 m 576 38 l S\n');
-      _addTextToBuffer(footer, 'CCS EEG Feature Studio — Quantitative Analysis Report', 36, 24, 7.5, false, _Rgb(0.45, 0.55, 0.65));
+      _addTextToBuffer(footer, 'CCS EEG Studio — Quantitative Analysis Report', 36, 24, 7.5, false, _Rgb(0.45, 0.55, 0.65));
       _addTextToBuffer(footer, 'Page ${pi + 1} of $totalPages', 520, 24, 7.5, true, _Rgb(0.35, 0.50, 0.80));
 
       final streamStr = pageContent.content + footer.toString();

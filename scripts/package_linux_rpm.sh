@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package_linux_rpm.sh — Build an RPM installer for CCS EEG Feature Studio.
+# package_linux_rpm.sh — Build an RPM installer for CCS EEG Studio.
 #                        Targets RHEL 9, AlmaLinux 9, Rocky Linux 9.
 #
 # Usage:
@@ -37,7 +37,7 @@ version="$(awk '/^version:/ {print $2; exit}' "$repo_root/pubspec.yaml")"
 version="${version%%+*}"  # strip build metadata (e.g. "0.1.0+1" → "0.1.0")
 
 package_name="ccseegstudio"
-display_name="CCS EEG Feature Studio"
+display_name="CCS EEG Studio"
 description="EEG feature extraction and connectivity analysis desktop application"
 
 # ── Build RPM staging tree ─────────────────────────────────────────────────
@@ -93,7 +93,7 @@ Requires:       gtk3, glibc, libstdc++, xz-libs
 AutoReqProv:    no
 
 %description
-CCS EEG Feature Studio is a desktop application for epoch-wise EEG
+CCS EEG Studio is a desktop application for epoch-wise EEG
 feature extraction and functional connectivity analysis, implementing
 the CCS pipeline with a native Rust computation engine.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_macos.sh — Local macOS release build for CCS EEG Feature Studio.
+# build_macos.sh — Local macOS release build for CCS EEG Studio.
 #
 # Run from the repository root (or any directory; the script is self-relocating):
 #   ./scripts/build_macos.sh

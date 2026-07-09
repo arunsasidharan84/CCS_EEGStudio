@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package_linux_deb.sh — Build a Debian/Ubuntu .deb installer for CCS EEG Feature Studio.
+# package_linux_deb.sh — Build a Debian/Ubuntu .deb installer for CCS EEG Studio.
 #
 # Usage:
 #   bash scripts/package_linux_deb.sh <flutter-bundle-dir> <output.deb>
@@ -36,7 +36,7 @@ version="$(awk '/^version:/ {print $2; exit}' "$repo_root/pubspec.yaml")"
 version="${version%%+*}"  # strip build metadata (e.g. "0.1.0+1" → "0.1.0")
 
 package_name="ccseegstudio"
-display_name="CCS EEG Feature Studio"
+display_name="CCS EEG Studio"
 description="EEG feature extraction and connectivity analysis desktop application"
 
 # ── Build staging directory ────────────────────────────────────────────────
@@ -87,7 +87,7 @@ Depends: libgtk-3-0, libblkid1, liblzma5
 Maintainer: CCS NIMHANS <noreply@github.com>
 Homepage: https://github.com/arunsasidharan84/CCS_EEGApp
 Description: $description
- CCS EEG Feature Studio is a desktop application for epoch-wise EEG
+ CCS EEG Studio is a desktop application for epoch-wise EEG
  feature extraction and functional connectivity analysis, implementing
  the CCS EEG pipeline with native Rust speed.
 EOF

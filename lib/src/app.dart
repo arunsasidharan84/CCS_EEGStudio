@@ -23,7 +23,7 @@ class CcsEegApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
-    title: 'CCS EEG Feature Studio',
+    title: 'CCS EEG Studio',
     theme: ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: _accentBlue,
@@ -74,13 +74,38 @@ class _FeatureHomeState extends State<FeatureHome> {
   final _preHigh = TextEditingController(text: '40');
   final _preNotch = TextEditingController(text: '50');
 
-  // State
+  // ── Pipeline file state ─────────────────────────────────────────────────
+  // Each step tracks its own input/output independently so the user can load
+  // a preprocessed or source file and start from any stage in the pipeline.
+
+  /// Step 1 — raw EEG recordings loaded by the user.
   List<EegRecording> _recordings = [];
-  EegRecording? _rawRecording;  // original before preprocessing
+
+  /// Step 1 output — set after a successful preprocess run (also kept in _recordings[0]).
+  EegRecording? _preprocessedRecording;
+
+  /// Step 2 input — if the user loads a preprocessed file explicitly for Step 2
+  /// (bypassing Step 1).  null means "use _preprocessedRecording".
+  EegRecording? _step2Input;
+
+  /// Step 2 output — set after a successful source localisation run.
+  EegRecording? _sourceRecording;
+
+  /// Step 3 input — if the user loads a file explicitly for extraction
+  /// (bypassing Steps 1 & 2).  null means auto-resolved from pipeline.
+  EegRecording? _step3Input;
+
+  /// Resolved extraction input: step3 override > source > preprocessed > raw[0].
+  EegRecording? get _resolvedExtractionInput =>
+      _step3Input ?? _sourceRecording ?? _step2Input ?? _preprocessedRecording ?? _recordings.firstOrNull;
+
+  /// Raw recording kept for the viewer's raw/cleaned toggle.
+  EegRecording? _rawRecording;
+
   ViewerSelection _selection = const ViewerSelection.empty();
   DurationMode _mode = DurationMode.full;
 
-  // Preprocessing flags
+  // ── Preprocessing flags ──────────────────────────────────────────────────
   bool _preprocessDownsample = true;
   bool _preprocessFilter = true;
   bool _preprocessBadChannels = true;
@@ -88,7 +113,7 @@ class _FeatureHomeState extends State<FeatureHome> {
   bool _preprocessInterpolate = true;
   bool _preprocessEpochBeforeGedai = true;
 
-  // Feature flags
+  // ── Feature flags ────────────────────────────────────────────────────────
   bool _psd = true, _fooof = true, _irasa = true, _nonlinear = true, _acw = true;
   bool _mic = true, _mim = false, _gc = false, _gcTr = false;
   bool _coh = true, _plv = false, _ciplv = false, _pli = false, _wpli = false;
@@ -97,12 +122,15 @@ class _FeatureHomeState extends State<FeatureHome> {
   bool _running = false;
   double _progress = 0;
 
-  // Sidebar accordion state
-  bool _prepExpanded = true;
-  bool _sourceExpanded = true;
-  bool _featExpanded = true;
+  // ── Step panel accordion state ───────────────────────────────────────────
+  bool _step1Expanded = true;
+  bool _step1OptsExpanded = false; // preprocessing options sub-panel
+  bool _step2Expanded = false;
+  bool _step3Expanded = true;
+  bool _step3FeatExpanded = true;
+  bool _step3OtherExpanded = false;
 
-  // Log panel
+  // ── Log panel ────────────────────────────────────────────────────────────
   bool _logVisible = false;
   final List<String> _logs = [];
 
@@ -126,6 +154,90 @@ class _FeatureHomeState extends State<FeatureHome> {
 
   // ── File loading ──────────────────────────────────────────────────────────
 
+  /// Step 1 — Load raw EEG files (EDF, SET, FIF, VHDR).
+  Future<void> _loadRaw() async {
+    final pick = await FilePicker.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: ['edf', 'set', 'fif', 'vhdr'],
+    );
+    if (pick == null) return;
+    final loaded = <EegRecording>[];
+    for (final item in pick.files) {
+      if (item.path == null) continue;
+      try {
+        _log('Loading ${item.name}…');
+        loaded.add(await _loader.load(item.path!));
+        _log('✓ Loaded ${item.name}');
+      } catch (e) {
+        _log('✗ ERROR ${item.name}: $e');
+      }
+    }
+    if (loaded.isNotEmpty) {
+      setState(() {
+        _recordings = loaded;
+        _preprocessedRecording = null;
+        _rawRecording = null;
+        _selection = const ViewerSelection.empty();
+      });
+    }
+  }
+
+  /// Step 2 — Load a preprocessed file (.ccseeg.json / .fif) to use as the
+  /// input for source localisation (bypasses Step 1).
+  Future<void> _loadPreprocessedForStep2() async {
+    final pick = await FilePicker.pickFiles(
+      allowMultiple: false,
+      type: FileType.custom,
+      allowedExtensions: ['json', 'fif'],
+    );
+    if (pick == null || pick.files.first.path == null) return;
+    try {
+      final item = pick.files.first;
+      _log('Loading ${item.name} for Step 2…');
+      final rec = await _loader.load(item.path!);
+      setState(() {
+        _step2Input = rec;
+        _sourceRecording = null;
+        _recordings = [rec, ..._recordings];
+        _selection = const ViewerSelection.empty();
+      });
+      _log('✓ Loaded ${item.name} into Step 2');
+    } catch (e) {
+      _log('✗ ERROR loading for Step 2: $e');
+    }
+  }
+
+  /// Step 3 — Load any file (preprocessed or source) to use directly as the
+  /// extraction input, bypassing both Steps 1 and 2.
+  Future<void> _loadForExtraction() async {
+    final pick = await FilePicker.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: ['json', 'fif', 'edf', 'set', 'vhdr'],
+    );
+    if (pick == null) return;
+    final loaded = <EegRecording>[];
+    for (final item in pick.files) {
+      if (item.path == null) continue;
+      try {
+        _log('Loading ${item.name} for extraction…');
+        loaded.add(await _loader.load(item.path!));
+        _log('✓ Loaded ${item.name}');
+      } catch (e) {
+        _log('✗ ERROR ${item.name}: $e');
+      }
+    }
+    if (loaded.isNotEmpty) {
+      setState(() {
+        _step3Input = loaded.first;
+        _recordings = [...loaded, ..._recordings];
+        _selection = const ViewerSelection.empty();
+      });
+    }
+  }
+
+  /// Legacy combined open — used by the top-bar button (loads any supported format).
   Future<void> _open() async {
     final pick = await FilePicker.pickFiles(
       allowMultiple: true,
@@ -138,8 +250,7 @@ class _FeatureHomeState extends State<FeatureHome> {
       if (item.path == null) continue;
       try {
         _log('Loading ${item.name}…');
-        final rec = await _loader.load(item.path!);
-        loaded.add(rec);
+        loaded.add(await _loader.load(item.path!));
         _log('✓ Loaded ${item.name}');
       } catch (e) {
         _log('✗ ERROR ${item.name}: $e');
@@ -148,7 +259,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     if (loaded.isNotEmpty) {
       setState(() {
         _recordings = loaded;
-        _rawRecording = null; // fresh load — no raw/processed pair yet
+        _rawRecording = null;
         _selection = const ViewerSelection.empty();
       });
     }
@@ -189,7 +300,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                           final pick = await FilePicker.pickFiles(
                             allowMultiple: true,
                             type: FileType.custom,
-                            allowedExtensions: ['edf', 'set', 'fif', 'vhdr'],
+                            allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json'],
                           );
                           if (pick != null) {
                             setDialogState(() {
@@ -292,12 +403,13 @@ class _FeatureHomeState extends State<FeatureHome> {
       count++;
       _log('Batch file $count/${files.length}: ${path.split('/').last}');
       try {
+        final cleanPath = path.replaceAll(RegExp(r'\.(ccseeg\.json|source\.ccseeg\.json|json|fif|edf|set|vhdr|fdt)$', caseSensitive: false), '');
         var currentRec = await _loader.load(path);
         if (doPrep) {
           _log('  Running Preprocessing...');
           currentRec = await _service.preprocess(
             recording: currentRec,
-            outputPath: '$path.ccseeg.json',
+            outputPath: '$cleanPath.ccseeg.json',
             selection: const ViewerSelection.empty(),
             options: PreprocessingOptions(
               downsample: _preprocessDownsample,
@@ -323,7 +435,7 @@ class _FeatureHomeState extends State<FeatureHome> {
           _log('  Running Source Reconstruction...');
           currentRec = await _service.preprocess(
             recording: currentRec,
-            outputPath: '$path.source.ccseeg.json',
+            outputPath: '$cleanPath.source.ccseeg.json',
             selection: const ViewerSelection.empty(),
             options: PreprocessingOptions(
               downsample: false,
@@ -348,7 +460,7 @@ class _FeatureHomeState extends State<FeatureHome> {
           _log('  Extracting Features...');
           await _service.run(
             recordings: [currentRec],
-            outputPath: '$path.features.csv',
+            outputPath: '$cleanPath.features.csv',
             epochSeconds: double.tryParse(_epoch.text) ?? 2,
             selection: const ViewerSelection.empty(),
             options: ExtractionOptions(
@@ -430,10 +542,10 @@ class _FeatureHomeState extends State<FeatureHome> {
           setState(() => _progress = p);
         },
       );
-      final raw = _recordings.isNotEmpty ? _recordings.first : null;
       setState(() {
-        _rawRecording = raw; // remember original for Raw/Processed toggle
-        _recordings = [cleaned, ..._recordings];
+        _preprocessedRecording = cleaned;  // track step 1 output
+        _recordings = [cleaned, ..._recordings.where((r) => r != cleaned)];
+        _rawRecording = _recordings.firstWhere((r) => r != cleaned, orElse: () => cleaned);
         _selection = const ViewerSelection.empty();
       });
       _log('✓ Preprocessed: ${cleaned.path}');
@@ -483,10 +595,11 @@ class _FeatureHomeState extends State<FeatureHome> {
         },
       );
       setState(() {
-        _recordings = [sourced, ..._recordings];
+        _sourceRecording = sourced;    // track step 2 output
+        _recordings = [sourced, ..._recordings.where((r) => r != sourced)];
         _selection = const ViewerSelection.empty();
       });
-      _log('✓ Source localization complete: ${sourced.path}');
+      _log('✓ Source localisation complete: ${sourced.path}');
     } catch (e) {
       _log('✗ ERROR: $e');
     } finally {
@@ -507,15 +620,20 @@ class _FeatureHomeState extends State<FeatureHome> {
     setState(() {
       _recordings = [];
       _rawRecording = null;
+      _preprocessedRecording = null;
+      _step2Input = null;
+      _sourceRecording = null;
+      _step3Input = null;
       _selection = const ViewerSelection.empty();
     });
-    _log('Cleared all loaded files.');
+    _log('Cleared all pipeline files.');
   }
 
   // ── Feature extraction ─────────────────────────────────────────────────────
 
   Future<void> _run() async {
-    if (_recordings.isEmpty) { _log('Select at least one recording.'); return; }
+    final input = _resolvedExtractionInput;
+    if (input == null) { _log('Load a file before running extraction.'); return; }
     if (![_psd, _fooof, _irasa, _nonlinear, _acw,
           _mic || _mim || _gc || _gcTr || _coh || _plv || _ciplv || _pli || _wpli]
         .any((v) => v)) {
@@ -541,7 +659,7 @@ class _FeatureHomeState extends State<FeatureHome> {
       removeNonEeg: _removeNonEeg,
       exclusions: _exclude.text.split(',').map((x) => x.trim()).where((x) => x.isNotEmpty).toList(),
     );
-    final kept = _recordings
+    final kept = [input]
         .where((r) => !options.exclusions.any((x) => r.path.contains(x)))
         .toList();
     setState(() { _running = true; _progress = 0; _logVisible = true; });
@@ -561,7 +679,7 @@ class _FeatureHomeState extends State<FeatureHome> {
         final reportPath = path.replaceAll(RegExp(r'\.csv$', caseSensitive: false), '_report.pdf');
 
         // Build ReportContext from current UI state so the PDF has full metadata
-        final rec = kept.isNotEmpty ? kept.first : null;
+        final rec = kept.isNotEmpty ? kept.first : input;
         final rawRec = _rawRecording;
         final ctx = ReportContext(
           fileName: rec != null ? rec.path.split(Platform.pathSeparator).last : path.split(Platform.pathSeparator).last,
@@ -657,7 +775,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                     children: [
                       Expanded(
                         child: EegViewer(
-                          recording: _recordings.isEmpty ? null : _recordings.first,
+                          recording: _resolvedExtractionInput ?? (_recordings.isEmpty ? null : _recordings.first),
                           rawRecording: _rawRecording,
                           allRecordings: _recordings,
                           onSelectRecording: (rec) {
@@ -705,7 +823,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                 style: TextStyle(color: _accentBlue, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
           ),
           const SizedBox(width: 10),
-          const Text('Feature Studio', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
+          const Text('Studio', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
           const Spacer(),
           // File status
           if (_recordings.isNotEmpty) ...[
@@ -792,101 +910,382 @@ class _FeatureHomeState extends State<FeatureHome> {
   }
 
   // ── Sidebar ───────────────────────────────────────────────────────────────
+  //
+  //  The left panel is organised as three numbered workflow steps:
+  //
+  //    ① PREPROCESSING   — load raw EEG, clean + artefact-reject, save output
+  //    ② SOURCE SPACE    — eLORETA projection to 68 cortical ROIs (optional)
+  //    ③ FEATURE EXTRACTION — epoch, select features, run Rust engine
+  //
+  //  Each step has its own "Load" button, so the user can enter the pipeline
+  //  at any stage (e.g. load a previously-saved preprocessed file into Step 2
+  //  or load a source file directly into Step 3 and skip the earlier steps).
+  //
+  // ────────────────────────────────────────────────────────────────────────────────
 
   Widget _buildSidebar() {
     return ListView(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 4),
       children: [
-        // ── Files section ──────────────────────────────────────────
-        if (_recordings.isNotEmpty) ...[
-          _sidebarSectionHeader('FILES', Icons.insert_drive_file),
-          for (final rec in _recordings)
-            _fileChip(rec),
-          const Divider(color: _borderColor, height: 1),
-        ],
-
-        // ── Preprocessing ──────────────────────────────────────────
-        _accordionHeader('PREPROCESSING', Icons.cleaning_services, _prepExpanded,
-            () => setState(() => _prepExpanded = !_prepExpanded)),
-        if (_prepExpanded) _buildPreprocessingSection(),
-
-        // ── Source Reconstruction ──────────────────────────────────
-        const Divider(color: _borderColor, height: 1),
-        _accordionHeader('SOURCE RECONSTRUCTION', Icons.psychology, _sourceExpanded,
-            () => setState(() => _sourceExpanded = !_sourceExpanded)),
-        if (_sourceExpanded) _buildSourceSection(),
-
-        // ── Epoch & Duration ────────────────────────────────────────
-        const Divider(color: _borderColor, height: 1),
-        _sidebarSectionHeader('EPOCH & DURATION', Icons.access_time),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: _epoch,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(labelText: 'Epoch length (s)', suffixText: 's'),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<DurationMode>(
-                value: _mode,
-                dropdownColor: _cardColor,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(labelText: 'Duration mode'),
-                items: DurationMode.values
-                    .map((m) => DropdownMenuItem(value: m, child: Text(_durationLabel(m))))
-                    .toList(),
-                onChanged: _running ? null : (v) => setState(() => _mode = v!),
-              ),
-              if (_mode == DurationMode.interval) ...[
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(child: TextField(controller: _start, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'Start s'))),
-                  const SizedBox(width: 8),
-                  Expanded(child: TextField(controller: _end, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'End s'))),
-                ]),
-              ],
-              if (_mode == DurationMode.bins) ...[
-                const SizedBox(height: 8),
-                TextField(controller: _bin, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'Bin size (s)', suffixText: 's')),
-              ],
-            ],
-          ),
+        _buildStepCard(
+          step: 1,
+          icon: Icons.cleaning_services,
+          title: 'PREPROCESSING',
+          color: _accentPurple,
+          expanded: _step1Expanded,
+          onToggle: () => setState(() => _step1Expanded = !_step1Expanded),
+          completedLabel: _preprocessedRecording != null
+              ? '\u2713 ${_shortName(_preprocessedRecording!.path)}'
+              : null,
+          completedColor: _accentGreen,
+          children: [_buildStep1Content()],
         ),
-
-        // ── Feature Families ──────────────────────────────────────
-        const Divider(color: _borderColor, height: 1),
-        _accordionHeader('FEATURE FAMILIES', Icons.analytics, _featExpanded,
-            () => setState(() => _featExpanded = !_featExpanded)),
-        if (_featExpanded) _buildFeaturesSection(),
-
-        // ── Exclusions ────────────────────────────────────────────
-        const Divider(color: _borderColor, height: 1),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _subLabel('OTHER'),
-              const SizedBox(height: 6),
-              _sidebarCheck('Remove non-EEG channels + avg ref', _removeNonEeg,
-                  (v) => _removeNonEeg = v),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _exclude,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'Filename exclusions',
-                  helperText: 'Comma-separated',
-                  helperStyle: TextStyle(color: _textMuted, fontSize: 10),
-                ),
-              ),
-            ],
-          ),
+        _buildStepCard(
+          step: 2,
+          icon: Icons.psychology,
+          title: 'SOURCE SPACE',
+          color: _accentBlue,
+          optional: true,
+          expanded: _step2Expanded,
+          onToggle: () => setState(() => _step2Expanded = !_step2Expanded),
+          completedLabel: _sourceRecording != null
+              ? '\u2713 ${_shortName(_sourceRecording!.path)}'
+              : null,
+          completedColor: _accentBlue,
+          children: [_buildStep2Content()],
+        ),
+        _buildStepCard(
+          step: 3,
+          icon: Icons.analytics,
+          title: 'FEATURE EXTRACTION',
+          color: _accentGreen,
+          expanded: _step3Expanded,
+          onToggle: () => setState(() => _step3Expanded = !_step3Expanded),
+          completedLabel: null,
+          completedColor: _accentGreen,
+          children: [_buildStep3Content()],
         ),
       ],
+    );
+  }
+
+  // ── Step card builder ──────────────────────────────────────────────────────
+
+  Widget _buildStepCard({
+    required int step,
+    required IconData icon,
+    required String title,
+    required Color color,
+    bool optional = false,
+    required bool expanded,
+    required VoidCallback onToggle,
+    String? completedLabel,
+    required Color completedColor,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Material(
+          color: const Color(0xFF0A1628),
+          child: InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
+              child: Row(
+                children: [
+                  Container(
+                    width: 22, height: 22,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.15),
+                      border: Border.all(color: color, width: 1.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text('$step',
+                          style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Icon(icon, size: 13, color: color),
+                  Expanded(
+                    child: Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: color, fontSize: 11,
+                            fontWeight: FontWeight.bold, letterSpacing: 0.8)),
+                  ),
+                  if (optional) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: color.withValues(alpha: 0.45)),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text('OPTIONAL',
+                          style: TextStyle(
+                              color: color.withValues(alpha: 0.7),
+                              fontSize: 7.5, letterSpacing: 0.4)),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  Icon(expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 16, color: _textMuted),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (completedLabel != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(42, 0, 12, 5),
+            child: Row(children: [
+              Icon(Icons.check_circle, size: 12, color: completedColor),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(completedLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: completedColor, fontSize: 10.5)),
+              ),
+            ]),
+          ),
+        if (expanded) ...children,
+        const Divider(color: _borderColor, height: 1, thickness: 1),
+      ],
+    );
+  }
+
+  // ── Step 1 content ─────────────────────────────────────────────────────────
+
+  Widget _buildStep1Content() {
+    final rawFiles = _recordings
+        .where((r) => r != _preprocessedRecording && r != _sourceRecording && r != _step2Input && r != _step3Input)
+        .toList();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _running ? null : _loadRaw,
+            icon: const Icon(Icons.folder_open, size: 14),
+            label: const Text('Load Raw EEG Files\u2026', style: TextStyle(fontSize: 12)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accentPurple,
+              side: BorderSide(color: _accentPurple.withValues(alpha: 0.55)),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+            ),
+          ),
+        ),
+        if (rawFiles.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          for (final rec in rawFiles.take(3)) _fileChip(rec),
+          if (rawFiles.length > 3)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, left: 4),
+              child: Text('+${rawFiles.length - 3} more files',
+                  style: const TextStyle(color: _textMuted, fontSize: 11)),
+            ),
+        ],
+        const SizedBox(height: 6),
+        _subAccordionHeader(
+          'Preprocessing Options',
+          _step1OptsExpanded,
+          () => setState(() => _step1OptsExpanded = !_step1OptsExpanded),
+        ),
+        if (_step1OptsExpanded) _buildPreprocessingOptions(),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: (_running || rawFiles.isEmpty) ? null : _preprocessCurrent,
+            icon: const Icon(Icons.cleaning_services, size: 14),
+            label: const Text('Preprocess & Save\u2026',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accentPurple,
+              side: BorderSide(color: _accentPurple.withValues(alpha: 0.7)),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── Step 2 content ─────────────────────────────────────────────────────────
+
+  Widget _buildStep2Content() {
+    final effectiveInput = _step2Input ?? _preprocessedRecording;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        effectiveInput != null
+            ? _pipelineBadge(
+                icon: Icons.arrow_right,
+                label: _step2Input != null
+                    ? 'Loaded: ${_shortName(effectiveInput.path)}'
+                    : 'Using Step 1 output: ${_shortName(effectiveInput.path)}',
+                color: _step2Input != null ? _accentAmber : _accentGreen,
+              )
+            : _pipelineBadge(
+                icon: Icons.warning_amber,
+                label: 'No input \u2014 run Step 1 or load a preprocessed file',
+                color: _textMuted,
+              ),
+        const SizedBox(height: 7),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _running ? null : _loadPreprocessedForStep2,
+            icon: const Icon(Icons.upload_file, size: 14),
+            label: const Text('Load Preprocessed File\u2026', style: TextStyle(fontSize: 12)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accentBlue,
+              side: BorderSide(color: _accentBlue.withValues(alpha: 0.55)),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _accentBlue.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: _accentBlue.withValues(alpha: 0.25)),
+          ),
+          child: const Text(
+            'Projects scalp potentials to 68 FreeSurfer cortical dipoles '
+            'via regularised eLORETA inverse solution (fsaverage parcellation).',
+            style: TextStyle(color: _textMuted, fontSize: 10.5, height: 1.45),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: (_running || effectiveInput == null) ? null : _runSourceLocalization,
+            icon: const Icon(Icons.psychology, size: 14),
+            label: const Text('Run Source Localisation\u2026',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _accentBlue,
+              side: BorderSide(color: _accentBlue.withValues(alpha: 0.7)),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── Step 3 content ─────────────────────────────────────────────────────────
+
+  Widget _buildStep3Content() {
+    final resolved = _resolvedExtractionInput;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        resolved != null
+            ? _pipelineBadge(
+                icon: Icons.play_circle,
+                label: resolved == _sourceRecording
+                    ? 'Source: ${_shortName(resolved.path)}'
+                    : resolved == _preprocessedRecording
+                        ? 'Preprocessed: ${_shortName(resolved.path)}'
+                        : resolved == _step3Input
+                            ? 'Direct load: ${_shortName(resolved.path)}'
+                            : 'Raw: ${_shortName(resolved.path)}',
+                color: resolved == _sourceRecording
+                    ? _accentBlue
+                    : resolved == _preprocessedRecording
+                        ? _accentGreen
+                        : _accentAmber,
+              )
+            : _pipelineBadge(
+                icon: Icons.warning_amber,
+                label: 'No file loaded \u2014 use Steps 1 / 2 or load directly',
+                color: _textMuted,
+              ),
+        const SizedBox(height: 6),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _running ? null : _loadForExtraction,
+            icon: const Icon(Icons.folder_open, size: 14),
+            label: const Text('Load File Directly\u2026', style: TextStyle(fontSize: 12)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _textMuted,
+              side: BorderSide(color: _textMuted.withValues(alpha: 0.4)),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _subLabel('EPOCH & DURATION'),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _epoch,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+          decoration: const InputDecoration(labelText: 'Epoch length (s)', suffixText: 's'),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<DurationMode>(
+          value: _mode,
+          dropdownColor: _cardColor,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+          decoration: const InputDecoration(labelText: 'Duration mode'),
+          items: DurationMode.values
+              .map((m) => DropdownMenuItem(value: m, child: Text(_durationLabel(m))))
+              .toList(),
+          onChanged: _running ? null : (v) => setState(() => _mode = v!),
+        ),
+        if (_mode == DurationMode.interval) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            Expanded(child: TextField(controller: _start, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'Start s'))),
+            const SizedBox(width: 8),
+            Expanded(child: TextField(controller: _end, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'End s'))),
+          ]),
+        ],
+        if (_mode == DurationMode.bins) ...[
+          const SizedBox(height: 6),
+          TextField(controller: _bin, style: const TextStyle(color: Colors.white, fontSize: 12), decoration: const InputDecoration(labelText: 'Bin size (s)', suffixText: 's')),
+        ],
+        const SizedBox(height: 10),
+        _subAccordionHeader(
+          'Feature Families',
+          _step3FeatExpanded,
+          () => setState(() => _step3FeatExpanded = !_step3FeatExpanded),
+        ),
+        if (_step3FeatExpanded) _buildFeaturesSection(),
+        const SizedBox(height: 4),
+        _subAccordionHeader(
+          'Other Options',
+          _step3OtherExpanded,
+          () => setState(() => _step3OtherExpanded = !_step3OtherExpanded),
+        ),
+        if (_step3OtherExpanded) ...[
+          const SizedBox(height: 4),
+          _sidebarCheck('Remove non-EEG channels + avg ref', _removeNonEeg,
+              (v) => _removeNonEeg = v),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _exclude,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+            decoration: const InputDecoration(
+              labelText: 'Filename exclusions',
+              helperText: 'Comma-separated',
+              helperStyle: TextStyle(color: _textMuted, fontSize: 10),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+      ]),
     );
   }
 
@@ -935,9 +1334,10 @@ class _FeatureHomeState extends State<FeatureHome> {
     );
   }
 
-  Widget _buildPreprocessingSection() {
+  /// Inline preprocessing options used inside _buildStep1Content().
+  Widget _buildPreprocessingOptions() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.only(left: 8, top: 2, bottom: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -967,55 +1367,6 @@ class _FeatureHomeState extends State<FeatureHome> {
           _sidebarCheck('GEDAI denoising', _preprocessGedai, (v) => _preprocessGedai = v),
           _sidebarCheck('Epoch before GEDAI (memory safe)', _preprocessEpochBeforeGedai, (v) => _preprocessEpochBeforeGedai = v),
           _sidebarCheck('Interpolate bad channels', _preprocessInterpolate, (v) => _preprocessInterpolate = v),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _running ? null : _preprocessCurrent,
-              icon: const Icon(Icons.cleaning_services, size: 14),
-              label: const Text('Preprocess Scalp EEG', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _accentPurple,
-                side: BorderSide(color: _accentPurple.withOpacity(0.5)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSourceSection() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: _accentBlue.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: _accentBlue.withOpacity(0.3)),
-            ),
-            child: const Text(
-              'Projects scalp potentials to 68 FreeSurfer cortical dipoles via regularized eLORETA inverse solution.',
-              style: TextStyle(color: _textMuted, fontSize: 11),
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _running ? null : _runSourceLocalization,
-              icon: const Icon(Icons.psychology, size: 14),
-              label: const Text('Convert to 68 ROIs', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _accentBlue,
-                side: BorderSide(color: _accentBlue.withOpacity(0.5)),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1053,11 +1404,13 @@ class _FeatureHomeState extends State<FeatureHome> {
     );
   }
 
-  // ── Run buttons at sidebar bottom ─────────────────────────────────────────
+  // ── Run buttons (sidebar bottom bar) ───────────────────────────────────────
+
 
   Widget _buildRunButtons() {
+    final hasInput = _resolvedExtractionInput != null;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: const BoxDecoration(
         color: Color(0xFF060D1A),
         border: Border(top: BorderSide(color: _borderColor)),
@@ -1065,26 +1418,21 @@ class _FeatureHomeState extends State<FeatureHome> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_running)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: _progress,
-                    backgroundColor: const Color(0xFF1E293B),
-                    color: _accentGreen,
-                    minHeight: 5,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text('${(_progress * 100).toStringAsFixed(0)}% complete',
-                    style: const TextStyle(color: _textMuted, fontSize: 11)),
-                const SizedBox(height: 8),
-              ],
-            ),
           if (_running) ...[
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _progress,
+                backgroundColor: const Color(0xFF1E293B),
+                color: _accentGreen,
+                minHeight: 5,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text('${(_progress * 100).toStringAsFixed(0)}% complete',
+                style: const TextStyle(color: _textMuted, fontSize: 11)),
+            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -1094,51 +1442,44 @@ class _FeatureHomeState extends State<FeatureHome> {
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.redAccent,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
                 ),
               ),
             ),
           ] else ...[
+            // Compile CSVs
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: _open,
-                icon: const Icon(Icons.folder_open, size: 15, color: _accentBlue),
-                label: const Text('Load Preprocessed (.json/.fif)', style: TextStyle(color: _accentBlue, fontSize: 12, fontWeight: FontWeight.bold)),
+                onPressed: _compileCsv,
+                icon: const Icon(Icons.table_chart, size: 14, color: Color(0xFFA855F7)),
+                label: const Text('Compile CSV Batch', style: TextStyle(color: Color(0xFFA855F7), fontSize: 12)),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: _accentBlue),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  side: const BorderSide(color: Color(0xFFA855F7)),
+                  padding: const EdgeInsets.symmetric(vertical: 9),
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _run,
-                icon: const Icon(Icons.play_arrow, size: 16),
-                label: const Text('Run Extraction', style: TextStyle(fontWeight: FontWeight.bold)),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _accentGreen,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+            // Run extraction
+            Tooltip(
+              message: hasInput ? '' : 'Load a file in Step 1, 2, or 3 to enable extraction',
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: hasInput ? _run : null,
+                  icon: const Icon(Icons.play_arrow, size: 16),
+                  label: const Text('▶  Run Extraction',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: hasInput ? _accentGreen : const Color(0xFF1E293B),
+                    foregroundColor: hasInput ? Colors.black : _textMuted,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
                 ),
               ),
             ),
           ],
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _running ? null : _compileCsv,
-              icon: const Icon(Icons.table_chart, size: 14),
-              label: const Text('Compile CSV Batch', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _textMuted,
-                side: const BorderSide(color: _borderColor),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1209,7 +1550,61 @@ class _FeatureHomeState extends State<FeatureHome> {
     );
   }
 
-  // ── Shared helpers ────────────────────────────────────────────────────────
+  // ── Shared helpers ───────────────────────────────────────────────────────────────
+
+  /// Short display name from a full path.
+  String _shortName(String path) => path.split(Platform.pathSeparator).last;
+
+  /// Coloured status badge shown inside step cards (e.g. "Using Step 1 output").
+  Widget _pipelineBadge({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontSize: 10.5)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Small toggle row used for sub-sections inside step cards.
+  Widget _subAccordionHeader(String label, bool expanded, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Icon(
+                expanded ? Icons.expand_less : Icons.chevron_right,
+                size: 15,
+                color: _textMuted),
+            const SizedBox(width: 4),
+            Text(label,
+                style: const TextStyle(
+                    color: _textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _sidebarSectionHeader(String label, IconData icon) => Padding(
     padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
