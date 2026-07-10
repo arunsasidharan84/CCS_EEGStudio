@@ -12,7 +12,7 @@
 
 **Version:** 0.1.0
 
-Welcome to **CCS EEG Studio**, a high-performance, cross-platform desktop application for epoch-wise EEG feature extraction and functional connectivity analysis. It provides a lightweight GUI wrapper for a native Rust computational engine (`ccs-eeg-engine`) that implements spectral, nonlinear, aperiodic, and connectivity analyses with numerical parity to the Python reference extractor (`extract_EEGfeatures_connectivity_20250902_Ver10.0.py`).
+Welcome to **CCS EEG Studio**, a high-performance, cross-platform desktop application for epoch-wise EEG feature extraction and functional connectivity analysis. It provides a lightweight GUI wrapper for a native Rust computational engine (`ccs-eeg-engine`) that implements spectral, nonlinear, aperiodic, and connectivity analyses with numerical parity to the Python reference codes (`https://github.com/arunsasidharan84/ccs_toolbox`).
 
 Built using **Flutter** for a lightweight, fluid UI and **Rust** for native-speed signal processing, the application reads EDF and EEGLAB SET/FDT recordings and produces combined per-epoch, per-channel CSV outputs without requiring any Python or MATLAB runtime.
 
@@ -22,7 +22,7 @@ Built using **Flutter** for a lightweight, fluid UI and **Rust** for native-spee
 
 ## About
 
-**CCS EEG Studio** is a standalone desktop platform that automates the CCS EEG feature-extraction pipeline described in `extract_EEGfeatures_connectivity_20250902_Ver10.0.py`. It replaces a multi-hour Python workflow with a Rust-native engine that completes the same extraction in a fraction of the time while producing bit-level-compatible outputs.
+**CCS EEG Studio** is a standalone desktop platform that automates the CCS EEG feature-extraction pipeline described in `https://github.com/arunsasidharan84/ccs_toolbox`. It replaces a multi-hour Python workflow with a Rust-native engine that completes the same extraction in a fraction of the time while producing bit-level-compatible outputs.
 
 The UI and file loaders are ported from [ScoringNidra](https://github.com/arunsasidharan84/ScoringNidra). The workflow is validated against `ccstools.eegfeatures` and `mne-connectivity 0.8` via automated parity test suites that run against real SET/FDT and EDF fixtures.
 
