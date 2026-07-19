@@ -96,6 +96,7 @@ pub struct Row {
 
 pub mod connectivity;
 pub mod features;
+pub mod orb_extract;
 pub mod fif_loader;
 pub mod montage;
 pub mod nonlinear;
