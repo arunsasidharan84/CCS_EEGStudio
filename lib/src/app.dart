@@ -597,7 +597,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                       // ── Left sidebar ───────────────────────────────────────
                       SizedBox(
                         width: 290,
-                        child: Container(
+                        child: Material(
                           color: const Color(0xFF0A1628),
                           child: Column(
                             children: [
@@ -1738,12 +1738,15 @@ class _FeatureHomeState extends State<FeatureHome> {
     required VoidCallback onRun,
     bool runEnabled = true,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _cardColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _borderColor),
-      ),
+    return Material(
+      color: _cardColor,
+      borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _borderColor),
+        ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1903,8 +1906,9 @@ class _FeatureHomeState extends State<FeatureHome> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> _runBatchPreprocessingOnly() async {
     if (_batchPrepFiles.isEmpty) return;
