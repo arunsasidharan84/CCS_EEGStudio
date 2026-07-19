@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'eeg_viewer.dart';
 import 'extraction_service.dart';
 import 'models.dart';
+import 'plot_dialog.dart';
 import 'recording_loader.dart';
 
 // ── Design tokens (ScoringNidra palette) ──────────────────────────────────
@@ -159,7 +160,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     final pick = await FilePicker.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
-      allowedExtensions: ['edf', 'set', 'fif', 'vhdr'],
+      allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'orb', 'signal'],
     );
     if (pick == null) return;
     final loaded = <EegRecording>[];
@@ -214,7 +215,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     final pick = await FilePicker.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
-      allowedExtensions: ['json', 'fif', 'edf', 'set', 'vhdr'],
+      allowedExtensions: ['json', 'fif', 'edf', 'set', 'vhdr', 'orb', 'signal'],
     );
     if (pick == null) return;
     final loaded = <EegRecording>[];
@@ -242,7 +243,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     final pick = await FilePicker.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
-      allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json'],
+      allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal'],
     );
     if (pick == null) return;
     final loaded = <EegRecording>[];
@@ -300,7 +301,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                           final pick = await FilePicker.pickFiles(
                             allowMultiple: true,
                             type: FileType.custom,
-                            allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json'],
+                            allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal'],
                           );
                           if (pick != null) {
                             setDialogState(() {
@@ -403,7 +404,7 @@ class _FeatureHomeState extends State<FeatureHome> {
       count++;
       _log('Batch file $count/${files.length}: ${path.split('/').last}');
       try {
-        final cleanPath = path.replaceAll(RegExp(r'\.(ccseeg\.json|source\.ccseeg\.json|json|fif|edf|set|vhdr|fdt)$', caseSensitive: false), '');
+        final cleanPath = path.replaceAll(RegExp(r'\.(ccseeg\.json|source\.ccseeg\.json|json|fif|edf|set|vhdr|fdt|orb|signal)$', caseSensitive: false), '');
         var currentRec = await _loader.load(path);
         if (doPrep) {
           _log('  Running Preprocessing...');
@@ -742,6 +743,26 @@ class _FeatureHomeState extends State<FeatureHome> {
     final inputs = pick.files.map((f) => f.path).whereType<String>().toList();
     await _service.compileCsvFiles(inputs, out);
     _log('✓ Compiled CSV: $out');
+  }
+
+  /// Opens the feature plot dialog, pre-populated with any feature CSVs that
+  /// exist alongside the currently loaded recording paths.
+  void _openPlotDialog() {
+    // Try to pre-populate with .features.csv files from the loaded recordings.
+    final candidates = <String>[];
+    for (final rec in _recordings) {
+      final base = rec.path.replaceAll(
+          RegExp(r'\.(edf|set|fif|vhdr|fdt|json|orb|signal)$',
+              caseSensitive: false),
+          '');
+      final csv = '$base.features.csv';
+      if (File(csv).existsSync()) candidates.add(csv);
+    }
+
+    Navigator.of(context).push(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => PlotDialog(initialCsvPaths: candidates),
+    ));
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -1456,6 +1477,20 @@ class _FeatureHomeState extends State<FeatureHome> {
                 label: const Text('Compile CSV Batch', style: TextStyle(color: Color(0xFFA855F7), fontSize: 12)),
                 style: OutlinedButton.styleFrom(
                   side: const BorderSide(color: Color(0xFFA855F7)),
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Generate Plots
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _running ? null : _openPlotDialog,
+                icon: const Icon(Icons.stacked_line_chart, size: 14, color: Color(0xFF22C55E)),
+                label: const Text('Generate Plots…', style: TextStyle(color: Color(0xFF22C55E), fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFF22C55E)),
                   padding: const EdgeInsets.symmetric(vertical: 9),
                 ),
               ),

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'edf_loader.dart';
 import 'fif_loader.dart';
 import 'models.dart';
+import 'orbit_loader.dart';
 import 'set_loader.dart';
 import 'vhdr_loader.dart';
 
@@ -23,6 +24,9 @@ class RecordingLoader {
     }
     if (path.toLowerCase().endsWith('.vhdr')) {
       return _vhdrLoader.load(path);
+    }
+    if (path.toLowerCase().endsWith('.orb') || path.toLowerCase().endsWith('.signal')) {
+      return OrbLoader().load(path);
     }
     // EDF / EDF+
     final eeg = EdfLoader().load(path);

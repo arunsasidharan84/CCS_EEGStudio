@@ -32,14 +32,14 @@ The UI and file loaders are ported from [ScoringNidra](https://github.com/arunsa
 
 Pre-built installers are compiled automatically via **GitHub Actions** on every push to `main` that contains `[build desktop]` in the commit message, as well as on any tagged release (`v*`) or manual workflow dispatch.
 
-[![Release asset downloads](https://img.shields.io/github/downloads/arunsasidharan84/CCS_EEGApp/total?label=release%20downloads&style=flat-square)](https://github.com/arunsasidharan84/CCS_EEGApp/releases)
+[![Release asset downloads](https://img.shields.io/github/downloads/arunsasidharan84/CCS_EEGStudio/total?label=release%20downloads&style=flat-square)](https://github.com/arunsasidharan84/CCS_EEGStudio/releases)
 
 | Operating System | Package Type | Download Link |
 |------------------|--------------|---------------|
-| **macOS** | Universal ZIP (.app) | [Download macOS](https://github.com/arunsasidharan84/CCS_EEGApp/releases/download/latest/CCSEEGStudio-macos.zip) |
-| **Windows** | x64 Installer EXE | [Download Windows](https://github.com/arunsasidharan84/CCS_EEGApp/releases/download/latest/CCSEEGStudio-Installer.exe) |
-| **Linux (Debian/Ubuntu)** | x64 DEB Installer | [Download Linux DEB](https://github.com/arunsasidharan84/CCS_EEGApp/releases/download/latest/CCSEEGStudio-linux-amd64.deb) |
-| **Linux (RHEL/AlmaLinux)** | x86_64 RPM Installer | [Download Linux RPM](https://github.com/arunsasidharan84/CCS_EEGApp/releases/download/latest/CCSEEGStudio-linux-x86_64.rpm) |
+| **macOS** | Universal ZIP (.app) | [Download macOS](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-macos.zip) |
+| **Windows** | x64 Installer EXE | [Download Windows](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-Installer.exe) |
+| **Linux (Debian/Ubuntu)** | x64 DEB Installer | [Download Linux DEB](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-linux-amd64.deb) |
+| **Linux (RHEL/AlmaLinux)** | x86_64 RPM Installer | [Download Linux RPM](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-linux-x86_64.rpm) |
 
 **Install on Debian / Ubuntu / Linux Mint:**
 ```sh
