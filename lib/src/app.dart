@@ -125,6 +125,16 @@ class _FeatureHomeState extends State<FeatureHome> {
   bool _running = false;
   double _progress = 0;
 
+  // ── Batch Tab State ──────────────────────────────────────────────────────
+  final List<String> _batchPrepFiles = [];
+  final List<String> _batchFeatFiles = [];
+  final List<String> _batchPlotFiles = [];
+  bool _batchFeatUsePrep = true;
+  bool _batchPlotUseFeat = true;
+  String? _batchPrepOutputDir;
+  String? _batchFeatOutputFile;
+  String? _batchPlotOutputDir;
+
   // ── Step panel accordion state ───────────────────────────────────────────
   bool _step1Expanded = true;
   bool _step1OptsExpanded = false; // preprocessing options sub-panel
@@ -138,7 +148,22 @@ class _FeatureHomeState extends State<FeatureHome> {
   final List<String> _logs = [];
 
   @override
+  void initState() {
+    super.initState();
+    _preLow.addListener(_onFilterParamChanged);
+    _preHigh.addListener(_onFilterParamChanged);
+    _preNotch.addListener(_onFilterParamChanged);
+  }
+
+  void _onFilterParamChanged() {
+    setState(() {});
+  }
+
+  @override
   void dispose() {
+    _preLow.removeListener(_onFilterParamChanged);
+    _preHigh.removeListener(_onFilterParamChanged);
+    _preNotch.removeListener(_onFilterParamChanged);
     for (final c in [
       _start, _end, _bin, _epoch, _exclude,
       _preDownsample, _preLow, _preHigh, _preNotch,
@@ -821,56 +846,71 @@ class _FeatureHomeState extends State<FeatureHome> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          _buildTopBar(),
-          Expanded(
-            child: Row(
-              children: [
-                // ── Left sidebar ───────────────────────────────────────
-                SizedBox(
-                  width: 290,
-                  child: Container(
-                    color: const Color(0xFF0A1628),
-                    child: Column(
-                      children: [
-                        Expanded(child: _buildSidebar()),
-                        _buildRunButtons(),
-                      ],
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1, color: _borderColor),
-                // ── Right: EEG Viewer ──────────────────────────────────
-                Expanded(
-                  child: Column(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        body: Column(
+          children: [
+            _buildTopBar(),
+            Expanded(
+              child: TabBarView(
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  // Tab 1: Interactive Analysis
+                  Row(
                     children: [
-                      Expanded(
-                        child: EegViewer(
-                          recording: _resolvedExtractionInput ?? (_recordings.isEmpty ? null : _recordings.first),
-                          rawRecording: _rawRecording,
-                          allRecordings: _recordings,
-                          onSelectRecording: (rec) {
-                            if (_running) return;
-                            setState(() {
-                              _recordings.remove(rec);
-                              _recordings.insert(0, rec);
-                            });
-                          },
-                          selection: _selection,
-                          onSelectionChanged: (v) => setState(() => _selection = v),
+                      // ── Left sidebar ───────────────────────────────────────
+                      SizedBox(
+                        width: 290,
+                        child: Container(
+                          color: const Color(0xFF0A1628),
+                          child: Column(
+                            children: [
+                              Expanded(child: _buildSidebar()),
+                              _buildRunButtons(),
+                            ],
+                          ),
                         ),
                       ),
-                      // ── Collapsible log panel ──────────────────────
-                      _buildLogPanel(),
+                      const VerticalDivider(width: 1, color: _borderColor),
+                      // ── Right: EEG Viewer ──────────────────────────────────
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: EegViewer(
+                                recording: _resolvedExtractionInput ?? (_recordings.isEmpty ? null : _recordings.first),
+                                rawRecording: _rawRecording,
+                                allRecordings: _recordings,
+                                onSelectRecording: (rec) {
+                                  if (_running) return;
+                                  setState(() {
+                                    _recordings.remove(rec);
+                                    _recordings.insert(0, rec);
+                                  });
+                                },
+                                selection: _selection,
+                                onSelectionChanged: (v) => setState(() => _selection = v),
+                                filterEnabled: _preprocessFilter,
+                                lowHz: double.tryParse(_preLow.text) ?? 0.5,
+                                highHz: double.tryParse(_preHigh.text) ?? 40.0,
+                                notchHz: double.tryParse(_preNotch.text) ?? 50.0,
+                              ),
+                            ),
+                            // ── Collapsible log panel ──────────────────────
+                            _buildLogPanel(),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ],
+                  // Tab 2: Batch Analysis Tab
+                  _buildBatchAnalysisTab(),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -897,6 +937,22 @@ class _FeatureHomeState extends State<FeatureHome> {
           ),
           const SizedBox(width: 10),
           const Text('Studio', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
+          const SizedBox(width: 20),
+          const SizedBox(
+            width: 380,
+            child: TabBar(
+              dividerColor: Colors.transparent,
+              indicatorColor: _accentBlue,
+              labelColor: Colors.white,
+              unselectedLabelColor: _textMuted,
+              labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+              unselectedLabelStyle: TextStyle(fontSize: 13),
+              tabs: [
+                Tab(text: 'Interactive Analysis'),
+                Tab(text: 'Batch Analysis'),
+              ],
+            ),
+          ),
           const Spacer(),
           // File status
           if (_recordings.isNotEmpty) ...[
@@ -929,17 +985,6 @@ class _FeatureHomeState extends State<FeatureHome> {
             label: 'Log',
             active: _logVisible,
             onTap: () => setState(() => _logVisible = !_logVisible),
-          ),
-          const SizedBox(width: 8),
-          // Open file
-          OutlinedButton.icon(
-            onPressed: _running ? null : _openBatchDialog,
-            icon: const Icon(Icons.layers, size: 15, color: Color(0xFFA855F7)),
-            label: const Text('Batch Pipeline', style: TextStyle(color: Color(0xFFA855F7))),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Color(0xFFA855F7)),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            ),
           ),
           const SizedBox(width: 8),
           FilledButton.icon(
@@ -1750,4 +1795,730 @@ class _FeatureHomeState extends State<FeatureHome> {
     DurationMode.bins => 'Fixed-size bins',
     DurationMode.middleTwoMinutes => 'Middle 2 minutes',
   };
+
+  // ── Batch Tab Implementation ──────────────────────────────────────────────
+
+  Widget _buildBatchAnalysisTab() {
+    return Container(
+      color: const Color(0xFF0F172A),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Batch Analysis Pipeline',
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  SizedBox(height: 4),
+                  Text('Configure and run preprocessing, feature extraction, and plotting in stages or in sequence.',
+                      style: TextStyle(color: _textMuted, fontSize: 12)),
+                ],
+              ),
+              FilledButton.icon(
+                onPressed: _running ? null : _runUnifiedSequentialPipeline,
+                icon: const Icon(Icons.play_circle_filled, size: 18),
+                label: const Text('Run Stages 1-3 in Sequence',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _accentBlue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_running) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _progress,
+                backgroundColor: const Color(0xFF1E293B),
+                color: _accentGreen,
+                minHeight: 6,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text('${(_progress * 100).toStringAsFixed(0)}% complete',
+                style: const TextStyle(color: _textMuted, fontSize: 11)),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _buildBatchStageCard(
+                    title: 'Stage 1: Preprocessing',
+                    icon: Icons.cleaning_services,
+                    color: _accentPurple,
+                    files: _batchPrepFiles,
+                    outputDir: _batchPrepOutputDir,
+                    onSelectOutputDir: () async {
+                      final path = await FilePicker.getDirectoryPath(dialogTitle: 'Select Output Directory for Preprocessing');
+                      if (path != null) setState(() => _batchPrepOutputDir = path);
+                    },
+                    onAdd: () async {
+                      final pick = await FilePicker.pickFiles(
+                        allowMultiple: true,
+                        type: FileType.custom,
+                        allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'orb', 'signal'],
+                      );
+                      if (pick != null) {
+                        setState(() {
+                          for (final f in pick.files) {
+                            if (f.path != null && !_batchPrepFiles.contains(f.path!)) {
+                              _batchPrepFiles.add(f.path!);
+                            }
+                          }
+                        });
+                      }
+                    },
+                    onClear: () => setState(() => _batchPrepFiles.clear()),
+                    onRemove: (idx) => setState(() => _batchPrepFiles.removeAt(idx)),
+                    optionsChild: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sidebarCheck('Downsample to target rate', _preprocessDownsample, (v) => _preprocessDownsample = v),
+                        _sidebarCheck('Bandpass + notch filter', _preprocessFilter, (v) => _preprocessFilter = v),
+                        _sidebarCheck('Bad channel detection', _preprocessBadChannels, (v) => _preprocessBadChannels = v),
+                        _sidebarCheck('GEDAI denoising', _preprocessGedai, (v) => _preprocessGedai = v),
+                        _sidebarCheck('Interpolate bad channels', _preprocessInterpolate, (v) => _preprocessInterpolate = v),
+                      ],
+                    ),
+                    runLabel: 'Run Preprocessing Only',
+                    onRun: () => _runBatchPreprocessingOnly(),
+                    runEnabled: _batchPrepFiles.isNotEmpty,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildBatchStageCard(
+                    title: 'Stage 2: Feature Extraction',
+                    icon: Icons.analytics,
+                    color: _accentAmber,
+                    files: _batchFeatUsePrep ? [] : _batchFeatFiles,
+                    outputDir: _batchFeatOutputFile,
+                    outputDirLabel: 'Output CSV File',
+                    onSelectOutputDir: () async {
+                      final path = await FilePicker.saveFile(
+                        dialogTitle: 'Select Output CSV File',
+                        fileName: 'Batch_EEG_features.csv',
+                        allowedExtensions: ['csv'],
+                        type: FileType.custom,
+                      );
+                      if (path != null) setState(() => _batchFeatOutputFile = path);
+                    },
+                    usePreviousOutput: _batchFeatUsePrep,
+                    usePreviousLabel: 'Use Stage 1 preprocessed outputs',
+                    onUsePreviousChanged: (v) => setState(() => _batchFeatUsePrep = v ?? true),
+                    onAdd: () async {
+                      final pick = await FilePicker.pickFiles(
+                        allowMultiple: true,
+                        type: FileType.custom,
+                        allowedExtensions: ['json', 'fif', 'edf', 'set', 'vhdr', 'orb', 'signal'],
+                      );
+                      if (pick != null) {
+                        setState(() {
+                          for (final f in pick.files) {
+                            if (f.path != null && !_batchFeatFiles.contains(f.path!)) {
+                              _batchFeatFiles.add(f.path!);
+                            }
+                          }
+                        });
+                      }
+                    },
+                    onClear: () => setState(() => _batchFeatFiles.clear()),
+                    onRemove: (idx) => setState(() => _batchFeatFiles.removeAt(idx)),
+                    optionsChild: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sidebarCheck('PSD band power', _psd, (v) => _psd = v),
+                        _sidebarCheck('FOOOF / specparam', _fooof, (v) => _fooof = v),
+                        _sidebarCheck('IRASA', _irasa, (v) => _irasa = v),
+                        _sidebarCheck('Nonlinear dynamics', _nonlinear, (v) => _nonlinear = v),
+                        _sidebarCheck('Autocorrelation window (ACW)', _acw, (v) => _acw = v),
+                      ],
+                    ),
+                    runLabel: 'Run Extraction Only',
+                    onRun: () => _runBatchFeatureExtractionOnly(),
+                    runEnabled: _batchFeatUsePrep ? _batchPrepFiles.isNotEmpty : _batchFeatFiles.isNotEmpty,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildBatchStageCard(
+                    title: 'Stage 3: Plot Generation',
+                    icon: Icons.legend_toggle,
+                    color: _accentGreen,
+                    files: _batchPlotUseFeat ? [] : _batchPlotFiles,
+                    outputDir: _batchPlotOutputDir,
+                    onSelectOutputDir: () async {
+                      final path = await FilePicker.getDirectoryPath(dialogTitle: 'Select Output Directory for Plots');
+                      if (path != null) setState(() => _batchPlotOutputDir = path);
+                    },
+                    usePreviousOutput: _batchPlotUseFeat,
+                    usePreviousLabel: 'Use Stage 2 extracted CSV',
+                    onUsePreviousChanged: (v) => setState(() => _batchPlotUseFeat = v ?? true),
+                    onAdd: () async {
+                      final pick = await FilePicker.pickFiles(
+                        allowMultiple: true,
+                        type: FileType.custom,
+                        allowedExtensions: ['csv'],
+                      );
+                      if (pick != null) {
+                        setState(() {
+                          for (final f in pick.files) {
+                            if (f.path != null && !_batchPlotFiles.contains(f.path!)) {
+                              _batchPlotFiles.add(f.path!);
+                            }
+                          }
+                        });
+                      }
+                    },
+                    onClear: () => setState(() => _batchPlotFiles.clear()),
+                    onRemove: (idx) => setState(() => _batchPlotFiles.removeAt(idx)),
+                    optionsChild: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Topoplot Windows (N): 10', style: TextStyle(color: Colors.white, fontSize: 12)),
+                        SizedBox(height: 6),
+                        Text('Smoothing Window (epochs): 25', style: TextStyle(color: Colors.white, fontSize: 12)),
+                      ],
+                    ),
+                    runLabel: 'Run Plotting Only',
+                    onRun: () => _runBatchPlottingOnly(),
+                    runEnabled: _batchPlotUseFeat 
+                        ? (_batchFeatUsePrep ? _batchPrepFiles.isNotEmpty : _batchFeatOutputFile != null) 
+                        : _batchPlotFiles.isNotEmpty,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBatchStageCard({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<String> files,
+    String? outputDir,
+    String outputDirLabel = 'Output Directory',
+    required VoidCallback onSelectOutputDir,
+    required VoidCallback onAdd,
+    required VoidCallback onClear,
+    required void Function(int) onRemove,
+    Widget? optionsChild,
+    bool? usePreviousOutput,
+    String? usePreviousLabel,
+    void Function(bool?)? onUsePreviousChanged,
+    required String runLabel,
+    required VoidCallback onRun,
+    bool runEnabled = true,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.08),
+              borderRadius: const BorderRadius.only(topLeft: Radius.circular(8), topRight: Radius.circular(8)),
+              border: Border(bottom: BorderSide(color: _borderColor)),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 16, color: color),
+                const SizedBox(width: 8),
+                Text(title, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                if (usePreviousOutput != null && onUsePreviousChanged != null) ...[
+                  CheckboxListTile(
+                    title: Text(usePreviousLabel ?? '', style: const TextStyle(color: Colors.white, fontSize: 11)),
+                    value: usePreviousOutput,
+                    onChanged: _running ? null : onUsePreviousChanged,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Text(outputDirLabel, style: const TextStyle(color: _textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        outputDir ?? 'Next to source files',
+                        style: TextStyle(color: outputDir == null ? _textMuted : Colors.white, fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.folder_open, size: 16, color: _accentBlue),
+                      onPressed: _running ? null : onSelectOutputDir,
+                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (usePreviousOutput != true) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Selected Files (${files.length})', style: const TextStyle(color: _textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: _running ? null : onAdd,
+                            style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 24)),
+                            child: const Text('Add', style: TextStyle(fontSize: 11)),
+                          ),
+                          TextButton(
+                            onPressed: _running || files.isEmpty ? null : onClear,
+                            style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 24)),
+                            child: const Text('Clear', style: TextStyle(color: Colors.red, fontSize: 11)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    height: 140,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _borderColor),
+                    ),
+                    child: files.isEmpty
+                        ? const Center(child: Text('No files selected', style: TextStyle(color: _textMuted, fontSize: 11)))
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            itemCount: files.length,
+                            separatorBuilder: (_, __) => const Divider(color: _borderColor, height: 1),
+                            itemBuilder: (ctx, idx) {
+                              final path = files[idx];
+                              return Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(path.split(Platform.pathSeparator).last,
+                                        style: const TextStyle(color: Colors.white, fontSize: 11),
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 13, color: _textMuted),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                                    onPressed: _running ? null : () => onRemove(idx),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                  ),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: _borderColor),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.link, size: 14, color: color),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'Linked to previous stage outputs.',
+                            style: TextStyle(color: _textMuted, fontSize: 11, fontStyle: FontStyle.italic),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                if (optionsChild != null) ...[
+                  const Text('Stage Options', style: TextStyle(color: _textMuted, fontSize: 10, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  optionsChild,
+                ],
+              ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: _borderColor)),
+            ),
+            child: FilledButton.icon(
+              onPressed: (_running || !runEnabled) ? null : onRun,
+              icon: const Icon(Icons.play_arrow, size: 14),
+              label: Text(runLabel, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              style: FilledButton.styleFrom(
+                backgroundColor: color,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runBatchPreprocessingOnly() async {
+    if (_batchPrepFiles.isEmpty) return;
+    setState(() { _running = true; _progress = 0; _logVisible = true; });
+    _log('── BATCH PREPROCESSING ONLY (${_batchPrepFiles.length} files) ──');
+    int count = 0;
+    for (final path in _batchPrepFiles) {
+      count++;
+      _log('File $count/${_batchPrepFiles.length}: ${path.split(Platform.pathSeparator).last}');
+      try {
+        final dir = _batchPrepOutputDir ?? Directory(path).parent.path;
+        final base = path.split(Platform.pathSeparator).last.replaceAll(RegExp(r'\.(edf|set|fif|vhdr|orb|signal)$', caseSensitive: false), '');
+        final outPath = '$dir/$base.ccseeg.json';
+
+        var rec = await _loader.load(path);
+        await _service.preprocess(
+          recording: rec,
+          outputPath: outPath,
+          selection: const ViewerSelection.empty(),
+          options: PreprocessingOptions(
+            downsample: _preprocessDownsample,
+            downsampleFreq: double.tryParse(_preDownsample.text) ?? 250,
+            filter: _preprocessFilter,
+            lowHz: double.tryParse(_preLow.text) ?? 0.5,
+            highHz: double.tryParse(_preHigh.text) ?? 40,
+            notchHz: double.tryParse(_preNotch.text) ?? 50,
+            badchannel: _preprocessBadChannels,
+            gedai: _preprocessGedai,
+            interpolate: _preprocessInterpolate,
+            gedaiEpochSeconds: double.tryParse(_epoch.text) ?? 1,
+            gedaiThreshold: 'auto',
+            sourceLocalization: false,
+          ),
+          onProgress: (p, msg) {
+            setState(() => _progress = ((count - 1) + p) / _batchPrepFiles.length);
+            if (msg.isNotEmpty) _log('  $msg');
+          },
+        );
+        _log('✓ Saved: $outPath');
+      } catch (e) {
+        _log('✗ ERROR on $path: $e');
+      }
+    }
+    setState(() { _running = false; _progress = 1.0; });
+    _log('── BATCH PREPROCESSING COMPLETED ──');
+  }
+
+  Future<void> _runBatchFeatureExtractionOnly() async {
+    List<String> inputs;
+    if (_batchFeatUsePrep) {
+      inputs = _batchPrepFiles.map((path) {
+        final dir = _batchPrepOutputDir ?? Directory(path).parent.path;
+        final base = path.split(Platform.pathSeparator).last.replaceAll(RegExp(r'\.(edf|set|fif|vhdr|orb|signal)$', caseSensitive: false), '');
+        return '$dir/$base.ccseeg.json';
+      }).toList();
+    } else {
+      inputs = _batchFeatFiles;
+    }
+    if (inputs.isEmpty) {
+      _log('No preprocessed/raw files selected for feature extraction.');
+      return;
+    }
+    setState(() { _running = true; _progress = 0; _logVisible = true; });
+    _log('── BATCH FEATURE EXTRACTION ONLY ──');
+    
+    String? outCsv = _batchFeatOutputFile;
+    if (outCsv == null) {
+      final firstDir = Directory(inputs.first).parent.path;
+      outCsv = '$firstDir/Batch_extracted_features.csv';
+      _log('Saving output CSV to default: $outCsv');
+    }
+
+    final loadedRecs = <EegRecording>[];
+    int count = 0;
+    for (final path in inputs) {
+      count++;
+      _log('Loading $count/${inputs.length}: ${path.split(Platform.pathSeparator).last}');
+      try {
+        final rec = await _loader.load(path);
+        loadedRecs.add(rec);
+      } catch (e) {
+        _log('✗ Failed to load $path: $e');
+      }
+    }
+
+    if (loadedRecs.isEmpty) {
+      _log('No recordings successfully loaded.');
+      setState(() { _running = false; });
+      return;
+    }
+
+    try {
+      _log('Running extraction for all loaded files...');
+      await _service.run(
+        recordings: loadedRecs,
+        outputPath: outCsv,
+        epochSeconds: double.tryParse(_epoch.text) ?? 2,
+        selection: const ViewerSelection.empty(),
+        options: ExtractionOptions(
+          mode: DurationMode.full,
+          startSeconds: 0,
+          endSeconds: 120,
+          binSeconds: double.tryParse(_bin.text) ?? 60,
+          psd: _psd,
+          fooof: _fooof,
+          irasa: _irasa,
+          nonlinear: _nonlinear,
+          acw: _acw,
+          connectivity: _mic || _mim || _gc || _gcTr || _coh || _plv || _ciplv || _pli || _wpli,
+          mic: _mic,
+          mim: _mim,
+          gc: _gc,
+          gcTr: _gcTr,
+          coh: _coh,
+          plv: _plv,
+          ciplv: _ciplv,
+          pli: _pli,
+          wpli: _wpli,
+          removeNonEeg: _removeNonEeg,
+          exclusions: const [],
+        ),
+        onProgress: (p, msg) {
+          setState(() => _progress = p);
+          if (msg.isNotEmpty) _log('  $msg');
+        },
+      );
+      _log('✓ Saved features to: $outCsv');
+    } catch (e) {
+      _log('✗ Extraction error: $e');
+    } finally {
+      setState(() { _running = false; _progress = 1.0; });
+      _log('── BATCH FEATURE EXTRACTION COMPLETED ──');
+    }
+  }
+
+  Future<void> _runBatchPlottingOnly() async {
+    List<String> inputs;
+    if (_batchPlotUseFeat) {
+      if (_batchFeatOutputFile != null) {
+        inputs = [_batchFeatOutputFile!];
+      } else {
+        final firstInput = _batchFeatUsePrep ? _batchPrepFiles.firstOrNull : _batchFeatFiles.firstOrNull;
+        if (firstInput != null) {
+          final dir = _batchPrepOutputDir ?? Directory(firstInput).parent.path;
+          inputs = ['$dir/Batch_extracted_features.csv'];
+        } else {
+          inputs = [];
+        }
+      }
+    } else {
+      inputs = _batchPlotFiles;
+    }
+
+    if (inputs.isEmpty) {
+      _log('No CSV files selected for plotting.');
+      return;
+    }
+
+    setState(() { _running = true; _progress = 0; _logVisible = true; });
+    _log('── BATCH PLOT GENERATION ONLY ──');
+    try {
+      final outDir = _batchPlotOutputDir ?? Directory(inputs.first).parent.path;
+      _log('Saving plots into: $outDir');
+      
+      final savedPlots = await generateFeaturePlots(
+        csvPaths: inputs,
+        outputDir: outDir,
+        options: PlotOptions(
+          nTopoWindows: 10,
+          smoothingWindow: 25,
+          epochSizeSeconds: double.tryParse(_epoch.text) ?? 2.0,
+        ),
+        onProgress: (p, msg) {
+          setState(() => _progress = p);
+          if (msg.isNotEmpty) _log('  $msg');
+        },
+      );
+      _log('✓ Generated ${savedPlots.length} feature plots in $outDir');
+    } catch (e) {
+      _log('✗ Plotting failed: $e');
+    } finally {
+      setState(() { _running = false; _progress = 1.0; });
+      _log('── BATCH PLOT GENERATION COMPLETED ──');
+    }
+  }
+
+  Future<void> _runUnifiedSequentialPipeline() async {
+    if (_batchPrepFiles.isEmpty) {
+      _log('Staging list is empty. Select files in Stage 1.');
+      return;
+    }
+    setState(() { _running = true; _progress = 0; _logVisible = true; });
+    _log('── STARTING UNIFIED SEQUENTIAL PIPELINE (STAGES 1-3) ──');
+    
+    final preprocessedPaths = <String>[];
+    int count = 0;
+    for (final path in _batchPrepFiles) {
+      count++;
+      _log('[Stage 1/3] Preprocessing $count/${_batchPrepFiles.length}: ${path.split(Platform.pathSeparator).last}');
+      try {
+        final dir = _batchPrepOutputDir ?? Directory(path).parent.path;
+        final base = path.split(Platform.pathSeparator).last.replaceAll(RegExp(r'\.(edf|set|fif|vhdr|orb|signal)$', caseSensitive: false), '');
+        final outPath = '$dir/$base.ccseeg.json';
+
+        var rec = await _loader.load(path);
+        await _service.preprocess(
+          recording: rec,
+          outputPath: outPath,
+          selection: const ViewerSelection.empty(),
+          options: PreprocessingOptions(
+            downsample: _preprocessDownsample,
+            downsampleFreq: double.tryParse(_preDownsample.text) ?? 250,
+            filter: _preprocessFilter,
+            lowHz: double.tryParse(_preLow.text) ?? 0.5,
+            highHz: double.tryParse(_preHigh.text) ?? 40,
+            notchHz: double.tryParse(_preNotch.text) ?? 50,
+            badchannel: _preprocessBadChannels,
+            gedai: _preprocessGedai,
+            interpolate: _preprocessInterpolate,
+            gedaiEpochSeconds: double.tryParse(_epoch.text) ?? 1,
+            gedaiThreshold: 'auto',
+            sourceLocalization: false,
+          ),
+          onProgress: (p, msg) {
+            setState(() => _progress = (0.0 + ((count - 1) + p) / _batchPrepFiles.length) / 3.0);
+            if (msg.isNotEmpty) _log('  $msg');
+          },
+        );
+        preprocessedPaths.add(outPath);
+      } catch (e) {
+        _log('✗ Stage 1 error on $path: $e');
+      }
+    }
+
+    if (preprocessedPaths.isEmpty) {
+      _log('Stage 1 did not yield files. Aborting.');
+      setState(() { _running = false; });
+      return;
+    }
+
+    _log('[Stage 2/3] Extracting Features...');
+    String? outCsv = _batchFeatOutputFile;
+    if (outCsv == null) {
+      final firstDir = Directory(preprocessedPaths.first).parent.path;
+      outCsv = '$firstDir/Batch_extracted_features.csv';
+    }
+
+    final loadedRecs = <EegRecording>[];
+    count = 0;
+    for (final path in preprocessedPaths) {
+      count++;
+      try {
+        final rec = await _loader.load(path);
+        loadedRecs.add(rec);
+      } catch (e) {
+        _log('✗ Failed to load $path: $e');
+      }
+    }
+
+    if (loadedRecs.isEmpty) {
+      _log('Stage 2 did not load any recordings. Aborting.');
+      setState(() { _running = false; });
+      return;
+    }
+
+    try {
+      await _service.run(
+        recordings: loadedRecs,
+        outputPath: outCsv,
+        epochSeconds: double.tryParse(_epoch.text) ?? 2,
+        selection: const ViewerSelection.empty(),
+        options: ExtractionOptions(
+          mode: DurationMode.full,
+          startSeconds: 0,
+          endSeconds: 120,
+          binSeconds: double.tryParse(_bin.text) ?? 60,
+          psd: _psd,
+          fooof: _fooof,
+          irasa: _irasa,
+          nonlinear: _nonlinear,
+          acw: _acw,
+          connectivity: _mic || _mim || _gc || _gcTr || _coh || _plv || _ciplv || _pli || _wpli,
+          mic: _mic,
+          mim: _mim,
+          gc: _gc,
+          gcTr: _gcTr,
+          coh: _coh,
+          plv: _plv,
+          ciplv: _ciplv,
+          pli: _pli,
+          wpli: _wpli,
+          removeNonEeg: _removeNonEeg,
+          exclusions: const [],
+        ),
+        onProgress: (p, msg) {
+          setState(() => _progress = (1.0 + p) / 3.0);
+          if (msg.isNotEmpty) _log('  $msg');
+        },
+      );
+      _log('✓ Stage 2 completed. Saved to: $outCsv');
+    } catch (e) {
+      _log('✗ Stage 2 Feature Extraction failed: $e');
+      setState(() { _running = false; });
+      return;
+    }
+
+    _log('[Stage 3/3] Generating Topo/Line plots...');
+    try {
+      final outDir = _batchPlotOutputDir ?? Directory(outCsv).parent.path;
+      final savedPlots = await generateFeaturePlots(
+        csvPaths: [outCsv],
+        outputDir: outDir,
+        options: PlotOptions(
+          nTopoWindows: 10,
+          smoothingWindow: 25,
+          epochSizeSeconds: double.tryParse(_epoch.text) ?? 2.0,
+        ),
+        onProgress: (p, msg) {
+          setState(() => _progress = (2.0 + p) / 3.0);
+          if (msg.isNotEmpty) _log('  $msg');
+        },
+      );
+      _log('✓ Stage 3 completed. Generated ${savedPlots.length} plots in $outDir');
+    } catch (e) {
+      _log('✗ Stage 3 Plotting failed: $e');
+    } finally {
+      setState(() { _running = false; _progress = 1.0; });
+      _log('── PIPELINE SEQUENTIAL PROCESSING COMPLETED ──');
+    }
+  }
 }

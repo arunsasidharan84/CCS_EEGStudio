@@ -20,6 +20,10 @@ class EegViewer extends StatefulWidget {
     this.onSelectRecording,
     required this.selection,
     required this.onSelectionChanged,
+    this.filterEnabled = false,
+    this.lowHz = 0.5,
+    this.highHz = 40.0,
+    this.notchHz = 50.0,
   });
 
   /// Primary (preprocessed) recording.
@@ -34,6 +38,11 @@ class EegViewer extends StatefulWidget {
 
   final ViewerSelection selection;
   final ValueChanged<ViewerSelection> onSelectionChanged;
+
+  final bool filterEnabled;
+  final double lowHz;
+  final double highHz;
+  final double notchHz;
 
   @override
   State<EegViewer> createState() => _EegViewerState();
@@ -92,29 +101,80 @@ class _EegViewerState extends State<EegViewer> {
       return raw.map((v) => v.toDouble()).toList();
     }
     var out = raw.map((v) => v.toDouble()).toList();
-    if (_bandpassEnabled) {
-      final effectiveRate = (eeg.sampleCount > 0 && eeg.preview.isNotEmpty && eeg.preview.first.isNotEmpty)
-          ? eeg.sampleRate * (eeg.preview.first.length / eeg.sampleCount)
-          : eeg.sampleRate;
-      final dt = 1.0 / effectiveRate;
-      final rc = 1.0 / (2 * math.pi * 40.0);
-      final alpha = dt / (rc + dt);
+    final effectiveRate = (eeg.sampleCount > 0 && eeg.preview.isNotEmpty && eeg.preview.first.isNotEmpty)
+        ? eeg.sampleRate * (eeg.preview.first.length / eeg.sampleCount)
+        : eeg.sampleRate;
+    final dt = 1.0 / effectiveRate;
 
-      final chunkLen = eeg.isEpoched ? (eeg.pointsPerEpoch ?? out.length) : out.length;
-      for (var start = 0; start < out.length; start += chunkLen) {
-        final end = math.min(out.length, start + chunkLen);
-        if (end - start < 2) continue;
-        for (var i = start + 1; i < end; i++) {
-          out[i] = alpha * out[i] + (1 - alpha) * out[i - 1];
+    final chunkLen = eeg.isEpoched ? (eeg.pointsPerEpoch ?? out.length) : out.length;
+
+    for (var start = 0; start < out.length; start += chunkLen) {
+      final end = math.min(out.length, start + chunkLen);
+      if (end - start < 2) continue;
+
+      // 1. High-pass filter (based on widget.lowHz)
+      if (_bandpassEnabled) {
+        final lowHz = widget.lowHz;
+        if (lowHz > 0.0) {
+          final rcHP = 1.0 / (2 * math.pi * lowHz);
+          final alphaHP = rcHP / (rcHP + dt);
+          double prevX = out[start];
+          double prevY = 0.0;
+          out[start] = 0.0;
+          for (var i = start + 1; i < end; i++) {
+            final x = out[i];
+            final y = alphaHP * (prevY + x - prevX);
+            prevX = x;
+            prevY = y;
+            out[i] = y;
+          }
         }
-        for (var i = end - 2; i >= start; i--) {
-          out[i] = alpha * out[i] + (1 - alpha) * out[i + 1];
-        }
-        var chunkMean = 0.0;
-        for (var i = start; i < end; i++) chunkMean += out[i];
-        chunkMean /= (end - start);
-        for (var i = start; i < end; i++) out[i] -= chunkMean;
       }
+
+      // 2. Low-pass filter (EMA, based on widget.highHz)
+      if (_bandpassEnabled) {
+        final highHz = widget.highHz;
+        final rcLP = 1.0 / (2 * math.pi * highHz);
+        final alphaLP = dt / (rcLP + dt);
+        
+        // Forward pass
+        for (var i = start + 1; i < end; i++) {
+          out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i - 1];
+        }
+        // Backward pass for zero-phase shift (approximate bidir filter)
+        for (var i = end - 2; i >= start; i--) {
+          out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i + 1];
+        }
+      }
+
+      // 3. Notch filter (based on widget.notchHz)
+      if (_notchEnabled) {
+        final notchHz = widget.notchHz;
+        final double w0 = 2 * math.pi * notchHz / effectiveRate;
+        final double r = 0.95; // Bandwidth parameter
+        final double cosW0 = math.cos(w0);
+        final double a1 = -2.0 * cosW0;
+        final double b1 = -2.0 * r * cosW0;
+        final double b2 = r * r;
+
+        double x1 = out[start], x2 = out[start];
+        double y1 = out[start], y2 = out[start];
+        for (var i = start + 2; i < end; i++) {
+          final x = out[i];
+          final y = x + a1 * x1 + x2 - b1 * y1 - b2 * y2;
+          x2 = x1;
+          x1 = x;
+          y2 = y1;
+          y1 = y;
+          out[i] = y;
+        }
+      }
+
+      // 4. Baseline Correction (mean subtraction)
+      var chunkMean = 0.0;
+      for (var i = start; i < end; i++) chunkMean += out[i];
+      chunkMean /= (end - start);
+      for (var i = start; i < end; i++) out[i] -= chunkMean;
     }
     return out;
   }
@@ -131,15 +191,27 @@ class _EegViewerState extends State<EegViewer> {
       _currentPage = 0;
       _cachedFilterKey = null;
       _cachedFilterPreview = null;
+      _bandpassEnabled = widget.filterEnabled;
+      _notchEnabled = widget.filterEnabled;
       final n = widget.recording?.labels.length ?? widget.rawRecording?.labels.length ?? 0;
       _visible = List.filled(n, true);
       widget.onSelectionChanged(const ViewerSelection.empty());
+    } else if (widget.filterEnabled != oldWidget.filterEnabled ||
+        widget.lowHz != oldWidget.lowHz ||
+        widget.highHz != oldWidget.highHz ||
+        widget.notchHz != oldWidget.notchHz) {
+      _cachedFilterKey = null;
+      _cachedFilterPreview = null;
+      _bandpassEnabled = widget.filterEnabled;
+      _notchEnabled = widget.filterEnabled;
     }
   }
 
   @override
   void initState() {
     super.initState();
+    _bandpassEnabled = widget.filterEnabled;
+    _notchEnabled = widget.filterEnabled;
     final n = widget.recording?.labels.length ?? widget.rawRecording?.labels.length ?? 0;
     _visible = List.filled(n, true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
