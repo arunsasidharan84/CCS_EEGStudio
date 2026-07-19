@@ -36,8 +36,9 @@ void main() {
   final dataDir = '/Users/arunsasidharan/EEGdata/ThukdamStudy/20260709';
   final outDir  = '/Users/arunsasidharan/EEGdata/ThukdamStudy/DartPlots';
 
-  test('generates feature plots matching PlotFeatures_20260710.py output',
-      () async {
+  test(
+    'generates feature plots matching PlotFeatures_20260710.py output',
+    () async {
     // ── Discover CSV files (same glob as the Python script) ─────────────────
     final dir = Directory(dataDir);
     expect(dir.existsSync(), isTrue,
@@ -102,5 +103,8 @@ void main() {
     }
 
     print('\n✓ All ${saved.length} plots verified.');
-  }, timeout: const Timeout(Duration(minutes: 5)));
+  },
+    skip: !Directory(dataDir).existsSync() ? 'Local data directory not found: $dataDir' : false,
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
 }
