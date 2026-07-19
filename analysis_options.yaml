@@ -1,5 +1,14 @@
 # This file configures the analyzer, which statically analyzes Dart code to
 # check for errors, warnings, and lints.
+
+analyzer:
+  errors:
+    deprecated_member_use: ignore
+    curly_braces_in_flow_control_structures: ignore
+    unintended_html_in_doc_comment: ignore
+    prefer_interpolation_to_compose_strings: ignore
+    unnecessary_brace_in_string_interps: ignore
+    unnecessary_underscores: ignore
 #
 # The issues identified by the analyzer are surfaced in the UI of Dart-enabled
 # IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be

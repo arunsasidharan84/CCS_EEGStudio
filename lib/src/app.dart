@@ -293,272 +293,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     }
   }
 
-  void _openBatchDialog() {
-    final batchFiles = _recordings.map((r) => r.path).toList();
-    bool runPrep = true;
-    bool runSource = false;
-    bool runFeat = true;
-    bool runPlot = true;
 
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF0F172A),
-            title: const Row(
-              children: [
-                Icon(Icons.layers, color: Color(0xFFA855F7), size: 20),
-                SizedBox(width: 8),
-                Text('Automated Batch Processing Pipeline', style: TextStyle(color: Colors.white, fontSize: 16)),
-              ],
-            ),
-            content: SizedBox(
-              width: 580,
-              height: 440,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('${batchFiles.length} files selected for batch', style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.w600)),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E293B)),
-                        onPressed: () async {
-                          final pick = await FilePicker.pickFiles(
-                            allowMultiple: true,
-                            type: FileType.custom,
-                            allowedExtensions: ['edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal'],
-                          );
-                          if (pick != null) {
-                            setDialogState(() {
-                              for (final f in pick.files) {
-                                if (f.path != null && !batchFiles.contains(f.path!)) {
-                                  batchFiles.add(f.path!);
-                                }
-                              }
-                            });
-                          }
-                        },
-                        icon: const Icon(Icons.add, size: 14, color: Colors.white),
-                        label: const Text('Add Files', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 180,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E293B),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF334155)),
-                    ),
-                    child: batchFiles.isEmpty
-                        ? const Center(child: Text('No files selected. Click Add Files.', style: TextStyle(color: Color(0xFF64748B), fontSize: 13)))
-                        : ListView.separated(
-                            padding: const EdgeInsets.all(8),
-                            itemCount: batchFiles.length,
-                            separatorBuilder: (_, __) => const Divider(color: Color(0xFF334155), height: 1),
-                            itemBuilder: (_, i) => Row(
-                              children: [
-                                const Icon(Icons.description, size: 14, color: Color(0xFF94A3B8)),
-                                const SizedBox(width: 6),
-                                Expanded(child: Text(batchFiles[i].split('/').last, style: const TextStyle(color: Colors.white, fontSize: 12))),
-                                IconButton(
-                                  icon: const Icon(Icons.close, size: 14, color: Color(0xFF64748B)),
-                                  onPressed: () => setDialogState(() => batchFiles.removeAt(i)),
-                                ),
-                              ],
-                            ),
-                          ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Select Pipeline Stages to Execute:', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  CheckboxListTile(
-                    title: const Text('1. Preprocessing & Artifact Cleaning (Notch, Bandpass, Bad Ch, GEDAI)', style: TextStyle(color: Colors.white, fontSize: 12)),
-                    value: runPrep,
-                    onChanged: (val) => setDialogState(() => runPrep = val ?? true),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
-                  CheckboxListTile(
-                    title: const Text('2. Source Reconstruction (eLORETA fsaverage 65 ROIs)', style: TextStyle(color: Colors.white, fontSize: 12)),
-                    value: runSource,
-                    onChanged: (val) => setDialogState(() => runSource = val ?? false),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
-                  CheckboxListTile(
-                    title: const Text('3. Feature Extraction & Connectivity Matrix Export', style: TextStyle(color: Colors.white, fontSize: 12)),
-                    value: runFeat,
-                    onChanged: (val) => setDialogState(() => runFeat = val ?? true),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
-                  CheckboxListTile(
-                    title: const Text('4. Generate Topo/Line Plots for Extracted Features', style: TextStyle(color: Colors.white, fontSize: 12)),
-                    value: runPlot,
-                    onChanged: (val) => setDialogState(() => runPlot = val ?? true),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFA855F7)),
-                icon: const Icon(Icons.play_arrow, size: 16, color: Colors.white),
-                onPressed: batchFiles.isEmpty ? null : () {
-                  Navigator.of(ctx).pop();
-                  _runBatchPipeline(batchFiles, runPrep, runSource, runFeat, runPlot);
-                },
-                label: const Text('Start Batch Run', style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _runBatchPipeline(List<String> files, bool doPrep, bool doSource, bool doFeat, bool doPlot) async {
-    setState(() { _running = true; _progress = 0; });
-    _log('── STARTING BATCH PROCESSING (${files.length} files) ──');
-    final generatedCsvs = <String>[];
-    int count = 0;
-    for (final path in files) {
-      count++;
-      _log('Batch file $count/${files.length}: ${path.split('/').last}');
-      try {
-        final cleanPath = path.replaceAll(RegExp(r'\.(ccseeg\.json|source\.ccseeg\.json|json|fif|edf|set|vhdr|fdt|orb|signal)$', caseSensitive: false), '');
-        var currentRec = await _loader.load(path);
-        if (doPrep) {
-          _log('  Running Preprocessing...');
-          currentRec = await _service.preprocess(
-            recording: currentRec,
-            outputPath: '$cleanPath.ccseeg.json',
-            selection: const ViewerSelection.empty(),
-            options: PreprocessingOptions(
-              downsample: _preprocessDownsample,
-              downsampleFreq: double.tryParse(_preDownsample.text) ?? 250,
-              filter: _preprocessFilter,
-              lowHz: double.tryParse(_preLow.text) ?? 0.5,
-              highHz: double.tryParse(_preHigh.text) ?? 40,
-              notchHz: double.tryParse(_preNotch.text) ?? 50,
-              badchannel: _preprocessBadChannels,
-              gedai: _preprocessGedai,
-              interpolate: _preprocessInterpolate,
-              gedaiEpochSeconds: double.tryParse(_epoch.text) ?? 1,
-              gedaiThreshold: 'auto',
-              sourceLocalization: false,
-            ),
-            onProgress: (p, msg) {
-              setState(() => _progress = ((count - 1) + p) / files.length);
-              if (msg.isNotEmpty) _log('    [Prep] $msg');
-            },
-          );
-        }
-        if (doSource) {
-          _log('  Running Source Reconstruction...');
-          currentRec = await _service.preprocess(
-            recording: currentRec,
-            outputPath: '$cleanPath.source.ccseeg.json',
-            selection: const ViewerSelection.empty(),
-            options: PreprocessingOptions(
-              downsample: false,
-              downsampleFreq: 250,
-              filter: false,
-              lowHz: 0.5,
-              highHz: 40,
-              notchHz: 50,
-              badchannel: false,
-              gedai: false,
-              interpolate: false,
-              gedaiEpochSeconds: 1,
-              gedaiThreshold: 'auto',
-              sourceLocalization: true,
-            ),
-            onProgress: (p, msg) {
-              if (msg.isNotEmpty) _log('    [Source] $msg');
-            },
-          );
-        }
-        if (doFeat) {
-          _log('  Extracting Features...');
-          final featCsv = '$cleanPath.features.csv';
-          await _service.run(
-            recordings: [currentRec],
-            outputPath: featCsv,
-            epochSeconds: double.tryParse(_epoch.text) ?? 2,
-            selection: const ViewerSelection.empty(),
-            options: ExtractionOptions(
-              mode: DurationMode.full,
-              startSeconds: 0,
-              endSeconds: currentRec.durationSeconds,
-              binSeconds: double.tryParse(_bin.text) ?? 60,
-              psd: _psd,
-              fooof: _fooof,
-              irasa: _irasa,
-              nonlinear: _nonlinear,
-              acw: _acw,
-              connectivity: _mic || _mim || _gc || _gcTr || _coh || _plv || _ciplv || _pli || _wpli,
-              mic: _mic,
-              mim: _mim,
-              gc: _gc,
-              gcTr: _gcTr,
-              coh: _coh,
-              plv: _plv,
-              ciplv: _ciplv,
-              pli: _pli,
-              wpli: _wpli,
-              removeNonEeg: _removeNonEeg,
-              exclusions: const [],
-            ),
-            onProgress: (p, msg) {
-              setState(() => _progress = ((count - 1) + p) / files.length);
-              if (msg.isNotEmpty) _log('    [Feat] $msg');
-            },
-          );
-          generatedCsvs.add(featCsv);
-        }
-        _log('✓ Finished $path');
-      } catch (e) {
-        _log('✗ BATCH ERROR on $path: $e');
-      }
-    }
-    if (doPlot && generatedCsvs.isNotEmpty) {
-      _log('Generating joint Topo/Line plots for batch features...');
-      try {
-        final outDir = Directory(generatedCsvs.first).parent.path;
-        final savedPlots = await generateFeaturePlots(
-          csvPaths: generatedCsvs,
-          outputDir: outDir,
-          options: PlotOptions(
-            nTopoWindows: 10,
-            smoothingWindow: 25,
-            epochSizeSeconds: double.tryParse(_epoch.text) ?? 2.0,
-          ),
-          onProgress: (p, msg) => _log('  [Plotting] $msg'),
-        );
-        _log('✓ Generated ${savedPlots.length} feature plots in $outDir');
-      } catch (e) {
-        _log('⚠ Plotting failed: $e');
-      }
-    }
-    setState(() { _running = false; _progress = 1.0; });
-    _log('── BATCH PROCESSING COMPLETED ──');
-  }
 
 
   // ── Preprocessing ─────────────────────────────────────────────────────────
@@ -760,16 +495,16 @@ class _FeatureHomeState extends State<FeatureHome> {
         final rec = kept.isNotEmpty ? kept.first : input;
         final rawRec = _rawRecording;
         final ctx = ReportContext(
-          fileName: rec != null ? rec.path.split(Platform.pathSeparator).last : path.split(Platform.pathSeparator).last,
-          channelCount: rec?.labels.length ?? 0,
-          epochCount: rec?.epochCount ?? 0,
-          durationSeconds: rec?.durationSeconds ?? 0,
-          sampleRate: rec?.sampleRate ?? 0,
-          channelLabels: rec?.labels ?? [],
+          fileName: rec.path.split(Platform.pathSeparator).last,
+          channelCount: rec.labels.length,
+          epochCount: rec.epochCount,
+          durationSeconds: rec.durationSeconds,
+          sampleRate: rec.sampleRate,
+          channelLabels: rec.labels,
           rawPreview:     rawRec?.preview,
-          cleanedPreview: rec?.preview,
-          sourceLocalized: rec != null && rec.labels.any((l) => l.contains('lh_') || l.contains('rh_')),
-          sourceRoiLabels: rec != null ? rec.labels.where((l) => l.contains('_')).toList() : [],
+          cleanedPreview: rec.preview,
+          sourceLocalized: rec.labels.any((l) => l.contains('lh_') || l.contains('rh_')),
+          sourceRoiLabels: rec.labels.where((l) => l.contains('_')).toList(),
           prepOptions: PreprocessingOptions(
             downsample: _preprocessDownsample,
             downsampleFreq: double.tryParse(_preDownsample.text) ?? 250,
@@ -1741,28 +1476,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     );
   }
 
-  Widget _sidebarSectionHeader(String label, IconData icon) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-    child: Row(children: [
-      Icon(icon, size: 13, color: _accentBlue),
-      const SizedBox(width: 6),
-      Text(label, style: const TextStyle(color: _accentBlue, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
-    ]),
-  );
 
-  Widget _accordionHeader(String label, IconData icon, bool expanded, VoidCallback onTap) => InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-      child: Row(children: [
-        Icon(icon, size: 13, color: _accentBlue),
-        const SizedBox(width: 6),
-        Text(label, style: const TextStyle(color: _accentBlue, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.8)),
-        const Spacer(),
-        Icon(expanded ? Icons.expand_less : Icons.expand_more, size: 16, color: _textMuted),
-      ]),
-    ),
-  );
 
   Widget _subLabel(String text) => Padding(
     padding: const EdgeInsets.only(top: 2, bottom: 2),
