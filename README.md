@@ -36,10 +36,10 @@ Pre-built installers are compiled automatically via **GitHub Actions** on every 
 
 | Operating System | Package Type | Download Link |
 |------------------|--------------|---------------|
-| **macOS** | Universal ZIP (.app) | [Download macOS](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-macos.zip) |
-| **Windows** | x64 Installer EXE | [Download Windows](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-Installer.exe) |
-| **Linux (Debian/Ubuntu)** | x64 DEB Installer | [Download Linux DEB](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-linux-amd64.deb) |
-| **Linux (RHEL/AlmaLinux)** | x86_64 RPM Installer | [Download Linux RPM](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/latest/CCSEEGStudio-linux-x86_64.rpm) |
+| **macOS** | Universal ZIP (.app) | [Download macOS](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.0.0/CCSEEGStudio-macos.zip) |
+| **Windows** | x64 Installer EXE | [Download Windows](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.0.0/CCSEEGStudio-Installer.exe) |
+| **Linux (Debian/Ubuntu)** | x64 DEB Installer | [Download Linux DEB](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.0.0/CCSEEGStudio-linux-amd64.deb) |
+| **Linux (RHEL/AlmaLinux)** | x86_64 RPM Installer | [Download Linux RPM](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.0.0/CCSEEGStudio-linux-x86_64.rpm) |
 
 **Install on Debian / Ubuntu / Linux Mint:**
 ```sh
@@ -53,7 +53,7 @@ sudo dnf install ./CCSEEGStudio-linux-x86_64.rpm
 ```
 Each release is smoke-tested inside an AlmaLinux 9 Docker container before publication.
 
-The `latest` tag is a rolling pre-release — its assets are replaced on each successful build. The download counter badge counts only assets that are still retained in GitHub Releases. Versioned releases such as `v0.2.0` retain their own permanent asset counters.
+The `latest` tag is a rolling pre-release — its assets are replaced on each successful build. The download counter badge counts only assets that are still retained in GitHub Releases. Versioned releases such as `v1.0.0` retain their own permanent asset counters.
 
 ### For macOS Users
 Because the application is signed ad-hoc, you must clear the macOS Gatekeeper quarantine flag after extracting:
@@ -61,7 +61,7 @@ Because the application is signed ad-hoc, you must clear the macOS Gatekeeper qu
 2. Open **Terminal**.
 3. Copy, Paste & Run the following command:
     ```sh
-    xattr -rd com.apple.quarantine ~/Downloads/CCSEEGStudio.app
+    xattr -rd com.apple.quarantine ~/Downloads/ccs_eeg_app.app
     ```
 4. Now you are ready to run **CCSEEGStudio.app**.
 5. Drag and drop the **CCSEEGStudio.app** into the **Applications** folder so you can open it like any other app in future.

@@ -7,6 +7,7 @@ import 'eeg_viewer.dart';
 import 'extraction_service.dart';
 import 'models.dart';
 import 'plot_dialog.dart';
+import 'feature_plotter.dart';
 import 'recording_loader.dart';
 
 // ── Design tokens (ScoringNidra palette) ──────────────────────────────────
@@ -119,6 +120,7 @@ class _FeatureHomeState extends State<FeatureHome> {
   bool _mic = true, _mim = false, _gc = false, _gcTr = false;
   bool _coh = true, _plv = false, _ciplv = false, _pli = false, _wpli = false;
   bool _removeNonEeg = true;
+  bool _generatePlots = true;
 
   bool _running = false;
   double _progress = 0;
@@ -271,6 +273,7 @@ class _FeatureHomeState extends State<FeatureHome> {
     bool runPrep = true;
     bool runSource = false;
     bool runFeat = true;
+    bool runPlot = true;
 
     showDialog(
       context: context,
@@ -287,7 +290,7 @@ class _FeatureHomeState extends State<FeatureHome> {
             ),
             content: SizedBox(
               width: 580,
-              height: 420,
+              height: 440,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -372,6 +375,14 @@ class _FeatureHomeState extends State<FeatureHome> {
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                   ),
+                  CheckboxListTile(
+                    title: const Text('4. Generate Topo/Line Plots for Extracted Features', style: TextStyle(color: Colors.white, fontSize: 12)),
+                    value: runPlot,
+                    onChanged: (val) => setDialogState(() => runPlot = val ?? true),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                  ),
                 ],
               ),
             ),
@@ -385,7 +396,7 @@ class _FeatureHomeState extends State<FeatureHome> {
                 icon: const Icon(Icons.play_arrow, size: 16, color: Colors.white),
                 onPressed: batchFiles.isEmpty ? null : () {
                   Navigator.of(ctx).pop();
-                  _runBatchPipeline(batchFiles, runPrep, runSource, runFeat);
+                  _runBatchPipeline(batchFiles, runPrep, runSource, runFeat, runPlot);
                 },
                 label: const Text('Start Batch Run', style: TextStyle(color: Colors.white)),
               ),
@@ -396,9 +407,10 @@ class _FeatureHomeState extends State<FeatureHome> {
     );
   }
 
-  Future<void> _runBatchPipeline(List<String> files, bool doPrep, bool doSource, bool doFeat) async {
+  Future<void> _runBatchPipeline(List<String> files, bool doPrep, bool doSource, bool doFeat, bool doPlot) async {
     setState(() { _running = true; _progress = 0; });
     _log('── STARTING BATCH PROCESSING (${files.length} files) ──');
+    final generatedCsvs = <String>[];
     int count = 0;
     for (final path in files) {
       count++;
@@ -459,9 +471,10 @@ class _FeatureHomeState extends State<FeatureHome> {
         }
         if (doFeat) {
           _log('  Extracting Features...');
+          final featCsv = '$cleanPath.features.csv';
           await _service.run(
             recordings: [currentRec],
-            outputPath: '$cleanPath.features.csv',
+            outputPath: featCsv,
             epochSeconds: double.tryParse(_epoch.text) ?? 2,
             selection: const ViewerSelection.empty(),
             options: ExtractionOptions(
@@ -492,10 +505,30 @@ class _FeatureHomeState extends State<FeatureHome> {
               if (msg.isNotEmpty) _log('    [Feat] $msg');
             },
           );
+          generatedCsvs.add(featCsv);
         }
         _log('✓ Finished $path');
       } catch (e) {
         _log('✗ BATCH ERROR on $path: $e');
+      }
+    }
+    if (doPlot && generatedCsvs.isNotEmpty) {
+      _log('Generating joint Topo/Line plots for batch features...');
+      try {
+        final outDir = Directory(generatedCsvs.first).parent.path;
+        final savedPlots = await generateFeaturePlots(
+          csvPaths: generatedCsvs,
+          outputDir: outDir,
+          options: PlotOptions(
+            nTopoWindows: 10,
+            smoothingWindow: 25,
+            epochSizeSeconds: double.tryParse(_epoch.text) ?? 2.0,
+          ),
+          onProgress: (p, msg) => _log('  [Plotting] $msg'),
+        );
+        _log('✓ Generated ${savedPlots.length} feature plots in $outDir');
+      } catch (e) {
+        _log('⚠ Plotting failed: $e');
       }
     }
     setState(() { _running = false; _progress = 1.0; });
@@ -675,6 +708,25 @@ class _FeatureHomeState extends State<FeatureHome> {
         },
       );
       _log('✓ Extraction complete: $path');
+      if (_generatePlots) {
+        _log('Generating Topo/Line plots...');
+        try {
+          final outDir = Directory(path).parent.path;
+          final savedPlots = await generateFeaturePlots(
+            csvPaths: [path],
+            outputDir: outDir,
+            options: PlotOptions(
+              nTopoWindows: 10,
+              smoothingWindow: 25,
+              epochSizeSeconds: double.tryParse(_epoch.text) ?? 2.0,
+            ),
+            onProgress: (p, msg) => _log('  [Plotting] $msg'),
+          );
+          _log('✓ Generated ${savedPlots.length} feature plots in $outDir');
+        } catch (e) {
+          _log('⚠ Plotting failed: $e');
+        }
+      }
       // PDF report — separate try so a write failure doesn't shadow the extraction success
       try {
         final reportPath = path.replaceAll(RegExp(r'\.csv$', caseSensitive: false), '_report.pdf');
@@ -1294,6 +1346,9 @@ class _FeatureHomeState extends State<FeatureHome> {
           const SizedBox(height: 4),
           _sidebarCheck('Remove non-EEG channels + avg ref', _removeNonEeg,
               (v) => _removeNonEeg = v),
+          const SizedBox(height: 4),
+          _sidebarCheck('Generate Topo/Line plots', _generatePlots,
+              (v) => _generatePlots = v),
           const SizedBox(height: 4),
           TextField(
             controller: _exclude,
