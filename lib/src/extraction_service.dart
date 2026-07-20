@@ -72,7 +72,7 @@ class ExtractionOutputs {
   final List<String> perFileCsvs;
 
   /// Everything written, combined file last.
-  List<String> get all => [...perFileCsvs, if (combinedCsv != null) combinedCsv!];
+  List<String> get all => [...perFileCsvs, ?combinedCsv];
 }
 
 class ExtractionService {

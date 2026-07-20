@@ -167,7 +167,7 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Every distinct recording produced so far, for the viewer's stage switcher.
   List<EegRecording> get _stageRecordings => [
     for (final r in [_directInput, _source, _preprocessed, _raw])
-      if (r != null) r,
+      ?r,
   ];
 
   // ══ BATCH MODE STATE ════════════════════════════════════════════════════

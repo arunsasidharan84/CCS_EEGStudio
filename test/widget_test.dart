@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:ccs_eeg_app/src/app.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
