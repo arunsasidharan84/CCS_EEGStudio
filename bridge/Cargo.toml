@@ -14,7 +14,7 @@ name = "ccs-eeg-engine"
 path = "src/main.rs"
 
 [dependencies]
-ccs_algorithm = { path = "../../CCS_Algorithm" }
+ccs_algorithm = { git = "https://github.com/arunsasidharan84/CCS_Algorithm.git" }
 rayon = "1.10"
 rustfft = "6.2"
 nalgebra = "0.32"

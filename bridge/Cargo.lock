@@ -53,6 +53,7 @@ checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 [[package]]
 name = "ccs_algorithm"
 version = "0.1.0"
+source = "git+https://github.com/arunsasidharan84/CCS_Algorithm.git#41f5650a5a76c333197e6244e257b980475efc36"
 dependencies = [
  "flate2",
  "nalgebra",
@@ -66,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "ccs_eeg_engine"
-version = "1.1.3"
+version = "1.2.0"
 dependencies = [
  "approx",
  "ccs_algorithm",
