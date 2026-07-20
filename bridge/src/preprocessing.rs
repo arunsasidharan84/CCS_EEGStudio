@@ -35,6 +35,10 @@ pub struct PreprocessOptions {
     pub epoch_before_gedai: bool,
     #[serde(default)]
     pub epoch_length_seconds: Option<f64>,
+    /// Explicit non-EEG channel labels resolved by the UI.  Empty means "use
+    /// the built-in `is_eeg_label` heuristic".
+    #[serde(default)]
+    pub non_eeg_channels: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -76,7 +80,7 @@ pub fn run(
     options: &PreprocessOptions,
 ) -> Result<PreprocessSummary, String> {
     let mut warnings = Vec::new();
-    normalize_channel_set(rec);
+    normalize_channel_set(rec, &options.non_eeg_channels);
     
     eprintln!("PROGRESS 10 Converting channels to f64...");
     // Convert to f64 for all processing in parallel
@@ -244,14 +248,32 @@ fn save_portable(path: &str, rec: &Recording) -> Result<(), String> {
     file.write_all(b"\n").map_err(err)
 }
 
-fn normalize_channel_set(rec: &mut Recording) {
-    let keep: Vec<usize> = rec
-        .labels
-        .iter()
-        .enumerate()
-        .filter(|(_, label)| is_eeg_label(label))
-        .map(|(i, _)| i)
-        .collect();
+/// Restricts the recording to EEG channels before cleaning.
+///
+/// `non_eeg` is the explicit list resolved by the UI (auto-detected, then
+/// user-overridable).  When it is non-empty it wins outright; the built-in
+/// `is_eeg_label` heuristic is only a fallback for jobs authored outside the
+/// GUI.  Dropping aux channels here matters because bad-channel detection
+/// compares per-channel variance against the median, and an ECG or GSR trace
+/// sitting in that pool skews the median enough to mislabel real EEG channels.
+fn normalize_channel_set(rec: &mut Recording, non_eeg: &[String]) {
+    let keep: Vec<usize> = if non_eeg.is_empty() {
+        rec.labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| is_eeg_label(label))
+            .map(|(i, _)| i)
+            .collect()
+    } else {
+        let drop: std::collections::HashSet<String> =
+            non_eeg.iter().map(|l| l.trim().to_uppercase()).collect();
+        rec.labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| !drop.contains(&label.trim().to_uppercase()))
+            .map(|(i, _)| i)
+            .collect()
+    };
     if !keep.is_empty() && keep.len() < rec.labels.len() {
         rec.labels = keep.iter().map(|i| rec.labels[*i].clone()).collect();
         rec.channels = keep.iter().map(|i| rec.channels[*i].clone()).collect();
@@ -427,13 +449,21 @@ fn reflect_index(index: isize, len: usize) -> usize {
     }
 }
 
+/// Flags channels whose variance is degenerate relative to the recording.
+///
+/// A channel is bad when it is effectively flat (variance below 1e-18, i.e. a
+/// dead or disconnected electrode) or when its variance exceeds 25× the median
+/// across channels (a channel dominated by artefact).
+///
+/// This function previously seeded its result with a hardcoded list —
+/// `AF4, Fz, AF3, F3, T7, PO4, F4` — which marked those seven electrodes bad on
+/// *every* recording regardless of their data, so they were unconditionally
+/// interpolated away. That was leftover debug scaffolding, not a real rule, and
+/// it silently destroyed good frontal and central data. Detection is now purely
+/// data-driven.
 fn detect_bad_channels(rec: &Recording) -> Vec<String> {
-    let mut bad_chs = vec![
-        "AF4".to_string(), "Fz".to_string(), "AF3".to_string(),
-        "F3".to_string(), "T7".to_string(), "PO4".to_string(), "F4".to_string()
-    ];
-    
-    // Also include flatline detection (std < 1e-18)
+    let mut bad_chs: Vec<String> = Vec::new();
+
     let vars: Vec<f64> = rec.channels.iter().map(|ch| variance_f32(ch)).collect();
     let med = median(vars.clone());
     for (i, var) in vars.iter().enumerate() {
@@ -444,7 +474,7 @@ fn detect_bad_channels(rec: &Recording) -> Vec<String> {
             }
         }
     }
-    
+
     bad_chs
 }
 
@@ -1088,6 +1118,85 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn varied_recording() -> Recording {
+        // Six well-behaved channels with comparable variance, one dead channel
+        // and one artefact-dominated channel.
+        let mut channels: Vec<Vec<f32>> = (0..6)
+            .map(|c| {
+                (0..200)
+                    .map(|i| ((i + c) as f32 * 0.1).sin())
+                    .collect::<Vec<f32>>()
+            })
+            .collect();
+        channels.push(vec![0.0; 200]); // dead electrode
+        channels.push((0..200).map(|i| (i as f32) * 50.0).collect()); // artefact
+
+        Recording {
+            rate: 100.0,
+            labels: vec![
+                "AF3".into(), "AF4".into(), "Fz".into(), "F3".into(),
+                "F4".into(), "T7".into(), "DEAD".into(), "NOISY".into(),
+            ],
+            channels,
+            source_epoch_samples: None,
+            epoch_labels: None,
+        }
+    }
+
+    #[test]
+    fn bad_channel_detection_is_data_driven() {
+        let bad = detect_bad_channels(&varied_recording());
+
+        // The dead and artefact channels must be caught.
+        assert!(bad.contains(&"DEAD".to_string()), "flat channel not detected");
+        assert!(bad.contains(&"NOISY".to_string()), "artefact channel not detected");
+
+        // Regression: these seven labels used to be hardcoded as bad on every
+        // recording. Healthy channels carrying those names must now pass.
+        for label in ["AF4", "Fz", "AF3", "F3", "F4", "T7"] {
+            assert!(
+                !bad.contains(&label.to_string()),
+                "{label} was flagged bad despite healthy data — the hardcoded \
+                 bad-channel list has come back"
+            );
+        }
+    }
+
+    #[test]
+    fn clean_recording_has_no_bad_channels() {
+        let rec = Recording {
+            rate: 100.0,
+            labels: vec!["AF3".into(), "Fz".into(), "PO4".into()],
+            channels: (0..3)
+                .map(|c| {
+                    (0..200)
+                        .map(|i| ((i + c) as f32 * 0.1).sin())
+                        .collect::<Vec<f32>>()
+                })
+                .collect(),
+            source_epoch_samples: None,
+            epoch_labels: None,
+        };
+        assert!(
+            detect_bad_channels(&rec).is_empty(),
+            "a clean recording must yield no bad channels"
+        );
+    }
+
+    #[test]
+    fn explicit_non_eeg_list_drives_channel_normalisation() {
+        let mut rec = Recording {
+            rate: 100.0,
+            labels: vec!["Fp1".into(), "ECG".into(), "FT9".into()],
+            channels: vec![vec![1.0; 10], vec![2.0; 10], vec![3.0; 10]],
+            source_epoch_samples: None,
+            epoch_labels: None,
+        };
+        normalize_channel_set(&mut rec, &["ECG".to_string()]);
+        assert_eq!(rec.labels, vec!["Fp1", "FT9"]);
+        assert_eq!(rec.channels.len(), 2);
+    }
 
     #[test]
     fn portable_roundtrip() {

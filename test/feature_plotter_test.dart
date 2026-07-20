@@ -68,7 +68,7 @@ void main() {
 
     // ── Generate plots ────────────────────────────────────────────────────
     print('── Generating ${featureList.length} plots… ──────────────────');
-    final saved = await generateFeaturePlots(
+    final saved = await generateFeaturePlotsDetailed(
       csvPaths: csvFiles,
       outputDir: outDir,
       options: PlotOptions(
@@ -86,16 +86,42 @@ void main() {
 
     // ── Verify output ─────────────────────────────────────────────────────
     print('\n── Saved PNGs ───────────────────────────────────────────────');
-    for (final p in saved) {
-      final file = File(p);
-      expect(file.existsSync(), isTrue, reason: 'PNG not created: $p');
+    for (final r in saved) {
+      final file = File(r.path);
+      expect(file.existsSync(), isTrue, reason: 'PNG not created: ${r.path}');
       final size = file.lengthSync();
-      expect(size, greaterThan(1024), reason: 'PNG suspiciously small: $p');
-      print('  ${p.split('/').last.padRight(48)} ${(size / 1024).toStringAsFixed(1)} KB');
+      expect(size, greaterThan(1024),
+          reason: 'PNG suspiciously small: ${r.path}');
+      print('  ${r.scope.padRight(28)}'
+          '${r.feature.padRight(28)}'
+          '${(size / 1024).toStringAsFixed(1)} KB');
     }
 
-    expect(saved.length, equals(featureList.length),
-        reason: 'Expected ${featureList.length} plots, got ${saved.length}');
+    // Plots are now emitted per source recording plus a group overlay, so the
+    // expected count scales with the number of distinct recordings found.
+    final scopes = saved.map((r) => r.scope).toSet();
+    print('\n── Scopes (${scopes.length}) ──');
+    for (final s in scopes) {
+      print('  $s');
+    }
+
+    expect(saved.length, equals(featureList.length * scopes.length),
+        reason: 'Expected ${featureList.length} plots per scope across '
+            '${scopes.length} scopes, got ${saved.length}');
+
+    // Every feature must be present in every scope.
+    for (final scope in scopes) {
+      final inScope =
+          saved.where((r) => r.scope == scope).map((r) => r.feature).toSet();
+      expect(inScope, containsAll(featureList),
+          reason: 'Scope $scope is missing features');
+    }
+
+    // A group overlay must exist whenever more than one recording was found.
+    if (scopes.length > 1) {
+      expect(scopes, contains('group'),
+          reason: 'Multi-recording run produced no group overlay');
+    }
 
     // Open the output folder for visual inspection.
     if (Platform.isMacOS) {

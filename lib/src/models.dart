@@ -84,6 +84,7 @@ class PreprocessingOptions {
     required this.gedaiThreshold,
     this.sourceLocalization = false,
     this.epochBeforeGedai = false,
+    this.nonEegChannels = const [],
   });
 
   final bool downsample;
@@ -100,6 +101,10 @@ class PreprocessingOptions {
   final bool sourceLocalization;
   final bool epochBeforeGedai;
 
+  /// Channels the user has marked as non-EEG.  These are excluded from bad
+  /// channel detection, interpolation and the common average reference.
+  final List<String> nonEegChannels;
+
   Map<String, dynamic> toJson() => {
     'downsample': downsample,
     'downsample_freq': downsampleFreq,
@@ -114,6 +119,7 @@ class PreprocessingOptions {
     'gedai_threshold': gedaiThreshold,
     'source_localization': sourceLocalization,
     'epoch_before_gedai': epochBeforeGedai,
+    'non_eeg_channels': nonEegChannels,
   };
 }
 
@@ -140,6 +146,7 @@ class ExtractionOptions {
     required this.wpli,
     required this.removeNonEeg,
     required this.exclusions,
+    this.nonEegChannels = const [],
   });
 
   final DurationMode mode;
@@ -164,6 +171,11 @@ class ExtractionOptions {
   final bool removeNonEeg;
   final List<String> exclusions;
 
+  /// Explicit non-EEG channel labels for this recording.  When non-empty the
+  /// engine drops exactly these channels rather than applying its own built-in
+  /// name heuristics, so the UI and the engine can never disagree.
+  final List<String> nonEegChannels;
+
   Map<String, dynamic> toJson() => {
     'mode': mode.name,
     'start_seconds': startSeconds,
@@ -186,5 +198,162 @@ class ExtractionOptions {
     'wpli': wpli,
     'remove_non_eeg': removeNonEeg,
     'exclusions': exclusions,
+    'non_eeg_channels': nonEegChannels,
   };
+}
+
+/// Mutable analysis configuration shared by the Interactive and Batch tabs.
+///
+/// Both tabs bind to the *same* instance, which guarantees the two workflows
+/// expose an identical option set: a feature added here shows up in both
+/// places, and a setting changed in one tab carries over to the other.  This
+/// replaces the previous arrangement where the Batch tab re-declared a subset
+/// of the flags inline and silently omitted connectivity, duration mode and
+/// source localisation.
+class AnalysisConfig {
+  // ── Preprocessing ────────────────────────────────────────────────────────
+  bool downsample = true;
+  double downsampleFreq = 250;
+  bool filter = true;
+  double lowHz = 0.5;
+  double highHz = 40;
+  double notchHz = 50;
+  bool badChannels = true;
+  bool gedai = true;
+  bool interpolate = true;
+  bool epochBeforeGedai = true;
+  double gedaiEpochSeconds = 1;
+
+  // ── Source space ─────────────────────────────────────────────────────────
+  bool sourceLocalization = false;
+
+  // ── Epoching / duration ──────────────────────────────────────────────────
+  double epochSeconds = 2;
+  DurationMode mode = DurationMode.full;
+  double startSeconds = 0;
+  double endSeconds = 120;
+  double binSeconds = 60;
+
+  // ── Feature families ─────────────────────────────────────────────────────
+  bool psd = true;
+  bool fooof = true;
+  bool irasa = true;
+  bool nonlinear = true;
+  bool acw = true;
+
+  // Multivariate connectivity
+  bool mic = true;
+  bool mim = false;
+  bool gc = false;
+  bool gcTr = false;
+
+  // Bivariate connectivity
+  bool coh = true;
+  bool plv = false;
+  bool ciplv = false;
+  bool pli = false;
+  bool wpli = false;
+
+  bool get anyConnectivity =>
+      mic || mim || gc || gcTr || coh || plv || ciplv || pli || wpli;
+
+  bool get anyFeature =>
+      psd || fooof || irasa || nonlinear || acw || anyConnectivity;
+
+  // ── Channel handling ─────────────────────────────────────────────────────
+  /// Drop non-EEG channels and re-reference to the common average.
+  bool removeNonEeg = true;
+
+  /// Comma-separated filename exclusion patterns.
+  List<String> exclusions = const ['OBD', 'HRDT', 'ARSQ'];
+
+  // ── Outputs ──────────────────────────────────────────────────────────────
+  /// Write one features CSV per input file.
+  bool perFileCsv = true;
+
+  /// Also write a single pooled CSV across all inputs.
+  bool combinedCsv = true;
+
+  bool generatePlots = true;
+
+  /// Render a separate plot set for each input file.
+  bool perFilePlots = true;
+
+  /// Render a group overlay plot with one trace per input file.
+  bool groupOverlayPlots = true;
+
+  bool generatePdfReport = true;
+
+  int nTopoWindows = 10;
+  int smoothingWindow = 25;
+
+  // ── Derived option objects ───────────────────────────────────────────────
+
+  PreprocessingOptions toPreprocessingOptions({
+    List<String> nonEegChannels = const [],
+    bool sourceLocalizationOnly = false,
+  }) {
+    if (sourceLocalizationOnly) {
+      return PreprocessingOptions(
+        downsample: false,
+        downsampleFreq: downsampleFreq,
+        filter: false,
+        lowHz: lowHz,
+        highHz: highHz,
+        notchHz: notchHz,
+        badchannel: false,
+        gedai: false,
+        interpolate: false,
+        gedaiEpochSeconds: gedaiEpochSeconds,
+        gedaiThreshold: 'auto',
+        sourceLocalization: true,
+        epochBeforeGedai: false,
+        nonEegChannels: nonEegChannels,
+      );
+    }
+    return PreprocessingOptions(
+      downsample: downsample,
+      downsampleFreq: downsampleFreq,
+      filter: filter,
+      lowHz: lowHz,
+      highHz: highHz,
+      notchHz: notchHz,
+      badchannel: badChannels,
+      gedai: gedai,
+      interpolate: interpolate,
+      gedaiEpochSeconds: gedaiEpochSeconds,
+      gedaiThreshold: 'auto',
+      sourceLocalization: false,
+      epochBeforeGedai: epochBeforeGedai,
+      nonEegChannels: nonEegChannels,
+    );
+  }
+
+  ExtractionOptions toExtractionOptions({
+    List<String> nonEegChannels = const [],
+    bool applyExclusions = true,
+  }) => ExtractionOptions(
+    mode: mode,
+    startSeconds: startSeconds,
+    endSeconds: endSeconds,
+    binSeconds: binSeconds,
+    psd: psd,
+    fooof: fooof,
+    irasa: irasa,
+    nonlinear: nonlinear,
+    acw: acw,
+    connectivity: anyConnectivity,
+    mic: mic,
+    mim: mim,
+    gc: gc,
+    gcTr: gcTr,
+    coh: coh,
+    plv: plv,
+    ciplv: ciplv,
+    pli: pli,
+    wpli: wpli,
+    removeNonEeg: removeNonEeg,
+    exclusions: applyExclusions ? exclusions : const [],
+    nonEegChannels: nonEegChannels,
+  );
 }

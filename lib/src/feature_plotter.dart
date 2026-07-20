@@ -28,6 +28,9 @@ class PlotOptions {
     this.epochSizeSeconds = 2.0,
     this.features = const [],
     this.montagePath,
+    this.segmentByFile = true,
+    this.perFilePlots = true,
+    this.groupOverlay = true,
   });
 
   /// Number of equally-spaced topoplot time windows.
@@ -45,6 +48,38 @@ class PlotOptions {
   /// Optional path to a custom montage file (.loc / .ced / .xyz / .csv).
   /// When null, standard 10-10 positions are used with graceful fallback.
   final String? montagePath;
+
+  /// Split each CSV into one dataset per value of its `filename` column.
+  ///
+  /// Batch runs concatenate many recordings into one CSV.  Without this the
+  /// plotter treated the whole pooled file as a single continuous recording,
+  /// so epochs from different subjects/sessions were averaged together and the
+  /// time axis restarted invisibly at each file boundary.  With it on, each
+  /// source recording becomes its own segment.
+  final bool segmentByFile;
+
+  /// Write a separate plot set per source recording, into a subfolder named
+  /// after that recording.
+  final bool perFilePlots;
+
+  /// Write a group overlay plot per feature, with one colour-coded trace per
+  /// source recording and a legend.
+  final bool groupOverlay;
+}
+
+/// One rendered plot, tagged with the recording it belongs to.
+class FeaturePlotResult {
+  const FeaturePlotResult({
+    required this.path,
+    required this.feature,
+    required this.scope,
+  });
+
+  final String path;
+  final String feature;
+
+  /// Recording name, or `'group'` for the pooled overlay.
+  final String scope;
 }
 
 /// Generates one PNG per feature, saved into [outputDir].
@@ -54,15 +89,51 @@ Future<List<String>> generateFeaturePlots({
   required String outputDir,
   required PlotOptions options,
   void Function(double progress, String message)? onProgress,
-}) async {
-  final saved = <String>[];
+}) async =>
+    (await generateFeaturePlotsDetailed(
+      csvPaths: csvPaths,
+      outputDir: outputDir,
+      options: options,
+      onProgress: onProgress,
+    ))
+        .map((r) => r.path)
+        .toList();
 
-  // 1. Parse all CSV files.
+/// Same as [generateFeaturePlots] but returns which recording each plot
+/// belongs to.
+///
+/// Output layout:
+///
+///     outputDir/
+///       <recording-1>/   ← per-file plots (options.perFilePlots)
+///       <recording-2>/
+///       group/           ← overlay across recordings (options.groupOverlay)
+///
+/// When neither per-file nor overlay output is requested the plots land
+/// directly in [outputDir], preserving the pre-existing single-file behaviour.
+Future<List<FeaturePlotResult>> generateFeaturePlotsDetailed({
+  required List<String> csvPaths,
+  required String outputDir,
+  required PlotOptions options,
+  void Function(double progress, String message)? onProgress,
+}) async {
+  final saved = <FeaturePlotResult>[];
+
+  // 1. Parse all CSV files, splitting each into per-recording datasets.
   onProgress?.call(0.0, 'Reading CSV files…');
   final datasets = <_Dataset>[];
   for (final p in csvPaths) {
     try {
-      datasets.add(_CsvReader.read(p, options.epochSizeSeconds));
+      final parsed = _CsvReader.read(
+        p,
+        options.epochSizeSeconds,
+        segmentByFile: options.segmentByFile,
+      );
+      datasets.addAll(parsed);
+      if (parsed.length > 1) {
+        onProgress?.call(
+            0.0, '  ${_baseName(p)} → ${parsed.length} recordings');
+      }
     } catch (e) {
       onProgress?.call(0.0, '⚠ Skipped $p: $e');
     }
@@ -85,26 +156,82 @@ Future<List<String>> generateFeaturePlots({
   // 3. Load montage.
   final montage = Montage.build(options.montagePath);
 
-  // 4. Render one plot per feature.
-  final dir = Directory(outputDir);
-  if (!dir.existsSync()) dir.createSync(recursive: true);
+  Directory(outputDir).createSync(recursive: true);
 
-  for (var fi = 0; fi < featureList.length; fi++) {
-    final feature = featureList[fi];
-    onProgress?.call(fi / featureList.length, 'Plotting $feature…');
+  // 4. Decide which render passes to run.
+  //    Each pass is (subfolder, datasets to include, overlay?, scope name).
+  final passes = <({String dir, List<_Dataset> data, bool overlay, String scope})>[];
 
-    try {
-      final bytes = await _renderFeaturePlot(
-        feature: feature,
-        datasets: datasets,
-        montage: montage,
-        options: options,
-      );
-      final outPath = '$outputDir/${_safeFilename(feature)}.png';
-      await File(outPath).writeAsBytes(bytes);
-      saved.add(outPath);
-    } catch (e) {
-      onProgress?.call(fi / featureList.length, '⚠ Error plotting $feature: $e');
+  final singleRecording = datasets.length == 1;
+  if (options.perFilePlots && !singleRecording) {
+    for (final ds in datasets) {
+      passes.add((
+        dir: '$outputDir/${_safeDirname(ds.name)}',
+        data: [ds],
+        overlay: false,
+        scope: ds.name,
+      ));
+    }
+  }
+  if (options.groupOverlay && !singleRecording) {
+    passes.add((
+      dir: '$outputDir/group',
+      data: datasets,
+      overlay: true,
+      scope: 'group',
+    ));
+  }
+  if (passes.isEmpty) {
+    passes.add((
+      dir: outputDir,
+      data: datasets,
+      overlay: false,
+      scope: singleRecording ? datasets.first.name : 'all',
+    ));
+  }
+
+  final totalUnits = passes.length * featureList.length;
+  var done = 0;
+
+  for (final pass in passes) {
+    Directory(pass.dir).createSync(recursive: true);
+    onProgress?.call(
+      totalUnits == 0 ? 1.0 : done / totalUnits,
+      pass.overlay
+          ? 'Rendering group overlay across ${pass.data.length} recordings…'
+          : 'Rendering ${pass.scope}…',
+    );
+
+    for (final feature in featureList) {
+      try {
+        final bytes = pass.overlay
+            ? await _renderOverlayPlot(
+                feature: feature,
+                datasets: pass.data,
+                options: options,
+              )
+            : await _renderFeaturePlot(
+                feature: feature,
+                datasets: pass.data,
+                montage: montage,
+                options: options,
+              );
+        final outPath = '${pass.dir}/${_safeFilename(feature)}.png';
+        await File(outPath).writeAsBytes(bytes);
+        saved.add(FeaturePlotResult(
+          path: outPath,
+          feature: feature,
+          scope: pass.scope,
+        ));
+      } catch (e) {
+        onProgress?.call(
+            done / (totalUnits == 0 ? 1 : totalUnits),
+            '⚠ Error plotting $feature (${pass.scope}): $e');
+      }
+      done++;
+      if (totalUnits > 0) {
+        onProgress?.call(done / totalUnits, '');
+      }
     }
   }
 
@@ -139,34 +266,61 @@ class _Sample {
 // ── CSV Reader ─────────────────────────────────────────────────────────────
 
 class _CsvReader {
-  static _Dataset read(String path, double epochSizeSeconds) {
+  /// Metadata columns emitted by the engine alongside the feature values.
+  ///
+  /// These must never be treated as features.  `bin_idx`, `bin_start_s` and
+  /// `bin_end_s` in particular parse as valid doubles, so before this list
+  /// existed they were silently rendered as three meaningless "features" in
+  /// every output folder.
+  static const _metaCols = {
+    'Chan', 'Epoch', 'epoch_label',
+    'filename', 'subjid', 'sessn', 'condn',
+    'bin_idx', 'bin_start_s', 'bin_end_s', 'mode',
+    // Legacy / alternative spellings.
+    'Segment', 'Time', 'File', 'Recording', 'channel', 'chan',
+  };
+
+  /// Reads [path] into one dataset per source recording.
+  ///
+  /// When [segmentByFile] is set and the CSV carries a `filename` column, rows
+  /// are grouped by that column so a pooled batch CSV yields one dataset per
+  /// original recording.  Otherwise the whole file is one dataset.
+  static List<_Dataset> read(
+    String path,
+    double epochSizeSeconds, {
+    bool segmentByFile = true,
+  }) {
     final lines = File(path).readAsLinesSync();
     if (lines.length < 2) throw const FormatException('Empty CSV');
 
     // Parse header.
-    final headers = _splitCsv(lines[0]);
+    final headers = _splitCsv(lines[0]).map((h) => h.trim()).toList();
     final chanIdx = headers.indexOf('Chan');
     final epochIdx = headers.indexOf('Epoch');
     if (chanIdx < 0 || epochIdx < 0) {
       throw const FormatException('CSV missing Chan or Epoch columns');
     }
+    final fileIdx = headers.indexOf('filename');
 
-    // Build feature index (everything that's not Chan/Epoch/Segment/Time).
-    final skipCols = {'Chan', 'Epoch', 'Segment', 'Time', 'File', 'Recording'};
     final featureCols = <String, int>{};
     for (var i = 0; i < headers.length; i++) {
-      if (!skipCols.contains(headers[i])) {
+      if (!_metaCols.contains(headers[i]) && headers[i].isNotEmpty) {
         featureCols[headers[i]] = i;
       }
     }
-
-    // Map: feature → chan → samples.
-    final Map<String, Map<String, List<_Sample>>> data = {};
-    for (final f in featureCols.keys) {
-      data[f] = {};
+    if (featureCols.isEmpty) {
+      throw const FormatException('CSV contains no feature columns');
     }
 
-    double maxTime = 0.0;
+    final csvName = _baseName(path).replaceAll(
+        RegExp(r'(\.features)?\.csv$', caseSensitive: false), '');
+
+    // group key → (feature → chan → samples), plus per-group max time.
+    final groups = <String, Map<String, Map<String, List<_Sample>>>>{};
+    final maxTimes = <String, double>{};
+    // Preserve first-seen ordering so segments render in file order.
+    final order = <String>[];
+
     final conversionFactor = epochSizeSeconds / 60.0; // epochs → minutes
 
     for (var li = 1; li < lines.length; li++) {
@@ -177,22 +331,40 @@ class _CsvReader {
       final epochRaw = double.tryParse(row[epochIdx]);
       if (epochRaw == null) continue;
       final timeMin = epochRaw * conversionFactor;
-      if (timeMin > maxTime) maxTime = timeMin;
+
+      final String key;
+      if (segmentByFile && fileIdx >= 0 && fileIdx < row.length) {
+        final raw = row[fileIdx].trim();
+        key = raw.isEmpty || raw == 'NA' ? csvName : raw;
+      } else {
+        key = csvName;
+      }
+
+      final data = groups.putIfAbsent(key, () {
+        order.add(key);
+        return {for (final f in featureCols.keys) f: <String, List<_Sample>>{}};
+      });
+      if (timeMin > (maxTimes[key] ?? 0.0)) maxTimes[key] = timeMin;
 
       for (final entry in featureCols.entries) {
-        final col = entry.key;
         final idx = entry.value;
         if (idx >= row.length) continue;
         final val = double.tryParse(row[idx]);
         if (val == null || val.isNaN || val.isInfinite) continue;
-        data[col]!.putIfAbsent(chan, () => []).add(_Sample(timeMin, val));
+        data[entry.key]!.putIfAbsent(chan, () => []).add(_Sample(timeMin, val));
       }
     }
 
-    // Derive dataset display name.
-    final name = File(path).uri.pathSegments.last.replaceAll(RegExp(r'\.features\.csv$'), '');
+    if (groups.isEmpty) throw const FormatException('CSV has no usable rows');
 
-    return _Dataset(name: name, features: data, maxTimeMin: maxTime);
+    return [
+      for (final key in order)
+        _Dataset(
+          name: key,
+          features: groups[key]!,
+          maxTimeMin: maxTimes[key] ?? 0.0,
+        ),
+    ];
   }
 
   static List<String> _splitCsv(String line) {
@@ -1098,7 +1270,219 @@ Future<Uint8List> _renderFeaturePlot({
   return byteData.buffer.asUint8List();
 }
 
+// ── Group overlay renderer ─────────────────────────────────────────────────
+
+/// Distinguishable qualitative palette for overlaying recordings.
+const List<ui.Color> _seriesPalette = [
+  ui.Color(0xFF1F77B4), ui.Color(0xFFD62728), ui.Color(0xFF2CA02C),
+  ui.Color(0xFFFF7F0E), ui.Color(0xFF9467BD), ui.Color(0xFF8C564B),
+  ui.Color(0xFFE377C2), ui.Color(0xFF17BECF), ui.Color(0xFFBCBD22),
+  ui.Color(0xFF7F7F7F),
+];
+
+/// Renders one figure per feature with a single shared time axis and one
+/// colour-coded trace per recording, plus a legend.
+///
+/// This is the view that answers "do my subjects/sessions differ?", which the
+/// segmented per-file layout cannot show because each recording gets its own
+/// x-axis there.
+Future<Uint8List> _renderOverlayPlot({
+  required String feature,
+  required List<_Dataset> datasets,
+  required PlotOptions options,
+}) async {
+  // Collapse each recording to a channel-averaged, smoothed time series.
+  final series = <({String name, List<double> x, List<double> y})>[];
+  double xMax = 0.0;
+  double yMin = double.infinity;
+  double yMax = double.negativeInfinity;
+
+  for (final ds in datasets) {
+    final chanMap = ds.features[feature];
+    if (chanMap == null || chanMap.isEmpty) continue;
+
+    final byTime = <double, List<double>>{};
+    for (final samples in chanMap.values) {
+      for (final s in samples) {
+        byTime.putIfAbsent(s.timeMin, () => []).add(s.value);
+      }
+    }
+    if (byTime.isEmpty) continue;
+
+    final xs = byTime.keys.toList()..sort();
+    final raw = [
+      for (final t in xs) byTime[t]!.reduce((a, b) => a + b) / byTime[t]!.length,
+    ];
+    final ys = _rollMean(raw, options.smoothingWindow);
+
+    for (var i = 0; i < xs.length; i++) {
+      if (xs[i] > xMax) xMax = xs[i];
+      if (ys[i] < yMin) yMin = ys[i];
+      if (ys[i] > yMax) yMax = ys[i];
+    }
+    series.add((name: ds.name, x: xs, y: ys));
+  }
+
+  if (series.isEmpty) throw StateError('No data for $feature');
+  if (xMax <= 0) xMax = 0.1;
+  if (yMin == double.infinity) {
+    yMin = 0.0;
+    yMax = 1.0;
+  }
+  final yRange = (yMax - yMin) == 0 ? 1.0 : (yMax - yMin);
+  yMax += yRange * 0.1;
+  yMin -= yRange * 0.1;
+
+  // ── Layout ───────────────────────────────────────────────────────────────
+  const double titleH = 70.0;
+  const double leftPad = 100.0;
+  const double bottomPad = 60.0;
+  const double plotH = 420.0;
+  const double legendRowH = 20.0;
+  final double legendW = 220.0;
+  final double plotW = math.max(520.0, math.min(1200.0, xMax * 22.0));
+  final double figW = leftPad + plotW + legendW + 40.0;
+  final double figH = math.max(
+    titleH + plotH + bottomPad,
+    titleH + series.length * legendRowH + 60.0,
+  );
+
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  canvas.drawRect(
+    ui.Rect.fromLTWH(0, 0, figW, figH),
+    ui.Paint()..color = const ui.Color(0xFFFFFFFF),
+  );
+
+  _drawSmallText(
+    canvas,
+    '$feature — group overlay (${series.length} recordings)',
+    const ui.Offset(0, 18),
+    width: figW,
+    color: const ui.Color(0xFF000000),
+    fontSize: 22,
+    fontWeight: ui.FontWeight.bold,
+    align: ui.TextAlign.center,
+  );
+
+  final plotRect = ui.Rect.fromLTWH(leftPad, titleH, plotW, plotH);
+
+  // Axes frame + horizontal gridlines.
+  final axisPaint = ui.Paint()
+    ..color = const ui.Color(0xFF333333)
+    ..style = ui.PaintingStyle.stroke
+    ..strokeWidth = 1.2;
+  final gridPaint = ui.Paint()
+    ..color = const ui.Color(0xFFE0E0E0)
+    ..style = ui.PaintingStyle.stroke
+    ..strokeWidth = 1.0;
+
+  const int yTicks = 5;
+  for (var i = 0; i <= yTicks; i++) {
+    final frac = i / yTicks;
+    final y = plotRect.bottom - frac * plotRect.height;
+    canvas.drawLine(
+        ui.Offset(plotRect.left, y), ui.Offset(plotRect.right, y), gridPaint);
+    final value = yMin + frac * (yMax - yMin);
+    _drawSmallText(
+      canvas,
+      value.toStringAsFixed(2),
+      ui.Offset(plotRect.left - 92, y - 8),
+      width: 86,
+      fontSize: 12,
+      align: ui.TextAlign.right,
+    );
+  }
+  canvas.drawRect(plotRect, axisPaint);
+
+  // X ticks.
+  const int xTicks = 6;
+  for (var i = 0; i <= xTicks; i++) {
+    final frac = i / xTicks;
+    final x = plotRect.left + frac * plotRect.width;
+    canvas.drawLine(ui.Offset(x, plotRect.bottom),
+        ui.Offset(x, plotRect.bottom + 5), axisPaint);
+    _drawSmallText(
+      canvas,
+      (frac * xMax).toStringAsFixed(1),
+      ui.Offset(x - 25, plotRect.bottom + 8),
+      width: 50,
+      fontSize: 12,
+      align: ui.TextAlign.center,
+    );
+  }
+  _drawSmallText(
+    canvas,
+    'Time (min)',
+    ui.Offset(plotRect.left, plotRect.bottom + 30),
+    width: plotRect.width,
+    fontSize: 13,
+    align: ui.TextAlign.center,
+  );
+
+  // Traces.
+  for (var si = 0; si < series.length; si++) {
+    final s = series[si];
+    final colour = _seriesPalette[si % _seriesPalette.length];
+    final paint = ui.Paint()
+      ..color = colour
+      ..style = ui.PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeJoin = ui.StrokeJoin.round;
+
+    final path = ui.Path();
+    var started = false;
+    for (var i = 0; i < s.x.length; i++) {
+      final px = plotRect.left + (s.x[i] / xMax) * plotRect.width;
+      final py =
+          plotRect.bottom - ((s.y[i] - yMin) / (yMax - yMin)) * plotRect.height;
+      if (!started) {
+        path.moveTo(px, py);
+        started = true;
+      } else {
+        path.lineTo(px, py);
+      }
+    }
+    canvas.drawPath(path, paint);
+
+    // Legend row.
+    final ly = titleH + 6 + si * legendRowH;
+    canvas.drawRect(
+      ui.Rect.fromLTWH(plotRect.right + 18, ly + 5, 14, 4),
+      ui.Paint()..color = colour,
+    );
+    _drawSmallText(
+      canvas,
+      s.name,
+      ui.Offset(plotRect.right + 38, ly),
+      width: legendW - 40,
+      fontSize: 12,
+      color: const ui.Color(0xFF222222),
+    );
+  }
+
+  final picture = recorder.endRecording();
+  final img = await picture.toImage(figW.round(), figH.round());
+  final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+  picture.dispose();
+  img.dispose();
+  if (byteData == null) throw StateError('Failed to encode PNG');
+  return byteData.buffer.asUint8List();
+}
+
 // ── Utilities ──────────────────────────────────────────────────────────────
 
+String _baseName(String path) =>
+    path.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).last;
+
+/// Feature name → safe filename.  Stable across runs so re-running a plot
+/// overwrites the previous PNG instead of littering the folder with
+/// timestamped duplicates.
 String _safeFilename(String feature) =>
-    feature.replaceAll(RegExp(r'[^\w\-.]'), '_') + '_' + DateTime.now().millisecondsSinceEpoch.toString();
+    feature.replaceAll(RegExp(r'[^\w\-.]'), '_');
+
+/// Recording name → safe folder name.
+String _safeDirname(String name) {
+  final cleaned = name.replaceAll(RegExp(r'[^\w\-.]'), '_');
+  return cleaned.isEmpty ? 'recording' : cleaned;
+}

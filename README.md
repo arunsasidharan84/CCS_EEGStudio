@@ -146,6 +146,54 @@ CCS_EEGApp/
 
 ---
 
+## 🧭 Two Workflow Modes
+
+The app has exactly two modes, and the split between them is strict:
+
+| | **Single Recording** | **Batch** |
+|---|---|---|
+| Input | Exactly one file | A queue of many files |
+| Waveform viewer | ✅ Yes | ❌ No |
+| Run granularity | One button per stage — stop, inspect, continue | Per stage, or all stages in sequence |
+| Channel types | Auto-detected, reviewable and overridable per channel | Auto-detected per file |
+| Outputs | One CSV + PDF + plots for that recording | One CSV/PDF/plot folder **per file**, plus a pooled CSV and a group overlay plot |
+| Use it for | Exploring data, checking cleaning quality, dialling in settings | Unattended production runs |
+
+Both modes bind to the **same** analysis configuration object. Every option
+(preprocessing, source localisation, all fourteen feature families, epoching,
+duration mode, plotting) appears in both places, and a setting you tune on one
+recording carries straight over to the batch queue.
+
+### Pipeline stages
+
+Each stage has its own **Run** button and can be entered directly by loading a
+file into it:
+
+1. **Preprocessing** — downsample, filter, bad-channel detection, GEDAI, interpolation
+2. **Source Space** *(optional)* — eLORETA projection to 68 cortical ROIs
+3. **Feature Extraction** — epoching, feature families, CSV output
+4. **Plots & Report** — topoplots, line plots, group overlays, PDF report
+
+### Channel types
+
+Non-EEG channels are **auto-detected from their labels** on load — ECG, EOG,
+EMG, GSR, respiration, PPG, motion/accelerometer, references and trigger
+channels are each recognised as their own kind. The **Channel Types** panel in
+Single Recording mode lists every channel with its detected kind and lets you
+override any of them; whatever you set is exactly what reaches the engine.
+
+This matters because auxiliary channels must be removed *before* the common
+average reference is computed, and before bad-channel detection compares
+per-channel variance against the median — an ECG or GSR trace left in either
+pool corrupts the result for every real EEG channel.
+
+Detection is token- and prefix-based rather than substring-based, so labels like
+`FT9`, `TP10` and `Fp1` are never mistaken for auxiliary channels. EGI-style
+`E1…E256` electrodes are deliberately treated as EEG; if your recording uses
+`E1`/`E2` as AASM eye channels, mark them by hand.
+
+---
+
 ## 🔬 Features
 
 ### Recording Formats Supported
@@ -158,7 +206,7 @@ CCS_EEGApp/
 
 ### Preprocessing
 - **Re-referencing**: Common-average reference (CAR) or arbitrary reference channel subtraction.
-- **Channel exclusion**: Automatic removal of common non-EEG channels (ECG, EMG, EOG, Status).
+- **Channel exclusion**: Auto-detection of non-EEG channels (ECG, EOG, EMG, GSR, respiration, PPG, motion, references, triggers), reviewable and overridable per channel — see [Channel types](#channel-types).
 - **Duration modes**: Full recording, fixed interval (start/end seconds), fixed bin size, or the *middle two minutes* mode used by the CCS pipeline.
 - **Accepted / rejected interval masks**: Restrict extraction to annotated clean segments.
 
@@ -210,9 +258,30 @@ Nine connectivity measures computed via Morlet wavelet cross-spectra at the same
 ![Feature Extraction Options](screenshots/feature_extraction_options.png)
 
 ### Output
-- **Combined CSV export**: One row per (epoch, channel, bin) with all enabled feature columns.
+- **Per-file CSV export**: `<recording>.features.csv` for every input, with one row per (epoch, channel, bin) and all enabled feature columns.
+- **Combined CSV export**: `Batch_features.csv` pooling every recording, carrying `filename`, `subjid`, `sessn` and `condn` columns so rows stay attributable.
+- Both are written by default in Batch mode; either can be switched off.
 - Column names exactly match `ccstools.eegfeatures` output for drop-in pipeline compatibility.
-- Export dialog shows output path; the file is saved alongside the source recording by default.
+
+### Plot output layout
+
+Plots are segmented by source recording rather than pooled, because a batch of
+files typically spans different subjects or sessions that must not be averaged
+together:
+
+```
+<output dir>/
+  subj01_rest/     ← topoplots + line plots for this recording only
+  subj02_rest/
+  subj03_rest/
+  group/           ← one figure per feature, one colour-coded trace per
+                     recording on a shared time axis, with a legend
+```
+
+A pooled `Batch_features.csv` is split back into its constituent recordings via
+its `filename` column, so plotting the combined CSV gives the same layout as
+plotting the per-file CSVs. A single-recording run writes straight into the
+output directory with no subfolders.
 
 ![Batch Analysis Pipeline](screenshots/batch_analysis.png)
 

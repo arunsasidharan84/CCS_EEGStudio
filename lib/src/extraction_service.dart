@@ -58,6 +58,23 @@ class ReportContext {
 
 // ── ExtractionService ─────────────────────────────────────────────────────────
 
+/// What an extraction run produced on disk.
+class ExtractionOutputs {
+  const ExtractionOutputs({
+    required this.combinedCsv,
+    required this.perFileCsvs,
+  });
+
+  /// Pooled CSV across all recordings, or null when not requested.
+  final String? combinedCsv;
+
+  /// One CSV per input recording, in input order.
+  final List<String> perFileCsvs;
+
+  /// Everything written, combined file last.
+  List<String> get all => [...perFileCsvs, if (combinedCsv != null) combinedCsv!];
+}
+
 class ExtractionService {
   Process? _activeProcess;
 
@@ -66,17 +83,30 @@ class ExtractionService {
     _activeProcess = null;
   }
 
-  Future<void> run({
+  /// Runs extraction over [recordings].
+  ///
+  /// Every recording is processed as its own engine job.  Set [perFilePaths] to
+  /// keep those individual results — it maps a recording path to the CSV that
+  /// should receive only that recording's rows.  [outputPath] additionally
+  /// receives the concatenation of everything, unless [writeCombined] is false.
+  ///
+  /// Batch runs previously discarded the per-job CSVs and only kept the pooled
+  /// file, which made it impossible to inspect or re-analyse a single subject
+  /// without re-running the whole queue.
+  Future<ExtractionOutputs> run({
     required List<EegRecording> recordings,
     required String outputPath,
     required ExtractionOptions options,
     required double epochSeconds,
     ViewerSelection selection = const ViewerSelection.empty(),
+    Map<String, String>? perFilePaths,
+    bool writeCombined = true,
     required ProgressCallback onProgress,
   }) async {
     final executable = ExtractionService.findEngine();
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_');
     final parts = <File>[];
+    final writtenPerFile = <String>[];
     try {
       for (var i = 0; i < recordings.length; i++) {
         final recording = recordings[i];
@@ -140,29 +170,54 @@ class ExtractionService {
           );
         }
         parts.add(part);
-      }
-      final sink = File(outputPath).openWrite();
-      try {
-        var wroteHeader = false;
-        for (final part in parts) {
-          var first = true;
-          await for (final line
-              in part
-                  .openRead()
-                  .transform(utf8.decoder)
-                  .transform(const LineSplitter())) {
-            if (first) {
-              first = false;
-              if (wroteHeader) continue;
-              wroteHeader = true;
-            }
-            sink.writeln(line);
-          }
+
+        // Persist this recording's own CSV before it is merged away.
+        final destination = perFilePaths?[recording.path];
+        if (destination != null) {
+          final dir = Directory(File(destination).parent.path);
+          if (!dir.existsSync()) dir.createSync(recursive: true);
+          await part.copy(destination);
+          writtenPerFile.add(destination);
+          onProgress(
+            (i + 1) / recordings.length,
+            '✓ Per-file CSV: ${destination.split(Platform.pathSeparator).last}',
+          );
         }
-      } finally {
-        await sink.close();
       }
-      onProgress(1, 'Saved $outputPath');
+
+      String? combined;
+      if (writeCombined) {
+        final sink = File(outputPath).openWrite();
+        try {
+          var wroteHeader = false;
+          for (final part in parts) {
+            var first = true;
+            await for (final line
+                in part
+                    .openRead()
+                    .transform(utf8.decoder)
+                    .transform(const LineSplitter())) {
+              if (first) {
+                first = false;
+                if (wroteHeader) continue;
+                wroteHeader = true;
+              }
+              sink.writeln(line);
+            }
+          }
+        } finally {
+          await sink.close();
+        }
+        combined = outputPath;
+        onProgress(1, 'Saved $outputPath');
+      } else {
+        onProgress(1, 'Saved ${writtenPerFile.length} per-file CSVs');
+      }
+
+      return ExtractionOutputs(
+        combinedCsv: combined,
+        perFileCsvs: List.unmodifiable(writtenPerFile),
+      );
     } finally {
       await temp.delete(recursive: true);
     }

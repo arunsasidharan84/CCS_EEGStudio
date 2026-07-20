@@ -138,7 +138,7 @@ fn main() -> Result<(), String> {
     }
 
     if job.options.remove_non_eeg {
-        remove_non_eeg_and_reference(&mut recording);
+        remove_non_eeg_and_reference(&mut recording, &job.options.non_eeg_channels);
     }
     let epoch_samples = recording
         .source_epoch_samples
@@ -388,20 +388,43 @@ fn default_preprocessing() -> preprocessing::PreprocessOptions {
 
 
 
-fn remove_non_eeg_and_reference(recording: &mut Recording) {
-    let excluded = [
-        "GSR", "ECG", "EOG", "EMG", "RESP", "X_DIR", "Y_DIR", "Z_DIR",
-    ];
-    let keep: Vec<usize> = recording
-        .labels
-        .iter()
-        .enumerate()
-        .filter(|(_, label)| {
-            let upper = label.to_uppercase();
-            !excluded.iter().any(|name| upper.contains(name))
-        })
-        .map(|(index, _)| index)
-        .collect();
+/// Drops auxiliary channels and re-references the remainder to the common
+/// average.
+///
+/// When `non_eeg` is non-empty it is treated as authoritative: the UI has
+/// already auto-detected and (possibly) had the user override the channel
+/// types, so the engine drops exactly those labels.  Only when the list is
+/// empty — e.g. a job authored outside the GUI — do we fall back to the
+/// built-in name heuristics.
+///
+/// Note the ordering: channels are removed *before* the average is computed,
+/// so ECG/EOG/GSR never leak into the reference.
+fn remove_non_eeg_and_reference(recording: &mut Recording, non_eeg: &[String]) {
+    let keep: Vec<usize> = if non_eeg.is_empty() {
+        const EXCLUDED: [&str; 8] = [
+            "GSR", "ECG", "EOG", "EMG", "RESP", "X_DIR", "Y_DIR", "Z_DIR",
+        ];
+        recording
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| {
+                let upper = label.to_uppercase();
+                !EXCLUDED.iter().any(|name| upper.contains(name))
+            })
+            .map(|(index, _)| index)
+            .collect()
+    } else {
+        let drop: std::collections::HashSet<String> =
+            non_eeg.iter().map(|l| l.trim().to_uppercase()).collect();
+        recording
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| !drop.contains(&label.trim().to_uppercase()))
+            .map(|(index, _)| index)
+            .collect()
+    };
     if !keep.is_empty() && keep.len() != recording.channels.len() {
         recording.labels = keep.iter().map(|i| recording.labels[*i].clone()).collect();
         recording.channels = keep
@@ -720,7 +743,85 @@ mod tests {
             pli: false,
             wpli: false,
             remove_non_eeg: true,
+            non_eeg_channels: Vec::new(),
         };
         assert_eq!(groups(&o, 5, 2.0).unwrap().len(), 2)
+    }
+
+    fn recording_with(labels: &[&str]) -> Recording {
+        Recording {
+            rate: 100.0,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+            // Distinct constant per channel so the average reference is easy
+            // to reason about.
+            channels: (0..labels.len())
+                .map(|i| vec![(i as f32) + 1.0; 8])
+                .collect(),
+            source_epoch_samples: None,
+            epoch_labels: None,
+        }
+    }
+
+    #[test]
+    fn explicit_non_eeg_list_is_authoritative() {
+        // "FT9" contains no aux token, but the built-in heuristic is substring
+        // based and this test pins that the explicit list is what governs.
+        let mut rec = recording_with(&["Fp1", "FT9", "Cz", "ECG", "GSR"]);
+        let non_eeg = vec!["ECG".to_string(), "GSR".to_string()];
+        remove_non_eeg_and_reference(&mut rec, &non_eeg);
+        assert_eq!(rec.labels, vec!["Fp1", "FT9", "Cz"]);
+        assert_eq!(rec.channels.len(), 3);
+    }
+
+    #[test]
+    fn explicit_list_matches_case_insensitively() {
+        let mut rec = recording_with(&["Fp1", "ecg", "Cz"]);
+        remove_non_eeg_and_reference(&mut rec, &["ECG".to_string()]);
+        assert_eq!(rec.labels, vec!["Fp1", "Cz"]);
+    }
+
+    #[test]
+    fn explicit_list_can_keep_a_channel_the_heuristic_would_drop() {
+        // User overrode "EOG1" back to EEG: passing an empty-of-it list must
+        // keep it, even though the built-in heuristic contains "EOG".
+        let mut rec = recording_with(&["Fp1", "EOG1", "Cz"]);
+        remove_non_eeg_and_reference(&mut rec, &["SomethingElse".to_string()]);
+        assert_eq!(rec.labels, vec!["Fp1", "EOG1", "Cz"]);
+    }
+
+    #[test]
+    fn empty_list_falls_back_to_heuristic() {
+        let mut rec = recording_with(&["Fp1", "ECG", "GSR", "Cz"]);
+        remove_non_eeg_and_reference(&mut rec, &[]);
+        assert_eq!(rec.labels, vec!["Fp1", "Cz"]);
+    }
+
+    #[test]
+    fn aux_channels_are_excluded_from_the_average_reference() {
+        // Two EEG channels at 1.0 and 2.0 plus a huge aux channel. If the aux
+        // channel leaked into the mean, the EEG values would be dragged far
+        // from their true ±0.5 deviation about their own average.
+        let mut rec = Recording {
+            rate: 100.0,
+            labels: vec!["Fp1".into(), "Cz".into(), "ECG".into()],
+            channels: vec![vec![1.0; 4], vec![2.0; 4], vec![1000.0; 4]],
+            source_epoch_samples: None,
+            epoch_labels: None,
+        };
+        remove_non_eeg_and_reference(&mut rec, &["ECG".to_string()]);
+        assert_eq!(rec.labels, vec!["Fp1", "Cz"]);
+        assert!((rec.channels[0][0] - (-0.5)).abs() < 1e-5);
+        assert!((rec.channels[1][0] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn never_removes_every_channel() {
+        // A misconfigured list must not leave the recording empty.
+        let mut rec = recording_with(&["Fp1", "Cz"]);
+        remove_non_eeg_and_reference(
+            &mut rec,
+            &["Fp1".to_string(), "Cz".to_string()],
+        );
+        assert_eq!(rec.labels.len(), 2);
     }
 }
