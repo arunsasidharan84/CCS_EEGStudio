@@ -74,6 +74,13 @@ class FifLoader {
         Float32List.fromList([for (final val in ch as List) (val as num).toDouble()]),
     ];
 
+    final markers = data['markers'] == null
+        ? const <EegMarker>[]
+        : [
+            for (final m in data['markers'] as List)
+              EegMarker.fromJson(m as Map<String, dynamic>),
+          ];
+
     return EegRecording(
       path: path,
       sampleRate: srate,
@@ -84,6 +91,7 @@ class FifLoader {
       epochCount: epochCount,
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
+      markers: markers,
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'epoch_service.dart';
 import 'models.dart';
 
 /// EEG waveform viewer styled after ScoringNidra / trainNidra.
@@ -18,6 +19,7 @@ class EegViewer extends StatefulWidget {
     this.rawRecording,
     this.allRecordings,
     this.onSelectRecording,
+    this.onEpochsGenerated,
     required this.selection,
     required this.onSelectionChanged,
     this.filterEnabled = false,
@@ -35,6 +37,8 @@ class EegViewer extends StatefulWidget {
   /// Optional list of all pipeline stages/recordings for stage switching.
   final List<EegRecording>? allRecordings;
   final ValueChanged<EegRecording>? onSelectRecording;
+  final ValueChanged<EegRecording>? onEpochsGenerated;
+
 
   final ViewerSelection selection;
   final ValueChanged<ViewerSelection> onSelectionChanged;
@@ -75,6 +79,9 @@ class _EegViewerState extends State<EegViewer> {
   double _accumulatedDragDx = 0.0;
   String? _cachedFilterKey;
   List<Float32List>? _cachedFilterPreview;
+
+  final Set<String> _disabledMarkerLabels = {};
+
 
   EegRecording? get _activeEeg =>
       (_showRaw && widget.rawRecording != null)
@@ -605,6 +612,28 @@ class _EegViewerState extends State<EegViewer> {
           side: const BorderSide(color: Color(0xFF334155)),
           onPressed: () => _showChannelsDialog(context, eeg),
         ),
+        if (eeg.markers.isNotEmpty) ...[
+          ActionChip(
+            avatar: const Icon(Icons.bookmark, size: 14, color: Color(0xFFF59E0B)),
+            label: Text(
+              'Markers (${eeg.markers.length})',
+              style: const TextStyle(fontSize: 12, color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFF1E293B),
+            side: const BorderSide(color: Color(0xFF334155)),
+            onPressed: () => _showMarkersDialog(context, eeg),
+          ),
+          ActionChip(
+            avatar: const Icon(Icons.cut, size: 14, color: Color(0xFF10B981)),
+            label: const Text(
+              'Epoch Events',
+              style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: const Color(0xFF065F46),
+            side: const BorderSide(color: Color(0xFF10B981)),
+            onPressed: () => _showEpochGeneratorDialog(context, eeg),
+          ),
+        ],
       ],
     );
   }
@@ -1017,6 +1046,12 @@ class _EegViewerState extends State<EegViewer> {
                 autoscale: _autoscale,
                 stacked: _stacked,
                 traceSpacing: _traceSpacing,
+                visibleMarkers: [
+                  for (final m in eeg.markers)
+                    if (!_disabledMarkerLabels.contains(m.label))
+                      if (!eeg.isEpoched || m.epochIndex == _currentEpochIndex || (m.epochIndex == null && m.startSeconds <= eeg.epochDurationSeconds))
+                        m,
+                ],
               ),
               child: const SizedBox.expand(),
             ),
@@ -1064,7 +1099,357 @@ class _EegViewerState extends State<EegViewer> {
     Color(0xFF26A69A), // Teal 400
     Color(0xFF8D6E63), // Brown
   ];
+
+  void _showMarkersDialog(BuildContext context, EegRecording eeg) {
+    final counts = <String, int>{};
+    for (final m in eeg.markers) {
+      final label = m.label;
+      counts[label] = (counts[label] ?? 0) + 1;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF0F172A),
+            title: Row(
+              children: [
+                const Icon(Icons.bookmark, color: Color(0xFFF59E0B)),
+                const SizedBox(width: 8),
+                Text('Markers & Annotations (${eeg.markers.length})'),
+              ],
+            ),
+            content: SizedBox(
+              width: 550,
+              height: 450,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Marker Types & Visibility',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: counts.entries.map((entry) {
+                      final label = entry.key;
+                      final count = entry.value;
+                      final isVisible = !_disabledMarkerLabels.contains(label);
+                      return FilterChip(
+                        selected: isVisible,
+                        avatar: Icon(Icons.circle, size: 10, color: _markerColor(label)),
+                        label: Text('$label ($count)', style: const TextStyle(fontSize: 12)),
+                        onSelected: (val) {
+                          setState(() {
+                            if (val) {
+                              _disabledMarkerLabels.remove(label);
+                            } else {
+                              _disabledMarkerLabels.add(label);
+                            }
+                          });
+                          setDialogState(() {});
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const Divider(height: 24, color: Color(0xFF334155)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Event Timeline (Click to Jump)',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.cut, size: 14),
+                        label: const Text('Epoch from Events'),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _showEpochGeneratorDialog(context, eeg);
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF334155)),
+                      ),
+                      child: ListView.separated(
+                        itemCount: eeg.markers.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFF334155)),
+                        itemBuilder: (ctx, i) {
+                          final m = eeg.markers[i];
+                          final label = m.label;
+                          final isVisible = !_disabledMarkerLabels.contains(label);
+                          return ListTile(
+                            dense: true,
+                            enabled: isVisible,
+                            leading: Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: _markerColor(label),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            title: Text(
+                              '$label (${m.type})',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: isVisible ? Colors.white : Colors.white38,
+                              ),
+                            ),
+                            subtitle: Text(
+                              'Onset: ${m.startSeconds.toStringAsFixed(3)} s'
+                              '${m.durationSeconds > 0 ? ' | Dur: ${m.durationSeconds.toStringAsFixed(3)} s' : ''}',
+                              style: const TextStyle(fontSize: 11, color: Colors.white54),
+                            ),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            onTap: () {
+                              if (eeg.isEpoched && m.epochIndex != null) {
+                                setState(() {
+                                  _currentEpochIndex = m.epochIndex!.clamp(0, eeg.epochCount - 1);
+                                });
+                              } else {
+                                final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
+                                setState(() {
+                                  _startSeconds = (m.startSeconds - 2.0).clamp(0.0, maxStart);
+                                });
+                              }
+                              Navigator.pop(ctx);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showEpochGeneratorDialog(BuildContext context, EegRecording eeg) {
+    final uniqueMarkers = <String>{};
+    for (final m in eeg.markers) {
+      if (m.label.isNotEmpty) uniqueMarkers.add(m.label);
+    }
+    final selectedEvents = Set<String>.from(uniqueMarkers);
+
+    final tminCtrl = TextEditingController(text: '-0.5');
+    final tmaxCtrl = TextEditingController(text: '1.2');
+    final bMinCtrl = TextEditingController(text: '-0.2');
+    final bMaxCtrl = TextEditingController(text: '0.0');
+    bool applyBaseline = true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF0F172A),
+            title: const Row(
+              children: [
+                Icon(Icons.cut, color: Color(0xFF10B981)),
+                SizedBox(width: 8),
+                Text('Generate Event-Based Epochs'),
+              ],
+            ),
+            content: SizedBox(
+              width: 500,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Select Target Event IDs / Markers:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 140),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF334155)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: uniqueMarkers.map((evt) {
+                            final count = eeg.markers.where((m) => m.label == evt).length;
+                            final isSel = selectedEvents.contains(evt);
+                            return FilterChip(
+                              selected: isSel,
+                              avatar: Icon(Icons.circle, size: 10, color: _markerColor(evt)),
+                              label: Text('$evt ($count)', style: const TextStyle(fontSize: 12)),
+                              onSelected: (val) {
+                                setDialogState(() {
+                                  if (val) {
+                                    selectedEvents.add(evt);
+                                  } else {
+                                    selectedEvents.remove(evt);
+                                  }
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Epoch Time Window (Seconds relative to event):',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: tminCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'tmin (s)',
+                              helperText: 'e.g. -0.5',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: tmaxCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'tmax (s)',
+                              helperText: 'e.g. 1.2',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    CheckboxListTile(
+                      title: const Text('Apply Baseline Correction', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                      subtitle: const Text('Subtract channel mean during baseline window', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                      value: applyBaseline,
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (v) => setDialogState(() => applyBaseline = v ?? true),
+                    ),
+                    if (applyBaseline) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: bMinCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Baseline Min (s)',
+                                helperText: 'e.g. -0.2',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: bMaxCtrl,
+                              keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Baseline Max (s)',
+                                helperText: 'e.g. 0.0',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.flash_on, size: 16),
+                label: const Text('Generate Epochs'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: selectedEvents.isEmpty
+                    ? null
+                    : () {
+                        try {
+                          final tmin = double.tryParse(tminCtrl.text) ?? -0.5;
+                          final tmax = double.tryParse(tmaxCtrl.text) ?? 1.2;
+                          final bMin = double.tryParse(bMinCtrl.text) ?? -0.2;
+                          final bMax = double.tryParse(bMaxCtrl.text) ?? 0.0;
+
+                          final epoched = EpochService().generateEpochs(
+                            recording: eeg,
+                            options: EpochOptions(
+                              targetEvents: selectedEvents.toList(),
+                              tmin: tmin,
+                              tmax: tmax,
+                              applyBaseline: applyBaseline,
+                              baselineMin: bMin,
+                              baselineMax: bMax,
+                            ),
+                          );
+
+                          Navigator.pop(ctx);
+                          widget.onEpochsGenerated?.call(epoched);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                '✓ Successfully generated ${epoched.epochCount} epochs '
+                                '(${epoched.pointsPerEpoch} pts/epoch) from selected events.',
+                              ),
+                              backgroundColor: const Color(0xFF10B981),
+                            ),
+                          );
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error generating epochs: $e'),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        }
+                      },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
+
 
 // ── Signal Painter ────────────────────────────────────────────────────────────
 class _EegSignalPainter extends CustomPainter {
@@ -1079,6 +1464,7 @@ class _EegSignalPainter extends CustomPainter {
     required this.autoscale,
     required this.stacked,
     required this.traceSpacing,
+    this.visibleMarkers = const [],
   });
 
   final EegRecording eeg;
@@ -1091,6 +1477,7 @@ class _EegSignalPainter extends CustomPainter {
   final bool autoscale;
   final bool stacked;
   final double traceSpacing;
+  final List<EegMarker> visibleMarkers;
 
   static const _timeAxisH = 20.0;
 
@@ -1159,6 +1546,53 @@ class _EegSignalPainter extends CustomPainter {
       )..layout();
       endLbl.paint(canvas, Offset(drawW + 4, 4));
     }
+
+    // ── Markers & Annotations ─────────────────────────────────────────
+    final windowEnd = startSeconds + windowSeconds;
+    for (final marker in visibleMarkers) {
+      if (marker.startSeconds >= startSeconds - marker.durationSeconds &&
+          marker.startSeconds <= windowEnd) {
+        final relSec = marker.startSeconds - startSeconds;
+        final x = (relSec / windowSeconds) * drawW;
+        final color = _markerColor(marker.label);
+
+        if (marker.durationSeconds > 0) {
+          final durW = (marker.durationSeconds / windowSeconds) * drawW;
+          final durRect = Rect.fromLTWH(math.max(0.0, x), 0, durW, drawH);
+          canvas.drawRect(
+            durRect,
+            Paint()..color = color.withOpacity(0.12),
+          );
+        }
+
+        final linePaint = Paint()
+          ..color = color.withOpacity(0.75)
+          ..strokeWidth = 1.5;
+        canvas.drawLine(Offset(x, 0), Offset(x, drawH), linePaint);
+
+        final labelSpan = TextSpan(
+          text: ' ${marker.label} ',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 9.5,
+            fontWeight: FontWeight.bold,
+          ),
+        );
+        final labelPainter = TextPainter(
+          text: labelSpan,
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        final double bgX = x.clamp(0.0, math.max(0.0, size.width - labelPainter.width - 4)).toDouble();
+        final bgRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(bgX, 2, labelPainter.width + 4, labelPainter.height + 2),
+          const Radius.circular(3),
+        );
+        canvas.drawRRect(bgRect, Paint()..color = color.withOpacity(0.85));
+        labelPainter.paint(canvas, Offset(bgX + 2, 3));
+      }
+    }
+
 
     // ── Lane separator lines ─────────────────────────────────────────
     if (numLanes > 1) {
@@ -1352,5 +1786,22 @@ class _EegSignalPainter extends CustomPainter {
       old.gain != gain ||
       old.autoscale != autoscale ||
       old.stacked != stacked ||
-      old.traceSpacing != traceSpacing;
+      old.traceSpacing != traceSpacing ||
+      old.visibleMarkers != visibleMarkers;
 }
+
+Color _markerColor(String label) {
+  final hash = label.hashCode.abs();
+  const palette = [
+    Color(0xFFEF4444),
+    Color(0xFFF59E0B),
+    Color(0xFF10B981),
+    Color(0xFF3B82F6),
+    Color(0xFF8B5CF6),
+    Color(0xFFEC4899),
+    Color(0xFF06B6D4),
+    Color(0xFF84CC16),
+  ];
+  return palette[hash % palette.length];
+}
+

@@ -59,6 +59,34 @@ fn main() -> Result<(), String> {
         }
         labels.truncate(channel_count);
         
+        let mut markers = Vec::new();
+        if let Some(events_vec) = mat.fields.get("event") {
+            for ev in events_vec {
+                let event_type = ev.fields.get("type")
+                    .and_then(|v| v.first())
+                    .map(|v| if !v.text.is_empty() { v.text.clone() } else if let Some(n) = v.numeric.first() { format!("{}", n) } else { "Event".to_string() })
+                    .unwrap_or_else(|| "Event".to_string());
+                let latency = ev.fields.get("latency")
+                    .and_then(|v| v.first())
+                    .and_then(|v| v.numeric.first().copied())
+                    .unwrap_or(1.0);
+                let duration = ev.fields.get("duration")
+                    .and_then(|v| v.first())
+                    .and_then(|v| v.numeric.first().copied())
+                    .unwrap_or(0.0);
+
+                let start_seconds = if srate > 0.0 { (latency - 1.0) / srate } else { 0.0 };
+                let duration_seconds = if srate > 0.0 { duration / srate } else { 0.0 };
+
+                markers.push(serde_json::json!({
+                    "type": "Event",
+                    "description": event_type,
+                    "start_seconds": start_seconds.max(0.0),
+                    "duration_seconds": duration_seconds.max(0.0),
+                }));
+            }
+        }
+
         let datfile = data.map(|d| d.text.clone()).unwrap_or_default();
         let json = serde_json::json!({
             "sample_rate": srate,
@@ -67,7 +95,8 @@ fn main() -> Result<(), String> {
             "epoch_count": trials,
             "points_per_epoch": points_per_epoch,
             "datfile": datfile,
-            "format": "set"
+            "format": "set",
+            "markers": markers,
         });
         println!("{}", serde_json::to_string_pretty(&json).map_err(err)?);
         return Ok(());

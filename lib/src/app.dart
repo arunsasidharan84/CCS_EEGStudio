@@ -10,6 +10,8 @@ import 'models.dart';
 import 'plot_dialog.dart';
 import 'feature_plotter.dart';
 import 'recording_loader.dart';
+import 'erp_analysis.dart';
+import 'topostats_analysis.dart';
 
 // ── Design tokens (ScoringNidra palette) ──────────────────────────────────
 const _bgColor = Color(0xFF0F172A);
@@ -22,7 +24,7 @@ const _accentPink = Color(0xFFA855F7);
 const _textMuted = Color(0xFF94A3B8);
 const _borderColor = Color(0x1FFFFFFF);
 
-const _rawExtensions = ['edf', 'set', 'fif', 'vhdr', 'orb', 'signal'];
+const _rawExtensions = ['edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal'];
 const _processedExtensions = ['json', 'fif'];
 const _anyInputExtensions = [
   'edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal',
@@ -210,7 +212,7 @@ class _FeatureHomeState extends State<FeatureHome>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _tabs.addListener(() => setState(() {}));
     _preLow.addListener(_syncConfigFromControllers);
     _preHigh.addListener(_syncConfigFromControllers);
@@ -702,13 +704,37 @@ class _FeatureHomeState extends State<FeatureHome>
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 _buildSingleRecordingTab(),
+                ErpAnalysisView(activeRecording: _activeRecording),
+                TopoStatsView(featureFilePaths: _featureFilesForTopoStats),
                 _buildBatchTab(),
               ],
             ),
           ),
+          _buildLogPanel(),
         ],
       ),
     );
+  }
+
+  List<String> get _featureFilesForTopoStats {
+    if (_batchFeatOutputs.isNotEmpty) return _batchFeatOutputs;
+    if (_featuresCsv != null && File(_featuresCsv!).existsSync()) return [_featuresCsv!];
+    if (_activeRecording != null) {
+      try {
+        final parentDir = File(_activeRecording!.path).parent;
+        if (parentDir.existsSync()) {
+          final list = parentDir
+              .listSync()
+              .whereType<File>()
+              .map((f) => f.path)
+              .where((p) => p.endsWith('.features.csv'))
+              .toList();
+          list.sort();
+          if (list.isNotEmpty) return list;
+        }
+      } catch (_) {}
+    }
+    return [];
   }
 
   Widget _buildSingleRecordingTab() {
@@ -741,6 +767,10 @@ class _FeatureHomeState extends State<FeatureHome>
                     // direct analysis input without disturbing stage outputs.
                     setState(() => _directInput = rec == _raw ? null : rec);
                   },
+                  onEpochsGenerated: (epoched) {
+                    if (_running) return;
+                    setState(() => _preprocessed = epoched);
+                  },
                   selection: _selection,
                   onSelectionChanged: (v) => setState(() => _selection = v),
                   filterEnabled: _cfg.filter,
@@ -749,7 +779,6 @@ class _FeatureHomeState extends State<FeatureHome>
                   notchHz: _cfg.notchHz,
                 ),
               ),
-              _buildLogPanel(),
             ],
           ),
         ),
@@ -760,7 +789,7 @@ class _FeatureHomeState extends State<FeatureHome>
   // ── Top bar ─────────────────────────────────────────────────────────────
 
   Widget _buildTopBar() {
-    final onBatch = _tabs.index == 1;
+    final onBatch = _tabs.index == 3;
     return Container(
       height: 54,
       color: const Color(0xFF060D1A),
@@ -787,7 +816,7 @@ class _FeatureHomeState extends State<FeatureHome>
                   color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
           const SizedBox(width: 20),
           SizedBox(
-            width: 430,
+            width: 720,
             child: TabBar(
               controller: _tabs,
               labelPadding: EdgeInsets.zero,
@@ -805,8 +834,8 @@ class _FeatureHomeState extends State<FeatureHome>
                     mainAxisAlignment: MainAxisAlignment.center,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Single Recording'),
-                      Text('one file · with viewer',
+                      Text('1. Preprocess & View'),
+                      Text('Raw → Clean Waveforms',
                           style: TextStyle(
                               fontSize: 9.5,
                               fontWeight: FontWeight.normal,
@@ -820,8 +849,38 @@ class _FeatureHomeState extends State<FeatureHome>
                     mainAxisAlignment: MainAxisAlignment.center,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('Batch'),
-                      Text('many files · unattended',
+                      Text('2. Epoch & ERP Analysis'),
+                      Text('Event Waveforms & Stats',
+                          style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.normal,
+                              color: _textMuted)),
+                    ],
+                  ),
+                ),
+                Tab(
+                  height: 60,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('3. Features & TopoStats'),
+                      Text('e-TFCE & FDR Topomaps',
+                          style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.normal,
+                              color: _textMuted)),
+                    ],
+                  ),
+                ),
+                Tab(
+                  height: 60,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Batch Queue Mode'),
+                      Text('Many Files · Unattended',
                           style: TextStyle(
                               fontSize: 9.5,
                               fontWeight: FontWeight.normal,

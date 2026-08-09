@@ -143,7 +143,7 @@ pub fn run(
     } else {
         Vec::new()
     };
-    if options.epoch_before_gedai || options.epoch_length_seconds.is_some() {
+    if rec.source_epoch_samples.is_none() && (options.epoch_before_gedai || options.epoch_length_seconds.is_some()) {
         let sec = options.epoch_length_seconds.unwrap_or(options.gedai_epoch_seconds);
         if sec > 0.0 {
             let pts = (rec.rate * sec).round() as usize;
@@ -161,11 +161,15 @@ pub fn run(
     let mut sensai_score = None;
     let mut thresholds = Vec::new();
     if options.gedai && rec.channels.len() >= 4 {
+        let gedai_sec = rec
+            .source_epoch_samples
+            .map(|pts| pts as f64 / rec.rate)
+            .unwrap_or(options.gedai_epoch_seconds);
         match gedai(
             &mut f64_channels,
             rec.rate,
             &rec.labels,
-            options.gedai_epoch_seconds,
+            gedai_sec,
             &options.gedai_threshold,
         ) {
             Ok(result) => {

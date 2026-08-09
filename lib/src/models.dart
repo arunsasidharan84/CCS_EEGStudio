@@ -14,6 +14,44 @@ class LoadedEeg {
   final String sourceDescription;
 }
 
+class EegMarker {
+  const EegMarker({
+    required this.type,
+    required this.description,
+    required this.startSeconds,
+    this.durationSeconds = 0.0,
+    this.channelIndex,
+    this.epochIndex,
+  });
+
+  final String type;
+  final String description;
+  final double startSeconds;
+  final double durationSeconds;
+  final int? channelIndex;
+  final int? epochIndex;
+
+  String get label => description.isNotEmpty ? description : type;
+
+  Map<String, dynamic> toJson() => {
+        'type': type,
+        'description': description,
+        'start_seconds': startSeconds,
+        'duration_seconds': durationSeconds,
+        if (channelIndex != null) 'channel_index': channelIndex,
+        if (epochIndex != null) 'epoch_index': epochIndex,
+      };
+
+  factory EegMarker.fromJson(Map<String, dynamic> json) => EegMarker(
+        type: json['type'] as String? ?? 'Marker',
+        description: json['description'] as String? ?? '',
+        startSeconds: (json['start_seconds'] as num?)?.toDouble() ?? 0.0,
+        durationSeconds: (json['duration_seconds'] as num?)?.toDouble() ?? 0.0,
+        channelIndex: (json['channel_index'] as num?)?.toInt(),
+        epochIndex: (json['epoch_index'] as num?)?.toInt(),
+      );
+}
+
 class EegRecording {
   const EegRecording({
     required this.path,
@@ -26,6 +64,7 @@ class EegRecording {
     this.epochCount = 1,
     this.pointsPerEpoch,
     this.epochLabels,
+    this.markers = const [],
   });
 
   final String path;
@@ -38,12 +77,14 @@ class EegRecording {
   final int epochCount;
   final int? pointsPerEpoch;
   final List<String>? epochLabels;
+  final List<EegMarker> markers;
 
   double get durationSeconds => sampleCount / sampleRate;
   bool get isEpoched => epochCount > 1 && (pointsPerEpoch ?? 0) > 0;
   double get epochDurationSeconds =>
       isEpoched ? (pointsPerEpoch! / sampleRate) : durationSeconds;
 }
+
 
 enum DurationMode { full, interval, bins, middleTwoMinutes }
 

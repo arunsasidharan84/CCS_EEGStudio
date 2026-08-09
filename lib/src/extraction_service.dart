@@ -111,12 +111,37 @@ class ExtractionService {
       for (var i = 0; i < recordings.length; i++) {
         final recording = recordings[i];
         final part = File('${temp.path}/part_$i.csv');
+        String inputPath = recording.path;
+        String inputFormat = recording.format;
+
+        if (!File(recording.path).existsSync() || recording.isEpoched || recording.format == 'ccseeg') {
+          final tempInput = File('${temp.path}/input_temp_$i.ccseeg.json');
+          final jsonMap = {
+            'format': 'ccseeg-v1',
+            'sample_rate': recording.sampleRate,
+            'labels': recording.labels,
+            'channels': [
+              for (final ch in recording.preview)
+                [for (final val in ch) val],
+            ],
+            if (recording.pointsPerEpoch != null)
+              'source_epoch_samples': recording.pointsPerEpoch,
+            if (recording.epochLabels != null)
+              'epoch_labels': recording.epochLabels,
+            if (recording.markers.isNotEmpty)
+              'markers': [for (final m in recording.markers) m.toJson()],
+          };
+          await tempInput.writeAsString(jsonEncode(jsonMap));
+          inputPath = tempInput.path;
+          inputFormat = 'ccseeg';
+        }
+
         final job = File('${temp.path}/job_$i.json');
         await job.writeAsString(
           jsonEncode({
-            'input': recording.path,
+            'input': inputPath,
             'output': part.path,
-            'format': recording.format,
+            'format': inputFormat,
             'data_path': recording.dataPath,
             'sample_rate': recording.sampleRate,
             'labels': recording.labels,
@@ -233,13 +258,38 @@ class ExtractionService {
     final executable = ExtractionService.findEngine();
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_pre_');
     try {
+      String inputPath = recording.path;
+      String inputFormat = recording.format;
+
+      if (!File(recording.path).existsSync() || recording.isEpoched || recording.format == 'ccseeg') {
+        final tempInput = File('${temp.path}/input_temp.ccseeg.json');
+        final jsonMap = {
+          'format': 'ccseeg-v1',
+          'sample_rate': recording.sampleRate,
+          'labels': recording.labels,
+          'channels': [
+            for (final ch in recording.preview)
+              [for (final val in ch) val],
+          ],
+          if (recording.pointsPerEpoch != null)
+            'source_epoch_samples': recording.pointsPerEpoch,
+          if (recording.epochLabels != null)
+            'epoch_labels': recording.epochLabels,
+          if (recording.markers.isNotEmpty)
+            'markers': [for (final m in recording.markers) m.toJson()],
+        };
+        await tempInput.writeAsString(jsonEncode(jsonMap));
+        inputPath = tempInput.path;
+        inputFormat = 'ccseeg';
+      }
+
       final job = File('${temp.path}/preprocess.json');
       await job.writeAsString(
         jsonEncode({
           'job_type': 'preprocess',
-          'input': recording.path,
+          'input': inputPath,
           'output': outputPath,
-          'format': recording.format,
+          'format': inputFormat,
           'data_path': recording.dataPath,
           'sample_rate': recording.sampleRate,
           'labels': recording.labels,

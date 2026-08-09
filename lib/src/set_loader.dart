@@ -75,6 +75,13 @@ class SetLoader {
       preview = _readFdt(fdtPath, channelCount, sampleCount);
     }
 
+    final markers = data['markers'] == null
+        ? const <EegMarker>[]
+        : [
+            for (final m in data['markers'] as List)
+              EegMarker.fromJson(m as Map<String, dynamic>),
+          ];
+
     return EegRecording(
       path: path,
       dataPath: fdtPath,
@@ -85,6 +92,7 @@ class SetLoader {
       format: 'set',
       epochCount: epochCount,
       pointsPerEpoch: pointsPerEpoch,
+      markers: markers,
     );
   }
 

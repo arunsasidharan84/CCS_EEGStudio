@@ -70,6 +70,12 @@ class RecordingLoader {
     final epochLabels = json['epoch_labels'] == null
         ? null
         : [for (final value in json['epoch_labels'] as List) value as String];
+    final markers = json['markers'] == null
+        ? const <EegMarker>[]
+        : [
+            for (final m in json['markers'] as List)
+              EegMarker.fromJson(m as Map<String, dynamic>),
+          ];
     const stride = 1;
     return EegRecording(
       path: path,
@@ -86,6 +92,7 @@ class RecordingLoader {
       epochCount: epochCount,
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
+      markers: markers,
     );
   }
 }
