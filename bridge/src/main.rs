@@ -23,6 +23,12 @@ struct Job {
     selected_channels: Option<Vec<String>>,
     accepted_intervals: Option<Vec<[f64; 2]>>,
     rejected_intervals: Option<Vec<[f64; 2]>>,
+    #[serde(default)]
+    microstate_inputs: Vec<String>,
+    #[serde(default)]
+    microstate_names: Vec<String>,
+    #[serde(default)]
+    microstate_options: microstates::MicrostateOptions,
 }
 
 fn main() -> Result<(), String> {
@@ -31,6 +37,33 @@ fn main() -> Result<(), String> {
         .ok_or("usage: ccs-eeg-engine <job.json>")?;
     let job: Job = serde_json::from_slice(&fs::read(&job_path).map_err(err)?).map_err(err)?;
     eprintln!("PROGRESS 0 Loading {}", job.input);
+    if job.job_type == "microstates" {
+        let paths = if job.microstate_inputs.is_empty() {
+            vec![job.input.clone()]
+        } else {
+            job.microstate_inputs.clone()
+        };
+        let mut recordings = Vec::new();
+        for (index, path) in paths.into_iter().enumerate() {
+            let recording = preprocessing::load_portable(Path::new(&path))?;
+            let name = job.microstate_names.get(index).cloned().unwrap_or_else(|| {
+                Path::new(&path).file_stem().and_then(|x| x.to_str())
+                    .unwrap_or("recording").trim_end_matches(".ccseeg").to_string()
+            });
+            recordings.push((name, recording));
+        }
+        let mut report = |percent: usize, message: &str| {
+            eprintln!("PROGRESS {percent} {message}")
+        };
+        let result = microstates::analyse(
+            recordings,
+            Path::new(&job.output),
+            &job.microstate_options,
+            &mut report,
+        )?;
+        println!("{}", serde_json::to_string_pretty(&result).map_err(err)?);
+        return Ok(());
+    }
     
     if job.job_type == "inspect_set" {
         let mat = set_loader::load_set(Path::new(&job.input))?;

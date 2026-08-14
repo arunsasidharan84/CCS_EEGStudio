@@ -4,4 +4,5 @@
 pub use ccs_algorithm::eeg::*;
 pub use ccs_algorithm::{cardiac, coupled, sqi};
 
+pub mod microstates;
 pub mod stats;

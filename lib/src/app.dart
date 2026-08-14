@@ -12,6 +12,7 @@ import 'feature_plotter.dart';
 import 'recording_loader.dart';
 import 'erp_analysis.dart';
 import 'topostats_analysis.dart';
+import 'microstate_analysis.dart';
 
 // ── Design tokens (ScoringNidra palette) ──────────────────────────────────
 const _bgColor = Color(0xFF0F172A);
@@ -27,8 +28,125 @@ const _borderColor = Color(0x1FFFFFFF);
 const _rawExtensions = ['edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal'];
 const _processedExtensions = ['json', 'fif'];
 const _anyInputExtensions = [
-  'edf', 'set', 'fif', 'vhdr', 'json', 'orb', 'signal',
+  'edf',
+  'set',
+  'fif',
+  'vhdr',
+  'json',
+  'orb',
+  'signal',
 ];
+
+// ── Pipeline module definitions ───────────────────────────────────────
+enum _Module {
+  loadRaw,
+  preprocess,
+  sourceSpace,
+  featureExtraction,
+  plotsReport,
+  erpAnalysis,
+  topoStats,
+  microstates,
+}
+
+class _PipelinePreset {
+  final String label;
+  final String description;
+  final IconData icon;
+  final List<_Module> modules;
+  const _PipelinePreset(this.label, this.description, this.icon, this.modules);
+}
+
+const _presets = <String, _PipelinePreset>{
+  'continuous': _PipelinePreset(
+    'Continuous EEG',
+    'Clean, inspect, extract features, and report',
+    Icons.multiline_chart,
+    [
+      _Module.loadRaw,
+      _Module.preprocess,
+      _Module.sourceSpace,
+      _Module.featureExtraction,
+      _Module.plotsReport,
+    ],
+  ),
+  'erp': _PipelinePreset(
+    'ERP Analysis',
+    'Epoch and analyse event responses',
+    Icons.show_chart,
+    [_Module.loadRaw, _Module.preprocess, _Module.erpAnalysis],
+  ),
+  'full': _PipelinePreset(
+    'Full Pipeline',
+    'All analysis modules in one workspace',
+    Icons.account_tree,
+    [
+      _Module.loadRaw,
+      _Module.preprocess,
+      _Module.sourceSpace,
+      _Module.featureExtraction,
+      _Module.plotsReport,
+      _Module.erpAnalysis,
+      _Module.topoStats,
+      _Module.microstates,
+    ],
+  ),
+  'microstates': _PipelinePreset(
+    'EEG Microstates',
+    'Canonical maps, dynamics, and sequence complexity',
+    Icons.grain,
+    [_Module.loadRaw, _Module.preprocess, _Module.microstates],
+  ),
+};
+
+String _moduleLabel(_Module m) => switch (m) {
+  _Module.loadRaw => 'Load Raw',
+  _Module.preprocess => 'Preprocess',
+  _Module.sourceSpace => 'Source Space',
+  _Module.featureExtraction => 'Feature Extraction',
+  _Module.plotsReport => 'Plots & Report',
+  _Module.erpAnalysis => 'ERP Analysis',
+  _Module.topoStats => 'TopoStats',
+  _Module.microstates => 'Microstates',
+};
+
+String _moduleSubtitle(_Module m) => switch (m) {
+  _Module.loadRaw => 'EDF, SET, FIF, VHDR',
+  _Module.preprocess => 'Filter, re-reference, clean',
+  _Module.sourceSpace => 'eLORETA inverse solution',
+  _Module.featureExtraction => 'Spectral, connectivity, non-linear',
+  _Module.plotsReport => 'Topomaps & line plots',
+  _Module.erpAnalysis => 'Event waveforms & stats',
+  _Module.topoStats => 'e-TFCE & FDR topomaps',
+  _Module.microstates => 'Segmentation, dynamics & complexity',
+};
+
+IconData _moduleIcon(_Module m) => switch (m) {
+  _Module.loadRaw => Icons.file_open,
+  _Module.preprocess => Icons.cleaning_services,
+  _Module.sourceSpace => Icons.psychology,
+  _Module.featureExtraction => Icons.analytics,
+  _Module.plotsReport => Icons.stacked_line_chart,
+  _Module.erpAnalysis => Icons.show_chart,
+  _Module.topoStats => Icons.map,
+  _Module.microstates => Icons.grain,
+};
+
+Color _moduleColor(_Module m) => switch (m) {
+  _Module.loadRaw => _accentBlue,
+  _Module.preprocess => _accentPurple,
+  _Module.sourceSpace => _accentBlue,
+  _Module.featureExtraction => _accentGreen,
+  _Module.plotsReport => _accentAmber,
+  _Module.erpAnalysis => const Color(0xFFEC4899),
+  _Module.topoStats => const Color(0xFF06B6D4),
+  _Module.microstates => const Color(0xFF06B6D4),
+};
+
+bool _moduleHasViewer(_Module m) => switch (m) {
+  _Module.loadRaw || _Module.preprocess || _Module.sourceSpace => true,
+  _ => false,
+};
 
 class CcsEegApp extends StatelessWidget {
   const CcsEegApp({super.key});
@@ -46,8 +164,12 @@ class CcsEegApp extends StatelessWidget {
       useMaterial3: true,
       inputDecorationTheme: const InputDecorationTheme(
         border: OutlineInputBorder(borderSide: BorderSide(color: _borderColor)),
-        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: _borderColor)),
-        focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: _accentBlue)),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: _borderColor),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: _accentBlue),
+        ),
         labelStyle: TextStyle(color: _textMuted),
         isDense: true,
         filled: true,
@@ -55,7 +177,9 @@ class CcsEegApp extends StatelessWidget {
       ),
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? _accentBlue : Colors.transparent,
+          (s) => s.contains(WidgetState.selected)
+              ? _accentBlue
+              : Colors.transparent,
         ),
         side: const BorderSide(color: _textMuted),
         checkColor: WidgetStateProperty.all(Colors.white),
@@ -69,22 +193,22 @@ class CcsEegApp extends StatelessWidget {
 //  App structure
 // ═══════════════════════════════════════════════════════════════════════════
 //
-//  The app has exactly two modes, and the split between them is now strict:
+//  Single-workspace pipeline builder:
 //
-//    SINGLE RECORDING  — one file at a time, with the waveform viewer.  Every
-//                        pipeline stage (Preprocess → Source → Extract → Plot)
-//                        has its own Run button so you can stop, inspect the
-//                        result in the viewer, and continue.  This is the mode
-//                        for exploring data and dialling in settings.
+//    PIPELINE SIDEBAR    — Configurable flowchart of analysis modules.
+//                         Preset pipelines: Continuous EEG, ERP, Full.
+//    MAIN CONTENT AREA   — Shows the selected module's settings, viewer,
+//                         or results.
+//    BATCH PANEL          — Collapsible bottom panel for multi-file
+//                         unattended execution of the configured pipeline.
 //
-//    BATCH             — a queue of many files, no viewer.  Runs the same
-//                        stages with the same settings across every file
-//                        unattended, and writes per-file outputs plus a pooled
-//                        summary.  This is the mode for production runs.
-//
-//  Both modes bind to a single shared `AnalysisConfig`, so the option sets can
-//  never drift apart and settings you tune on one recording carry straight
-//  over to the batch queue.
+//  Analysis modules (parallel, composable):
+//    PREPROCESS & VIEW  — Load raw EEG, preprocess, inspect waveforms.
+//    ERP ANALYSIS       — Raw → Epoch → Preprocess → ERP stats.
+//    FEATURE ANALYSIS   — Preprocessed EEG → epoch-level features.
+//    EEG MICROSTATES    — (Coming soon) Microstate segmentation.
+//    PLOTS & REPORT     — Topomaps & line plots from feature CSVs.
+//    TOPOSTATS          — e-TFCE & FDR topomaps.
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -105,7 +229,12 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Single source of truth for every analysis option, shared by both modes.
   final _cfg = AnalysisConfig();
 
-  late final TabController _tabs;
+  // ── Pipeline state ──────────────────────────────────────────────────────
+  String _presetKey = 'continuous';
+  late List<_Module> _pipeline;
+  _Module? _selectedModule;
+  bool _sidebarCollapsed = false;
+  bool _batchPanelExpanded = false;
 
   // ── Text controllers (bound to _cfg on change) ──────────────────────────
   final _start = TextEditingController(text: '0');
@@ -168,8 +297,7 @@ class _FeatureHomeState extends State<FeatureHome>
 
   /// Every distinct recording produced so far, for the viewer's stage switcher.
   List<EegRecording> get _stageRecordings => [
-    for (final r in [_directInput, _source, _preprocessed, _raw])
-      ?r,
+    for (final r in [_directInput, _source, _preprocessed, _raw]) ?r,
   ];
 
   // ══ BATCH MODE STATE ════════════════════════════════════════════════════
@@ -195,14 +323,10 @@ class _FeatureHomeState extends State<FeatureHome>
   bool _running = false;
   double _progress = 0;
 
-  // ── Accordion state ─────────────────────────────────────────────────────
-  bool _step1Expanded = true;
+  // ── Sub-accordion state ──────────────────────────────────────────────────
   bool _step1OptsExpanded = false;
-  bool _step2Expanded = false;
-  bool _step3Expanded = true;
   bool _step3FeatExpanded = true;
   bool _step3OtherExpanded = false;
-  bool _step4Expanded = false;
   bool _channelsExpanded = false;
 
   // ── Log panel ───────────────────────────────────────────────────────────
@@ -212,8 +336,8 @@ class _FeatureHomeState extends State<FeatureHome>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 4, vsync: this);
-    _tabs.addListener(() => setState(() {}));
+    _pipeline = List.of(_presets['continuous']!.modules);
+    _selectedModule = null;
     _preLow.addListener(_syncConfigFromControllers);
     _preHigh.addListener(_syncConfigFromControllers);
     _preNotch.addListener(_syncConfigFromControllers);
@@ -241,7 +365,8 @@ class _FeatureHomeState extends State<FeatureHome>
       ..downsampleFreq =
           double.tryParse(_preDownsample.text) ?? _cfg.downsampleFreq
       ..epochSeconds = double.tryParse(_epoch.text) ?? _cfg.epochSeconds
-      ..gedaiEpochSeconds = double.tryParse(_epoch.text) ?? _cfg.gedaiEpochSeconds
+      ..gedaiEpochSeconds =
+          double.tryParse(_epoch.text) ?? _cfg.gedaiEpochSeconds
       ..startSeconds = double.tryParse(_start.text) ?? _cfg.startSeconds
       ..endSeconds = double.tryParse(_end.text) ?? _cfg.endSeconds
       ..binSeconds = double.tryParse(_bin.text) ?? _cfg.binSeconds
@@ -257,11 +382,18 @@ class _FeatureHomeState extends State<FeatureHome>
 
   @override
   void dispose() {
-    _tabs.dispose();
     for (final c in [
-      _start, _end, _bin, _epoch, _exclude,
-      _preDownsample, _preLow, _preHigh, _preNotch,
-      _topoWindows, _smoothing,
+      _start,
+      _end,
+      _bin,
+      _epoch,
+      _exclude,
+      _preDownsample,
+      _preLow,
+      _preHigh,
+      _preNotch,
+      _topoWindows,
+      _smoothing,
     ]) {
       c.dispose();
     }
@@ -386,8 +518,10 @@ class _FeatureHomeState extends State<FeatureHome>
     if (nonEeg.isEmpty) {
       _log('  All ${_channels.labels.length} channels detected as EEG.');
     } else {
-      _log('  ${_channels.eegCount} EEG, ${nonEeg.length} non-EEG '
-          '(${nonEeg.take(8).join(', ')}${nonEeg.length > 8 ? '…' : ''})');
+      _log(
+        '  ${_channels.eegCount} EEG, ${nonEeg.length} non-EEG '
+        '(${nonEeg.take(8).join(', ')}${nonEeg.length > 8 ? '…' : ''})',
+      );
     }
   }
 
@@ -574,7 +708,9 @@ class _FeatureHomeState extends State<FeatureHome>
   Future<void> _runPlotsForActive() async {
     final csv = _featuresCsv;
     if (csv == null) {
-      _log('Run feature extraction first, or use Generate Plots… to pick a CSV.');
+      _log(
+        'Run feature extraction first, or use Generate Plots… to pick a CSV.',
+      );
       return;
     }
     setState(() {
@@ -608,8 +744,10 @@ class _FeatureHomeState extends State<FeatureHome>
       );
       final scopes = results.map((r) => r.scope).toSet();
       setState(() => _plotsDir = dir);
-      _log('✓ ${results.length} plots across ${scopes.length} '
-          '${scopes.length == 1 ? 'recording' : 'recordings'} → $dir');
+      _log(
+        '✓ ${results.length} plots across ${scopes.length} '
+        '${scopes.length == 1 ? 'recording' : 'recordings'} → $dir',
+      );
     } catch (e) {
       _log('⚠ Plotting failed: $e');
     }
@@ -621,8 +759,10 @@ class _FeatureHomeState extends State<FeatureHome>
     ExtractionOptions options,
   ) async {
     try {
-      final reportPath =
-          csvPath.replaceAll(RegExp(r'\.csv$', caseSensitive: false), '_report.pdf');
+      final reportPath = csvPath.replaceAll(
+        RegExp(r'\.csv$', caseSensitive: false),
+        '_report.pdf',
+      );
       final ctx = ReportContext(
         fileName: _shortName(rec.path),
         channelCount: rec.labels.length,
@@ -632,8 +772,9 @@ class _FeatureHomeState extends State<FeatureHome>
         channelLabels: rec.labels,
         rawPreview: _raw?.preview,
         cleanedPreview: rec.preview,
-        sourceLocalized:
-            rec.labels.any((l) => l.contains('lh_') || l.contains('rh_')),
+        sourceLocalized: rec.labels.any(
+          (l) => l.contains('lh_') || l.contains('rh_'),
+        ),
         sourceRoiLabels: rec.labels.where((l) => l.contains('_')).toList(),
         prepOptions: _cfg.toPreprocessingOptions(
           nonEegChannels: _channels.nonEegChannels,
@@ -680,12 +821,15 @@ class _FeatureHomeState extends State<FeatureHome>
 
   void _openPlotDialog() {
     final candidates = <String>[
-      if (_featuresCsv != null && File(_featuresCsv!).existsSync()) _featuresCsv!,
+      if (_featuresCsv != null && File(_featuresCsv!).existsSync())
+        _featuresCsv!,
     ];
-    Navigator.of(context).push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => PlotDialog(initialCsvPaths: candidates),
-    ));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => PlotDialog(initialCsvPaths: candidates),
+      ),
+    );
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -698,18 +842,25 @@ class _FeatureHomeState extends State<FeatureHome>
       body: Column(
         children: [
           _buildTopBar(),
+          if (_running) _progressBar(),
           Expanded(
-            child: TabBarView(
-              controller: _tabs,
-              physics: const NeverScrollableScrollPhysics(),
+            child: Row(
               children: [
-                _buildSingleRecordingTab(),
-                ErpAnalysisView(activeRecording: _activeRecording),
-                TopoStatsView(featureFilePaths: _featureFilesForTopoStats),
-                _buildBatchTab(),
+                if (!_sidebarCollapsed)
+                  SizedBox(
+                    width: 260,
+                    child: Material(
+                      color: const Color(0xFF0A1628),
+                      child: _buildPipelineSidebar(),
+                    ),
+                  ),
+                if (!_sidebarCollapsed)
+                  const VerticalDivider(width: 1, color: _borderColor),
+                Expanded(child: _buildModuleContent()),
               ],
             ),
           ),
+          _buildBatchBar(),
           _buildLogPanel(),
         ],
       ),
@@ -718,7 +869,8 @@ class _FeatureHomeState extends State<FeatureHome>
 
   List<String> get _featureFilesForTopoStats {
     if (_batchFeatOutputs.isNotEmpty) return _batchFeatOutputs;
-    if (_featuresCsv != null && File(_featuresCsv!).existsSync()) return [_featuresCsv!];
+    if (_featuresCsv != null && File(_featuresCsv!).existsSync())
+      return [_featuresCsv!];
     if (_activeRecording != null) {
       try {
         final parentDir = File(_activeRecording!.path).parent;
@@ -737,61 +889,11 @@ class _FeatureHomeState extends State<FeatureHome>
     return [];
   }
 
-  Widget _buildSingleRecordingTab() {
-    return Row(
-      children: [
-        SizedBox(
-          width: 300,
-          child: Material(
-            color: const Color(0xFF0A1628),
-            child: Column(
-              children: [
-                Expanded(child: _buildSingleSidebar()),
-                _buildSidebarFooter(),
-              ],
-            ),
-          ),
-        ),
-        const VerticalDivider(width: 1, color: _borderColor),
-        Expanded(
-          child: Column(
-            children: [
-              Expanded(
-                child: EegViewer(
-                  recording: _activeRecording,
-                  rawRecording: _raw,
-                  allRecordings: _stageRecordings,
-                  onSelectRecording: (rec) {
-                    if (_running) return;
-                    // Stage switching only — the selected recording becomes the
-                    // direct analysis input without disturbing stage outputs.
-                    setState(() => _directInput = rec == _raw ? null : rec);
-                  },
-                  onEpochsGenerated: (epoched) {
-                    if (_running) return;
-                    setState(() => _preprocessed = epoched);
-                  },
-                  selection: _selection,
-                  onSelectionChanged: (v) => setState(() => _selection = v),
-                  filterEnabled: _cfg.filter,
-                  lowHz: _cfg.lowHz,
-                  highHz: _cfg.highHz,
-                  notchHz: _cfg.notchHz,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   // ── Top bar ─────────────────────────────────────────────────────────────
 
   Widget _buildTopBar() {
-    final onBatch = _tabs.index == 3;
     return Container(
-      height: 54,
+      height: 50,
       color: const Color(0xFF060D1A),
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
@@ -803,99 +905,95 @@ class _FeatureHomeState extends State<FeatureHome>
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: _accentBlue.withValues(alpha: 0.4)),
             ),
-            child: const Text('CCS EEG',
-                style: TextStyle(
-                    color: _accentBlue,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    letterSpacing: 1.2)),
+            child: const Text(
+              'CCS EEG',
+              style: TextStyle(
+                color: _accentBlue,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                letterSpacing: 1.2,
+              ),
+            ),
           ),
           const SizedBox(width: 10),
-          const Text('Studio',
-              style: TextStyle(
-                  color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500)),
-          const SizedBox(width: 20),
-          SizedBox(
-            width: 720,
-            child: TabBar(
-              controller: _tabs,
-              labelPadding: EdgeInsets.zero,
-              dividerColor: Colors.transparent,
-              indicatorColor: _accentBlue,
-              labelColor: Colors.white,
-              unselectedLabelColor: _textMuted,
-              labelStyle:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-              unselectedLabelStyle: const TextStyle(fontSize: 13),
-              tabs: const [
-                Tab(
-                  height: 60,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('1. Preprocess & View'),
-                      Text('Raw → Clean Waveforms',
-                          style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.normal,
-                              color: _textMuted)),
-                    ],
-                  ),
+          const Text(
+            'Studio',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(
+              Icons.home_outlined,
+              size: 18,
+              color: _selectedModule == null ? _accentBlue : _textMuted,
+            ),
+            tooltip: 'Workflow overview',
+            onPressed: () => setState(() => _selectedModule = null),
+          ),
+          const SizedBox(width: 16),
+          // Sidebar toggle
+          IconButton(
+            icon: Icon(
+              _sidebarCollapsed ? Icons.menu : Icons.menu_open,
+              size: 18,
+              color: _textMuted,
+            ),
+            tooltip: _sidebarCollapsed ? 'Show pipeline' : 'Hide pipeline',
+            onPressed: () =>
+                setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+          ),
+          const SizedBox(width: 8),
+          // Pipeline preset dropdown
+          Container(
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: _borderColor),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _presetKey,
+                dropdownColor: _cardColor,
+                style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                icon: const Icon(
+                  Icons.expand_more,
+                  size: 16,
+                  color: _textMuted,
                 ),
-                Tab(
-                  height: 60,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('2. Epoch & ERP Analysis'),
-                      Text('Event Waveforms & Stats',
-                          style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.normal,
-                              color: _textMuted)),
-                    ],
-                  ),
-                ),
-                Tab(
-                  height: 60,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('3. Features & TopoStats'),
-                      Text('e-TFCE & FDR Topomaps',
-                          style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.normal,
-                              color: _textMuted)),
-                    ],
-                  ),
-                ),
-                Tab(
-                  height: 60,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('Batch Queue Mode'),
-                      Text('Many Files · Unattended',
-                          style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.normal,
-                              color: _textMuted)),
-                    ],
-                  ),
-                ),
-              ],
+                items: _presets.entries
+                    .map(
+                      (e) => DropdownMenuItem(
+                        value: e.key,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(e.value.icon, size: 13, color: _accentBlue),
+                            const SizedBox(width: 6),
+                            Text(e.value.label),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() {
+                    _presetKey = v;
+                    _pipeline = List.of(_presets[v]!.modules);
+                    _selectedModule = null;
+                  });
+                },
+              ),
             ),
           ),
           const Spacer(),
-          if (onBatch)
-            Text('${_batchPrepFiles.length} queued',
-                style: const TextStyle(color: _textMuted, fontSize: 12))
-          else if (_activeRecording != null) ...[
+          if (_activeRecording != null) ...[
             _statusChip(
               '${_channels.eegCount} EEG'
               '${_channels.nonEegCount > 0 ? ' · ${_channels.nonEegCount} aux' : ''}',
@@ -910,6 +1008,15 @@ class _FeatureHomeState extends State<FeatureHome>
             ),
           ],
           const SizedBox(width: 8),
+          // Batch panel toggle
+          _topBarButton(
+            icon: Icons.queue_play_next,
+            label: 'Pipeline Batch',
+            active: _batchPanelExpanded,
+            onTap: () =>
+                setState(() => _batchPanelExpanded = !_batchPanelExpanded),
+          ),
+          const SizedBox(width: 6),
           _topBarButton(
             icon: Icons.terminal,
             label: 'Log',
@@ -918,11 +1025,9 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const SizedBox(width: 8),
           FilledButton.icon(
-            onPressed: _running
-                ? null
-                : (onBatch ? _addBatchPrepFiles : _loadRaw),
+            onPressed: _running ? null : _loadRaw,
             icon: const Icon(Icons.folder_open, size: 15),
-            label: Text(onBatch ? 'Add Files to Queue' : 'Open Recording'),
+            label: const Text('Open Recording'),
             style: FilledButton.styleFrom(
               backgroundColor: _accentBlue,
               foregroundColor: Colors.white,
@@ -941,11 +1046,14 @@ class _FeatureHomeState extends State<FeatureHome>
       borderRadius: BorderRadius.circular(6),
       border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.check_circle, color: color, size: 13),
-      const SizedBox(width: 5),
-      Text(label, style: TextStyle(color: color, fontSize: 12)),
-    ]),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.check_circle, color: color, size: 13),
+        const SizedBox(width: 5),
+        Text(label, style: TextStyle(color: color, fontSize: 12)),
+      ],
+    ),
   );
 
   Widget _topBarButton({
@@ -960,18 +1068,27 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: active ? _accentBlue.withValues(alpha: 0.15) : Colors.transparent,
+          color: active
+              ? _accentBlue.withValues(alpha: 0.15)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
-              color: active ? _accentBlue.withValues(alpha: 0.4) : _borderColor),
+            color: active ? _accentBlue.withValues(alpha: 0.4) : _borderColor,
+          ),
         ),
-        child: Row(children: [
-          Icon(icon, size: 14, color: active ? _accentBlue : _textMuted),
-          const SizedBox(width: 5),
-          Text(label,
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: active ? _accentBlue : _textMuted),
+            const SizedBox(width: 5),
+            Text(
+              label,
               style: TextStyle(
-                  color: active ? _accentBlue : _textMuted, fontSize: 12)),
-        ]),
+                color: active ? _accentBlue : _textMuted,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -980,58 +1097,530 @@ class _FeatureHomeState extends State<FeatureHome>
   //  Single-recording sidebar
   // ══════════════════════════════════════════════════════════════════════
 
-  Widget _buildSingleSidebar() {
-    return ListView(
-      padding: const EdgeInsets.only(bottom: 4),
+  // ── Pipeline sidebar ────────────────────────────────────────────────────
+
+  Widget _buildPipelineSidebar() {
+    return Column(
       children: [
-        _buildStepCard(
-          step: 1,
-          icon: Icons.cleaning_services,
-          title: 'PREPROCESSING',
-          color: _accentPurple,
-          expanded: _step1Expanded,
-          onToggle: () => setState(() => _step1Expanded = !_step1Expanded),
-          completedLabel:
-              _preprocessed != null ? '✓ ${_shortName(_preprocessed!.path)}' : null,
-          completedColor: _accentGreen,
-          children: [_buildStage1Content()],
+        // Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+          child: Row(
+            children: [
+              const Icon(Icons.account_tree, size: 14, color: _accentBlue),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'WORKFLOW MODULES',
+                  style: TextStyle(
+                    color: _accentBlue,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ),
+              Text(
+                '${_pipeline.length} modules',
+                style: const TextStyle(color: _textMuted, fontSize: 10),
+              ),
+            ],
+          ),
         ),
-        _buildChannelsCard(),
-        _buildStepCard(
-          step: 2,
-          icon: Icons.psychology,
-          title: 'SOURCE SPACE',
-          color: _accentBlue,
-          optional: true,
-          expanded: _step2Expanded,
-          onToggle: () => setState(() => _step2Expanded = !_step2Expanded),
-          completedLabel:
-              _source != null ? '✓ ${_shortName(_source!.path)}' : null,
-          completedColor: _accentBlue,
-          children: [_buildStage2Content()],
+        const Divider(color: _borderColor, height: 1),
+        // Module list
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+            itemCount: _pipeline.length,
+            itemBuilder: (context, i) {
+              final mod = _pipeline[i];
+              final selected = mod == _selectedModule;
+              final color = _moduleColor(mod);
+              // Status indicators
+              final hasOutput = switch (mod) {
+                _Module.loadRaw => _raw != null,
+                _Module.preprocess => _preprocessed != null,
+                _Module.sourceSpace => _source != null,
+                _Module.featureExtraction => _featuresCsv != null,
+                _Module.plotsReport => _plotsDir != null,
+                _ => false,
+              };
+
+              return Column(
+                children: [
+                  // Connector line
+                  if (i > 0)
+                    Container(width: 2, height: 16, color: _borderColor),
+                  // Module card
+                  GestureDetector(
+                    onTap: () => setState(() => _selectedModule = mod),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? color.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: selected
+                              ? color.withValues(alpha: 0.4)
+                              : _borderColor,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Icon(_moduleIcon(mod), size: 15, color: color),
+                                Positioned(
+                                  right: 2,
+                                  bottom: 0,
+                                  child: Text(
+                                    '${i + 1}',
+                                    style: TextStyle(
+                                      color: color,
+                                      fontSize: 7,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _moduleLabel(mod),
+                                  style: TextStyle(
+                                    color: selected
+                                        ? Colors.white
+                                        : Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  _moduleSubtitle(mod),
+                                  style: const TextStyle(
+                                    color: _textMuted,
+                                    fontSize: 9.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // Status / viewer / file icons
+                          if (hasOutput)
+                            const Icon(
+                              Icons.check_circle,
+                              size: 14,
+                              color: _accentGreen,
+                            ),
+                          if (_moduleHasViewer(mod) && hasOutput) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.visibility,
+                              size: 13,
+                              color: _textMuted.withValues(alpha: 0.6),
+                            ),
+                          ],
+                          if (mod == _Module.featureExtraction &&
+                              _featuresCsv != null) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.description,
+                              size: 13,
+                              color: _accentAmber.withValues(alpha: 0.7),
+                            ),
+                          ],
+                          if (mod == _Module.plotsReport &&
+                              _plotsDir != null) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.folder,
+                              size: 13,
+                              color: _accentAmber.withValues(alpha: 0.7),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
-        _buildStepCard(
-          step: 3,
-          icon: Icons.analytics,
-          title: 'FEATURE EXTRACTION',
-          color: _accentGreen,
-          expanded: _step3Expanded,
-          onToggle: () => setState(() => _step3Expanded = !_step3Expanded),
-          completedLabel:
-              _featuresCsv != null ? '✓ ${_shortName(_featuresCsv!)}' : null,
-          completedColor: _accentGreen,
-          children: [_buildStage3Content()],
+      ],
+    );
+  }
+
+  // ── Module content router ───────────────────────────────────────────────
+
+  Widget _buildModuleContent() {
+    final mod = _selectedModule;
+    if (mod == null) {
+      return _buildWorkflowOverview();
+    }
+
+    switch (mod) {
+      case _Module.loadRaw:
+      case _Module.preprocess:
+      case _Module.sourceSpace:
+        // These modules share the EEG viewer layout
+        return _buildViewerLayout(mod);
+      case _Module.featureExtraction:
+        return _buildFeatureExtractionLayout();
+      case _Module.plotsReport:
+        return _buildPlotsLayout();
+      case _Module.erpAnalysis:
+        return ErpAnalysisView(activeRecording: _activeRecording);
+      case _Module.topoStats:
+        return TopoStatsView(featureFilePaths: _featureFilesForTopoStats);
+      case _Module.microstates:
+        return MicrostateAnalysisView(activeRecording: _activeRecording);
+    }
+  }
+
+  Widget _buildWorkflowOverview() {
+    final preset = _presets[_presetKey]!;
+    return ListView(
+      padding: const EdgeInsets.all(28),
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: _accentBlue.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(preset.icon, color: _accentBlue),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    preset.label,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    preset.description,
+                    style: const TextStyle(color: _textMuted, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        _buildStepCard(
-          step: 4,
-          icon: Icons.stacked_line_chart,
-          title: 'PLOTS & REPORT',
-          color: _accentAmber,
-          expanded: _step4Expanded,
-          onToggle: () => setState(() => _step4Expanded = !_step4Expanded),
-          completedLabel: _plotsDir != null ? '✓ ${_shortName(_plotsDir!)}/' : null,
-          completedColor: _accentAmber,
-          children: [_buildStage4Content()],
+        const SizedBox(height: 28),
+        const Text(
+          'Choose where to begin',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Modules share the active recording, but each can also be used independently.',
+          style: TextStyle(color: _textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = constraints.maxWidth > 900
+                ? 3
+                : constraints.maxWidth > 560
+                ? 2
+                : 1;
+            final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+            return Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final (index, module) in _pipeline.indexed)
+                  SizedBox(
+                    width: width,
+                    child: InkWell(
+                      onTap: () => setState(() => _selectedModule = module),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _cardColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _borderColor),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: _moduleColor(
+                                module,
+                              ).withValues(alpha: .15),
+                              foregroundColor: _moduleColor(module),
+                              child: Icon(_moduleIcon(module), size: 19),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${index + 1}. ${_moduleLabel(module)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    _moduleSubtitle(module),
+                                    style: const TextStyle(
+                                      color: _textMuted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_forward_ios,
+                              size: 13,
+                              color: _textMuted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+        if (_activeRecording == null) ...[
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: _accentBlue.withValues(alpha: .08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _accentBlue.withValues(alpha: .25)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.tips_and_updates_outlined, color: _accentBlue),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Start with Load Raw for a connected workflow, or open a standalone analysis module and choose files there.',
+                    style: TextStyle(color: _textMuted, fontSize: 12),
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: _loadRaw,
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('Open recording'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildViewerLayout(_Module activeModule) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 280,
+          child: Material(
+            color: const Color(0xFF0A1628),
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 4),
+              children: [
+                if (activeModule == _Module.loadRaw ||
+                    activeModule == _Module.preprocess)
+                  _buildStage1Content(),
+                if (activeModule == _Module.preprocess) _buildChannelsCard(),
+                if (activeModule == _Module.sourceSpace) _buildStage2Content(),
+              ],
+            ),
+          ),
+        ),
+        const VerticalDivider(width: 1, color: _borderColor),
+        Expanded(
+          child: EegViewer(
+            recording: _activeRecording,
+            rawRecording: _raw,
+            allRecordings: _stageRecordings,
+            onSelectRecording: (rec) {
+              if (_running) return;
+              setState(() => _directInput = rec == _raw ? null : rec);
+            },
+            onEpochsGenerated: (epoched) {
+              if (_running) return;
+              setState(() => _preprocessed = epoched);
+            },
+            selection: _selection,
+            onSelectionChanged: (v) => setState(() => _selection = v),
+            filterEnabled: _cfg.filter,
+            lowHz: _cfg.lowHz,
+            highHz: _cfg.highHz,
+            notchHz: _cfg.notchHz,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeatureExtractionLayout() {
+    return Row(
+      children: [
+        SizedBox(
+          width: 300,
+          child: Material(
+            color: const Color(0xFF0A1628),
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 4),
+              children: [
+                _buildStage3Content(),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: OutlinedButton.icon(
+                    onPressed: _compileCsv,
+                    icon: const Icon(
+                      Icons.table_chart,
+                      size: 14,
+                      color: _accentPink,
+                    ),
+                    label: const Text(
+                      'Compile CSVs…',
+                      style: TextStyle(color: _accentPink, fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: _accentPink),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const VerticalDivider(width: 1, color: _borderColor),
+        Expanded(
+          child: _activeRecording != null
+              ? EegViewer(
+                  recording: _activeRecording,
+                  rawRecording: _raw,
+                  allRecordings: _stageRecordings,
+                  onSelectRecording: (rec) {
+                    if (_running) return;
+                    setState(() => _directInput = rec == _raw ? null : rec);
+                  },
+                  onEpochsGenerated: (epoched) {
+                    if (_running) return;
+                    setState(() => _preprocessed = epoched);
+                  },
+                  selection: _selection,
+                  onSelectionChanged: (v) => setState(() => _selection = v),
+                  filterEnabled: _cfg.filter,
+                  lowHz: _cfg.lowHz,
+                  highHz: _cfg.highHz,
+                  notchHz: _cfg.notchHz,
+                )
+              : Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.equalizer,
+                        size: 48,
+                        color: _textMuted.withValues(alpha: 0.3),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Load an EDF, SET, or CCSEEG file to preview signals',
+                        style: TextStyle(color: _textMuted, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlotsLayout() {
+    return Row(
+      children: [
+        SizedBox(
+          width: 300,
+          child: Material(
+            color: const Color(0xFF0A1628),
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 4),
+              children: [_buildStage4Content()],
+            ),
+          ),
+        ),
+        const VerticalDivider(width: 1, color: _borderColor),
+        Expanded(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.stacked_line_chart,
+                  size: 48,
+                  color: _accentAmber.withValues(alpha: 0.3),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _plotsDir != null
+                      ? 'Plots saved to ${_plotsDir!.split(Platform.pathSeparator).last}/'
+                      : 'Run feature extraction first, then generate plots.',
+                  style: const TextStyle(color: _textMuted, fontSize: 13),
+                ),
+                if (_plotsDir != null) ...[
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () {
+                      // Open the plots directory
+                      Process.run('open', [_plotsDir!]);
+                    },
+                    icon: const Icon(Icons.folder_open, size: 15),
+                    label: const Text('Open Plots Folder'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _accentAmber,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ],
     );
@@ -1042,32 +1631,35 @@ class _FeatureHomeState extends State<FeatureHome>
   Widget _buildStage1Content() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _loadButton(
-          label: 'Load Raw Recording…',
-          color: _accentPurple,
-          onPressed: _running ? null : _loadRaw,
-        ),
-        if (_raw != null) ...[
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _loadButton(
+            label: 'Load Raw Recording…',
+            color: _accentPurple,
+            onPressed: _running ? null : _loadRaw,
+          ),
+          if (_raw != null) ...[
+            const SizedBox(height: 6),
+            _recordingChip(_raw!, active: _activeStage == _Stage.raw),
+          ],
           const SizedBox(height: 6),
-          _recordingChip(_raw!, active: _activeStage == _Stage.raw),
+          _subAccordionHeader(
+            'Preprocessing Options',
+            _step1OptsExpanded,
+            () => setState(() => _step1OptsExpanded = !_step1OptsExpanded),
+          ),
+          if (_step1OptsExpanded) _buildPreprocessingOptions(),
+          const SizedBox(height: 8),
+          _stageRunButton(
+            label: 'Run Preprocessing',
+            icon: Icons.cleaning_services,
+            color: _accentPurple,
+            enabled: !_running && _raw != null,
+            onPressed: _runPreprocessing,
+          ),
         ],
-        const SizedBox(height: 6),
-        _subAccordionHeader(
-          'Preprocessing Options',
-          _step1OptsExpanded,
-          () => setState(() => _step1OptsExpanded = !_step1OptsExpanded),
-        ),
-        if (_step1OptsExpanded) _buildPreprocessingOptions(),
-        const SizedBox(height: 8),
-        _stageRunButton(
-          label: 'Run Preprocessing',
-          icon: Icons.cleaning_services,
-          color: _accentPurple,
-          enabled: !_running && _raw != null,
-          onPressed: _runPreprocessing,
-        ),
-      ]),
+      ),
     );
   }
 
@@ -1090,25 +1682,35 @@ class _FeatureHomeState extends State<FeatureHome>
             onTap: () => setState(() => _channelsExpanded = !_channelsExpanded),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
-              child: Row(children: [
-                const SizedBox(width: 29),
-                const Icon(Icons.tune, size: 13, color: _accentPink),
-                const SizedBox(width: 4),
-                const Expanded(
-                  child: Text('CHANNEL TYPES',
+              child: Row(
+                children: [
+                  const SizedBox(width: 29),
+                  const Icon(Icons.tune, size: 13, color: _accentPink),
+                  const SizedBox(width: 4),
+                  const Expanded(
+                    child: Text(
+                      'CHANNEL TYPES',
                       style: TextStyle(
-                          color: _accentPink,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.8)),
-                ),
-                if (labels.isNotEmpty)
-                  Text('${_channels.eegCount}/${labels.length} EEG',
-                      style: const TextStyle(color: _textMuted, fontSize: 10)),
-                const SizedBox(width: 6),
-                Icon(_channelsExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16, color: _textMuted),
-              ]),
+                        color: _accentPink,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  if (labels.isNotEmpty)
+                    Text(
+                      '${_channels.eegCount}/${labels.length} EEG',
+                      style: const TextStyle(color: _textMuted, fontSize: 10),
+                    ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    _channelsExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16,
+                    color: _textMuted,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1116,36 +1718,45 @@ class _FeatureHomeState extends State<FeatureHome>
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
             child: labels.isEmpty
-                ? const Text('Load a recording to detect channel types.',
-                    style: TextStyle(color: _textMuted, fontSize: 11))
+                ? const Text(
+                    'Load a recording to detect channel types.',
+                    style: TextStyle(color: _textMuted, fontSize: 11),
+                  )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(children: [
-                        Expanded(
-                          child: Text(
-                            _channels.hasOverrides
-                                ? 'Auto-detected, with your overrides'
-                                : 'Auto-detected from channel names',
-                            style: const TextStyle(
-                                color: _textMuted, fontSize: 10.5),
-                          ),
-                        ),
-                        if (_channels.hasOverrides)
-                          TextButton(
-                            onPressed: _running
-                                ? null
-                                : () => setState(
-                                    () => _channels = _channels.resetToAuto()),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              minimumSize: const Size(46, 24),
-                              foregroundColor: _accentAmber,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _channels.hasOverrides
+                                  ? 'Auto-detected, with your overrides'
+                                  : 'Auto-detected from channel names',
+                              style: const TextStyle(
+                                color: _textMuted,
+                                fontSize: 10.5,
+                              ),
                             ),
-                            child: const Text('Reset',
-                                style: TextStyle(fontSize: 10.5)),
                           ),
-                      ]),
+                          if (_channels.hasOverrides)
+                            TextButton(
+                              onPressed: _running
+                                  ? null
+                                  : () => setState(
+                                      () => _channels = _channels.resetToAuto(),
+                                    ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(46, 24),
+                                foregroundColor: _accentAmber,
+                              ),
+                              child: const Text(
+                                'Reset',
+                                style: TextStyle(fontSize: 10.5),
+                              ),
+                            ),
+                        ],
+                      ),
                       const SizedBox(height: 4),
                       Container(
                         constraints: const BoxConstraints(maxHeight: 240),
@@ -1165,32 +1776,44 @@ class _FeatureHomeState extends State<FeatureHome>
                             return InkWell(
                               onTap: _running
                                   ? null
-                                  : () => setState(() =>
-                                      _channels = _channels.toggleEeg(label)),
+                                  : () => setState(
+                                      () => _channels = _channels.toggleEeg(
+                                        label,
+                                      ),
+                                    ),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                child: Row(children: [
-                                  Icon(
-                                    isEeg
-                                        ? Icons.check_box
-                                        : Icons.check_box_outline_blank,
-                                    size: 14,
-                                    color: isEeg ? _accentGreen : _textMuted,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(label,
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      isEeg
+                                          ? Icons.check_box
+                                          : Icons.check_box_outline_blank,
+                                      size: 14,
+                                      color: isEeg ? _accentGreen : _textMuted,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        label,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                            fontSize: 11.5,
-                                            color: isEeg
-                                                ? Colors.white
-                                                : _textMuted)),
-                                  ),
-                                  _badge(kind.label,
-                                      isEeg ? _accentGreen : _accentAmber),
-                                ]),
+                                          fontSize: 11.5,
+                                          color: isEeg
+                                              ? Colors.white
+                                              : _textMuted,
+                                        ),
+                                      ),
+                                    ),
+                                    _badge(
+                                      kind.label,
+                                      isEeg ? _accentGreen : _accentAmber,
+                                    ),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -1201,7 +1824,10 @@ class _FeatureHomeState extends State<FeatureHome>
                         'Unticked channels are excluded from bad-channel '
                         'detection, interpolation and the average reference.',
                         style: TextStyle(
-                            color: _textMuted, fontSize: 10, height: 1.4),
+                          color: _textMuted,
+                          fontSize: 10,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
@@ -1217,41 +1843,44 @@ class _FeatureHomeState extends State<FeatureHome>
     final effectiveInput = _preprocessed ?? _raw;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        effectiveInput != null
-            ? _pipelineBadge(
-                icon: Icons.arrow_right,
-                label: _preprocessed != null
-                    ? 'Input: ${_shortName(effectiveInput.path)}'
-                    : 'Input (unprocessed): ${_shortName(effectiveInput.path)}',
-                color: _preprocessed != null ? _accentGreen : _accentAmber,
-              )
-            : _pipelineBadge(
-                icon: Icons.warning_amber,
-                label: 'No input — run Stage 1 or load a preprocessed file',
-                color: _textMuted,
-              ),
-        const SizedBox(height: 7),
-        _loadButton(
-          label: 'Load Preprocessed File…',
-          color: _accentBlue,
-          onPressed: _running ? null : _loadForSourceLocalisation,
-        ),
-        const SizedBox(height: 8),
-        _infoBox(
-          'Projects scalp potentials to 68 FreeSurfer cortical dipoles via a '
-          'regularised eLORETA inverse solution (fsaverage parcellation).',
-          _accentBlue,
-        ),
-        const SizedBox(height: 8),
-        _stageRunButton(
-          label: 'Run Source Localisation',
-          icon: Icons.psychology,
-          color: _accentBlue,
-          enabled: !_running && effectiveInput != null,
-          onPressed: _runSourceLocalisation,
-        ),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          effectiveInput != null
+              ? _pipelineBadge(
+                  icon: Icons.arrow_right,
+                  label: _preprocessed != null
+                      ? 'Input: ${_shortName(effectiveInput.path)}'
+                      : 'Input (unprocessed): ${_shortName(effectiveInput.path)}',
+                  color: _preprocessed != null ? _accentGreen : _accentAmber,
+                )
+              : _pipelineBadge(
+                  icon: Icons.warning_amber,
+                  label: 'No input — run Stage 1 or load a preprocessed file',
+                  color: _textMuted,
+                ),
+          const SizedBox(height: 7),
+          _loadButton(
+            label: 'Load Preprocessed File…',
+            color: _accentBlue,
+            onPressed: _running ? null : _loadForSourceLocalisation,
+          ),
+          const SizedBox(height: 8),
+          _infoBox(
+            'Projects scalp potentials to 68 FreeSurfer cortical dipoles via a '
+            'regularised eLORETA inverse solution (fsaverage parcellation).',
+            _accentBlue,
+          ),
+          const SizedBox(height: 8),
+          _stageRunButton(
+            label: 'Run Source Localisation',
+            icon: Icons.psychology,
+            color: _accentBlue,
+            enabled: !_running && effectiveInput != null,
+            onPressed: _runSourceLocalisation,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1262,93 +1891,111 @@ class _FeatureHomeState extends State<FeatureHome>
     final stage = _activeStage;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        resolved != null
-            ? _pipelineBadge(
-                icon: Icons.play_circle,
-                label: switch (stage!) {
-                  _Stage.source => 'Source: ${_shortName(resolved.path)}',
-                  _Stage.preprocessed =>
-                    'Preprocessed: ${_shortName(resolved.path)}',
-                  _Stage.direct => 'Direct load: ${_shortName(resolved.path)}',
-                  _Stage.raw => 'Raw (not preprocessed): '
-                      '${_shortName(resolved.path)}',
-                },
-                color: switch (stage) {
-                  _Stage.source => _accentBlue,
-                  _Stage.preprocessed => _accentGreen,
-                  _ => _accentAmber,
-                },
-              )
-            : _pipelineBadge(
-                icon: Icons.warning_amber,
-                label: 'No file — use Stage 1 / 2 or load one directly',
-                color: _textMuted,
-              ),
-        const SizedBox(height: 6),
-        _loadButton(
-          label: 'Load File Directly…',
-          color: _textMuted,
-          onPressed: _running ? null : _loadForExtraction,
-        ),
-        if (_directInput != null) ...[
-          const SizedBox(height: 4),
-          TextButton.icon(
-            onPressed: _running
-                ? null
-                : () => setState(() {
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          resolved != null
+              ? _pipelineBadge(
+                  icon: Icons.play_circle,
+                  label: switch (stage!) {
+                    _Stage.source => 'Source: ${_shortName(resolved.path)}',
+                    _Stage.preprocessed =>
+                      'Preprocessed: ${_shortName(resolved.path)}',
+                    _Stage.direct =>
+                      'Direct load: ${_shortName(resolved.path)}',
+                    _Stage.raw =>
+                      'Raw (not preprocessed): '
+                          '${_shortName(resolved.path)}',
+                  },
+                  color: switch (stage) {
+                    _Stage.source => _accentBlue,
+                    _Stage.preprocessed => _accentGreen,
+                    _ => _accentAmber,
+                  },
+                )
+              : _pipelineBadge(
+                  icon: Icons.warning_amber,
+                  label: 'No file — use Stage 1 / 2 or load one directly',
+                  color: _textMuted,
+                ),
+          const SizedBox(height: 6),
+          _loadButton(
+            label: 'Load File Directly…',
+            color: _textMuted,
+            onPressed: _running ? null : _loadForExtraction,
+          ),
+          if (_directInput != null) ...[
+            const SizedBox(height: 4),
+            TextButton.icon(
+              onPressed: _running
+                  ? null
+                  : () => setState(() {
                       _directInput = null;
                       final back = _source ?? _preprocessed ?? _raw;
                       if (back != null) {
                         _channels = ChannelTypeMap.autoDetect(back.labels);
                       }
                     }),
-            icon: const Icon(Icons.undo, size: 13),
-            label: const Text('Back to pipeline output',
-                style: TextStyle(fontSize: 11)),
-            style: TextButton.styleFrom(
-              foregroundColor: _accentAmber,
-              padding: EdgeInsets.zero,
-              minimumSize: const Size(0, 26),
+              icon: const Icon(Icons.undo, size: 13),
+              label: const Text(
+                'Back to pipeline output',
+                style: TextStyle(fontSize: 11),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: _accentAmber,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 26),
+              ),
             ),
+          ],
+          const SizedBox(height: 8),
+          _buildEpochingOptions(),
+          const SizedBox(height: 10),
+          _subAccordionHeader(
+            'Feature Families',
+            _step3FeatExpanded,
+            () => setState(() => _step3FeatExpanded = !_step3FeatExpanded),
+          ),
+          if (_step3FeatExpanded) _buildFeatureFamilies(),
+          const SizedBox(height: 4),
+          _subAccordionHeader(
+            'Other Options',
+            _step3OtherExpanded,
+            () => setState(() => _step3OtherExpanded = !_step3OtherExpanded),
+          ),
+          if (_step3OtherExpanded) ...[
+            const SizedBox(height: 4),
+            _check(
+              'Remove non-EEG channels + avg ref',
+              _cfg.removeNonEeg,
+              (v) => _cfg.removeNonEeg = v,
+            ),
+            _check(
+              'Write PDF report',
+              _cfg.generatePdfReport,
+              (v) => _cfg.generatePdfReport = v,
+            ),
+            _check(
+              'Generate plots after extraction',
+              _cfg.generatePlots,
+              (v) => _cfg.generatePlots = v,
+            ),
+          ],
+          const SizedBox(height: 10),
+          _stageRunButton(
+            label: 'Run Feature Extraction',
+            icon: Icons.analytics,
+            color: _accentGreen,
+            enabled: !_running && resolved != null && _cfg.anyFeature,
+            onPressed: _runFeatureExtraction,
+            tooltip: resolved == null
+                ? 'Load a file in Stage 1, 2 or 3 first'
+                : (!_cfg.anyFeature
+                      ? 'Select at least one feature family'
+                      : null),
           ),
         ],
-        const SizedBox(height: 8),
-        _buildEpochingOptions(),
-        const SizedBox(height: 10),
-        _subAccordionHeader(
-          'Feature Families',
-          _step3FeatExpanded,
-          () => setState(() => _step3FeatExpanded = !_step3FeatExpanded),
-        ),
-        if (_step3FeatExpanded) _buildFeatureFamilies(),
-        const SizedBox(height: 4),
-        _subAccordionHeader(
-          'Other Options',
-          _step3OtherExpanded,
-          () => setState(() => _step3OtherExpanded = !_step3OtherExpanded),
-        ),
-        if (_step3OtherExpanded) ...[
-          const SizedBox(height: 4),
-          _check('Remove non-EEG channels + avg ref', _cfg.removeNonEeg,
-              (v) => _cfg.removeNonEeg = v),
-          _check('Write PDF report', _cfg.generatePdfReport,
-              (v) => _cfg.generatePdfReport = v),
-          _check('Generate plots after extraction', _cfg.generatePlots,
-              (v) => _cfg.generatePlots = v),
-        ],
-        const SizedBox(height: 10),
-        _stageRunButton(
-          label: 'Run Feature Extraction',
-          icon: Icons.analytics,
-          color: _accentGreen,
-          enabled: !_running && resolved != null && _cfg.anyFeature,
-          onPressed: _runFeatureExtraction,
-          tooltip: resolved == null
-              ? 'Load a file in Stage 1, 2 or 3 first'
-              : (!_cfg.anyFeature ? 'Select at least one feature family' : null),
-        ),
-      ]),
+      ),
     );
   }
 
@@ -1357,88 +2004,47 @@ class _FeatureHomeState extends State<FeatureHome>
   Widget _buildStage4Content() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _featuresCsv != null
-            ? _pipelineBadge(
-                icon: Icons.table_chart,
-                label: 'CSV: ${_shortName(_featuresCsv!)}',
-                color: _accentGreen,
-              )
-            : _pipelineBadge(
-                icon: Icons.warning_amber,
-                label: 'No feature CSV yet — run Stage 3',
-                color: _textMuted,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _featuresCsv != null
+              ? _pipelineBadge(
+                  icon: Icons.table_chart,
+                  label: 'CSV: ${_shortName(_featuresCsv!)}',
+                  color: _accentGreen,
+                )
+              : _pipelineBadge(
+                  icon: Icons.warning_amber,
+                  label: 'No feature CSV yet — run Stage 3',
+                  color: _textMuted,
+                ),
+          const SizedBox(height: 8),
+          _buildPlotOptions(),
+          const SizedBox(height: 8),
+          _stageRunButton(
+            label: 'Run Plot Generation',
+            icon: Icons.stacked_line_chart,
+            color: _accentAmber,
+            enabled: !_running && _featuresCsv != null,
+            onPressed: _runPlotsForActive,
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _running ? null : _openPlotDialog,
+              icon: const Icon(Icons.image_search, size: 14),
+              label: const Text(
+                'Browse / Plot Other CSVs…',
+                style: TextStyle(fontSize: 12),
               ),
-        const SizedBox(height: 8),
-        _buildPlotOptions(),
-        const SizedBox(height: 8),
-        _stageRunButton(
-          label: 'Run Plot Generation',
-          icon: Icons.stacked_line_chart,
-          color: _accentAmber,
-          enabled: !_running && _featuresCsv != null,
-          onPressed: _runPlotsForActive,
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: _running ? null : _openPlotDialog,
-            icon: const Icon(Icons.image_search, size: 14),
-            label: const Text('Browse / Plot Other CSVs…',
-                style: TextStyle(fontSize: 12)),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _accentAmber,
-              side: BorderSide(color: _accentAmber.withValues(alpha: 0.5)),
-              padding: const EdgeInsets.symmetric(vertical: 9),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _accentAmber,
+                side: BorderSide(color: _accentAmber.withValues(alpha: 0.5)),
+                padding: const EdgeInsets.symmetric(vertical: 9),
+              ),
             ),
           ),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildSidebarFooter() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF060D1A),
-        border: Border(top: BorderSide(color: _borderColor)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_running) ...[
-            _progressBar(),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _cancel,
-                icon: const Icon(Icons.stop_circle, size: 16),
-                label: const Text('Cancel Operation',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                ),
-              ),
-            ),
-          ] else
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _compileCsv,
-                icon: const Icon(Icons.table_chart, size: 14, color: _accentPink),
-                label: const Text('Compile CSVs…',
-                    style: TextStyle(color: _accentPink, fontSize: 12)),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: _accentPink),
-                  padding: const EdgeInsets.symmetric(vertical: 9),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1457,8 +2063,10 @@ class _FeatureHomeState extends State<FeatureHome>
         ),
       ),
       const SizedBox(height: 4),
-      Text('${(_progress * 100).toStringAsFixed(0)}% complete',
-          style: const TextStyle(color: _textMuted, fontSize: 11)),
+      Text(
+        '${(_progress * 100).toStringAsFixed(0)}% complete',
+        style: const TextStyle(color: _textMuted, fontSize: 11),
+      ),
     ],
   );
 
@@ -1472,32 +2080,50 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _check('Downsample to target rate', _cfg.downsample,
-              (v) => _cfg.downsample = v),
+          _check(
+            'Downsample to target rate',
+            _cfg.downsample,
+            (v) => _cfg.downsample = v,
+          ),
           if (_cfg.downsample)
             Padding(
               padding: const EdgeInsets.only(left: 24, bottom: 4),
               child: _field(_preDownsample, 'Target Hz', suffix: 'Hz'),
             ),
-          _check('Bandpass + notch filter', _cfg.filter, (v) => _cfg.filter = v),
+          _check(
+            'Bandpass + notch filter',
+            _cfg.filter,
+            (v) => _cfg.filter = v,
+          ),
           if (_cfg.filter)
             Padding(
               padding: const EdgeInsets.only(left: 24, bottom: 4),
-              child: Row(children: [
-                Expanded(child: _field(_preLow, 'HP Hz')),
-                const SizedBox(width: 6),
-                Expanded(child: _field(_preHigh, 'LP Hz')),
-                const SizedBox(width: 6),
-                Expanded(child: _field(_preNotch, 'Notch')),
-              ]),
+              child: Row(
+                children: [
+                  Expanded(child: _field(_preLow, 'HP Hz')),
+                  const SizedBox(width: 6),
+                  Expanded(child: _field(_preHigh, 'LP Hz')),
+                  const SizedBox(width: 6),
+                  Expanded(child: _field(_preNotch, 'Notch')),
+                ],
+              ),
             ),
-          _check('Bad channel detection', _cfg.badChannels,
-              (v) => _cfg.badChannels = v),
+          _check(
+            'Bad channel detection',
+            _cfg.badChannels,
+            (v) => _cfg.badChannels = v,
+          ),
           _check('GEDAI denoising', _cfg.gedai, (v) => _cfg.gedai = v),
-          _check('Epoch before GEDAI (memory safe)', _cfg.epochBeforeGedai,
-              (v) => _cfg.epochBeforeGedai = v),
-          _check('Interpolate bad channels', _cfg.interpolate,
-              (v) => _cfg.interpolate = v),
+          _check(
+            'Epoch before GEDAI (memory safe)',
+            _cfg.epochBeforeGedai,
+            (v) => _cfg.epochBeforeGedai = v,
+          ),
+          _check(
+            'Interpolate bad channels',
+            _cfg.interpolate,
+            (v) => _cfg.interpolate = v,
+          ),
         ],
       ),
     );
@@ -1517,18 +2143,22 @@ class _FeatureHomeState extends State<FeatureHome>
           style: const TextStyle(color: Colors.white, fontSize: 12),
           decoration: const InputDecoration(labelText: 'Duration mode'),
           items: DurationMode.values
-              .map((m) =>
-                  DropdownMenuItem(value: m, child: Text(_durationLabel(m))))
+              .map(
+                (m) =>
+                    DropdownMenuItem(value: m, child: Text(_durationLabel(m))),
+              )
               .toList(),
           onChanged: _running ? null : (v) => setState(() => _cfg.mode = v!),
         ),
         if (_cfg.mode == DurationMode.interval) ...[
           const SizedBox(height: 6),
-          Row(children: [
-            Expanded(child: _field(_start, 'Start s')),
-            const SizedBox(width: 8),
-            Expanded(child: _field(_end, 'End s')),
-          ]),
+          Row(
+            children: [
+              Expanded(child: _field(_start, 'Start s')),
+              const SizedBox(width: 8),
+              Expanded(child: _field(_end, 'End s')),
+            ],
+          ),
         ],
         if (_cfg.mode == DurationMode.bins) ...[
           const SizedBox(height: 6),
@@ -1555,7 +2185,11 @@ class _FeatureHomeState extends State<FeatureHome>
           _check('IRASA', _cfg.irasa, (v) => _cfg.irasa = v),
           const SizedBox(height: 6),
           _subLabel('NONLINEAR'),
-          _check('Nonlinear dynamics', _cfg.nonlinear, (v) => _cfg.nonlinear = v),
+          _check(
+            'Nonlinear dynamics',
+            _cfg.nonlinear,
+            (v) => _cfg.nonlinear = v,
+          ),
           _check('Autocorrelation window (ACW)', _cfg.acw, (v) => _cfg.acw = v),
           const SizedBox(height: 6),
           _subLabel('MULTIVARIATE CONNECTIVITY'),
@@ -1573,8 +2207,10 @@ class _FeatureHomeState extends State<FeatureHome>
           if (!_cfg.anyFeature)
             const Padding(
               padding: EdgeInsets.only(top: 6),
-              child: Text('Select at least one family.',
-                  style: TextStyle(color: Color(0xFFEF4444), fontSize: 11)),
+              child: Text(
+                'Select at least one family.',
+                style: TextStyle(color: Color(0xFFEF4444), fontSize: 11),
+              ),
             ),
         ],
       ),
@@ -1587,16 +2223,24 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Expanded(child: _field(_topoWindows, 'Topo windows')),
-            const SizedBox(width: 8),
-            Expanded(child: _field(_smoothing, 'Smoothing (epochs)')),
-          ]),
+          Row(
+            children: [
+              Expanded(child: _field(_topoWindows, 'Topo windows')),
+              const SizedBox(width: 8),
+              Expanded(child: _field(_smoothing, 'Smoothing (epochs)')),
+            ],
+          ),
           const SizedBox(height: 4),
-          _check('Plot each recording separately', _cfg.perFilePlots,
-              (v) => _cfg.perFilePlots = v),
-          _check('Group overlay across recordings', _cfg.groupOverlayPlots,
-              (v) => _cfg.groupOverlayPlots = v),
+          _check(
+            'Plot each recording separately',
+            _cfg.perFilePlots,
+            (v) => _cfg.perFilePlots = v,
+          ),
+          _check(
+            'Group overlay across recordings',
+            _cfg.groupOverlayPlots,
+            (v) => _cfg.groupOverlayPlots = v,
+          ),
         ],
       ),
     );
@@ -1620,97 +2264,160 @@ class _FeatureHomeState extends State<FeatureHome>
         }
       }
     });
-    _tabs.animateTo(1);
+    setState(() => _batchPanelExpanded = true);
   }
 
-  Widget _buildBatchTab() {
-    return Column(
-      children: [
-        Expanded(
-          child: Container(
-            color: _bgColor,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Batch Pipeline',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold)),
-                          SizedBox(height: 4),
-                          Text(
-                            'Runs the same settings as Single Recording mode '
-                            'across every queued file, unattended. Each file '
-                            'gets its own outputs; a pooled summary is written '
-                            'alongside.',
-                            style: TextStyle(color: _textMuted, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    if (_running)
-                      FilledButton.icon(
-                        onPressed: _cancel,
-                        icon: const Icon(Icons.stop_circle, size: 18),
-                        label: const Text('Cancel',
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
-                        ),
-                      )
-                    else
-                      FilledButton.icon(
-                        onPressed:
-                            _batchPrepFiles.isEmpty ? null : _runFullBatch,
-                        icon: const Icon(Icons.play_circle_filled, size: 18),
-                        label: const Text('Run All Stages',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13)),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _accentBlue,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: _cardColor,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
-                        ),
-                      ),
-                  ],
+  Widget _buildBatchBar() {
+    if (!_batchPanelExpanded) {
+      // Collapsed: thin status bar
+      return GestureDetector(
+        onTap: () => setState(() => _batchPanelExpanded = true),
+        child: Container(
+          height: 32,
+          color: const Color(0xFF060D1A),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              const Icon(Icons.queue_play_next, size: 13, color: _textMuted),
+              const SizedBox(width: 6),
+              const Text(
+                'BATCH',
+                style: TextStyle(
+                  color: _textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
                 ),
-                const SizedBox(height: 14),
-                if (_running) ...[
-                  _progressBar(),
-                  const SizedBox(height: 12),
-                ],
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _buildBatchStage1Card()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildBatchStage2Card()),
-                      const SizedBox(width: 12),
-                      Expanded(child: _buildBatchStage3Card()),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${_batchPrepFiles.length} queued',
+                style: const TextStyle(color: _textMuted, fontSize: 11),
+              ),
+              const Spacer(),
+              const Icon(Icons.expand_less, size: 16, color: _textMuted),
+            ],
           ),
         ),
-        _buildLogPanel(),
-      ],
+      );
+    }
+
+    // Expanded: full batch panel
+    return Container(
+      height: 320,
+      decoration: const BoxDecoration(
+        color: Color(0xFF060D1A),
+        border: Border(top: BorderSide(color: _borderColor)),
+      ),
+      child: Column(
+        children: [
+          // Header bar
+          SizedBox(
+            height: 36,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.queue_play_next,
+                    size: 13,
+                    color: _accentBlue,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'BATCH QUEUE',
+                    style: TextStyle(
+                      color: _accentBlue,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    '${_batchPrepFiles.length} files queued',
+                    style: const TextStyle(color: _textMuted, fontSize: 11),
+                  ),
+                  const Spacer(),
+                  if (_running)
+                    TextButton.icon(
+                      onPressed: _cancel,
+                      icon: const Icon(Icons.stop_circle, size: 14),
+                      label: const Text(
+                        'Cancel',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                      ),
+                    )
+                  else ...[
+                    TextButton.icon(
+                      onPressed: _addBatchPrepFiles,
+                      icon: const Icon(Icons.add, size: 14),
+                      label: const Text(
+                        'Add Files',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      style: TextButton.styleFrom(foregroundColor: _accentBlue),
+                    ),
+                    const SizedBox(width: 4),
+                    FilledButton.icon(
+                      onPressed: _batchPrepFiles.isEmpty ? null : _runFullBatch,
+                      icon: const Icon(Icons.play_circle_filled, size: 14),
+                      label: const Text(
+                        'Run All',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _accentGreen,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: _cardColor,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.expand_more,
+                      size: 16,
+                      color: _textMuted,
+                    ),
+                    onPressed: () =>
+                        setState(() => _batchPanelExpanded = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const Divider(color: _borderColor, height: 1),
+          // Batch content: 3 stage cards side by side
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildBatchStage1Card()),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildBatchStage2Card()),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildBatchStage3Card()),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1723,7 +2430,8 @@ class _FeatureHomeState extends State<FeatureHome>
     outputLabel: 'Output Directory',
     onSelectOutput: () async {
       final path = await FilePicker.getDirectoryPath(
-          dialogTitle: 'Output directory for preprocessed files');
+        dialogTitle: 'Output directory for preprocessed files',
+      );
       if (path != null) setState(() => _batchPrepOutputDir = path);
     },
     onAdd: _addBatchPrepFiles,
@@ -1747,8 +2455,11 @@ class _FeatureHomeState extends State<FeatureHome>
           _accentPink,
         ),
         const SizedBox(height: 8),
-        _check('Also run source localisation', _cfg.sourceLocalization,
-            (v) => _cfg.sourceLocalization = v),
+        _check(
+          'Also run source localisation',
+          _cfg.sourceLocalization,
+          (v) => _cfg.sourceLocalization = v,
+        ),
       ],
     ),
     runLabel: 'Run Preprocessing',
@@ -1765,7 +2476,8 @@ class _FeatureHomeState extends State<FeatureHome>
     outputLabel: 'Output Directory',
     onSelectOutput: () async {
       final path = await FilePicker.getDirectoryPath(
-          dialogTitle: 'Output directory for feature CSVs');
+        dialogTitle: 'Output directory for feature CSVs',
+      );
       if (path != null) setState(() => _batchFeatOutputDir = path);
     },
     usePrevious: _batchFeatUsePrep,
@@ -1800,19 +2512,29 @@ class _FeatureHomeState extends State<FeatureHome>
         const SizedBox(height: 8),
         _subLabel('OUTPUTS'),
         _check('One CSV per file', _cfg.perFileCsv, (v) => _cfg.perFileCsv = v),
-        _check('Combined CSV across files', _cfg.combinedCsv,
-            (v) => _cfg.combinedCsv = v),
-        _check('Remove non-EEG channels + avg ref', _cfg.removeNonEeg,
-            (v) => _cfg.removeNonEeg = v),
-        _check('PDF report per file', _cfg.generatePdfReport,
-            (v) => _cfg.generatePdfReport = v),
+        _check(
+          'Combined CSV across files',
+          _cfg.combinedCsv,
+          (v) => _cfg.combinedCsv = v,
+        ),
+        _check(
+          'Remove non-EEG channels + avg ref',
+          _cfg.removeNonEeg,
+          (v) => _cfg.removeNonEeg = v,
+        ),
+        _check(
+          'PDF report per file',
+          _cfg.generatePdfReport,
+          (v) => _cfg.generatePdfReport = v,
+        ),
         const SizedBox(height: 4),
         _field(_exclude, 'Filename exclusions', helper: 'Comma-separated'),
       ],
     ),
     runLabel: 'Run Extraction',
     onRun: _runBatchExtraction,
-    runEnabled: (_batchFeatUsePrep
+    runEnabled:
+        (_batchFeatUsePrep
             ? (_batchPrepOutputs.isNotEmpty || _batchPrepFiles.isNotEmpty)
             : _batchFeatFiles.isNotEmpty) &&
         _cfg.anyFeature &&
@@ -1828,7 +2550,8 @@ class _FeatureHomeState extends State<FeatureHome>
     outputLabel: 'Output Directory',
     onSelectOutput: () async {
       final path = await FilePicker.getDirectoryPath(
-          dialogTitle: 'Output directory for plots');
+        dialogTitle: 'Output directory for plots',
+      );
       if (path != null) setState(() => _batchPlotOutputDir = path);
     },
     usePrevious: _batchPlotUseFeat,
@@ -1869,8 +2592,8 @@ class _FeatureHomeState extends State<FeatureHome>
     onRun: _runBatchPlotting,
     runEnabled: _batchPlotUseFeat
         ? (_batchFeatOutputs.isNotEmpty ||
-            _batchPrepFiles.isNotEmpty ||
-            _batchFeatFiles.isNotEmpty)
+              _batchPrepFiles.isNotEmpty ||
+              _batchFeatFiles.isNotEmpty)
         : _batchPlotFiles.isNotEmpty,
   );
 
@@ -1912,18 +2635,23 @@ class _FeatureHomeState extends State<FeatureHome>
                 color: color.withValues(alpha: 0.08),
                 border: const Border(bottom: BorderSide(color: _borderColor)),
               ),
-              child: Row(children: [
-                Icon(icon, size: 16, color: color),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(title,
+              child: Row(
+                children: [
+                  Icon(icon, size: 16, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          color: color,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold)),
-                ),
-              ]),
+                        color: color,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             Expanded(
               child: ListView(
@@ -1931,9 +2659,13 @@ class _FeatureHomeState extends State<FeatureHome>
                 children: [
                   if (usePrevious != null && onUsePreviousChanged != null) ...[
                     CheckboxListTile(
-                      title: Text(usePreviousLabel ?? '',
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 11)),
+                      title: Text(
+                        usePreviousLabel ?? '',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
+                      ),
                       value: usePrevious,
                       onChanged: _running ? null : onUsePreviousChanged,
                       controlAffinity: ListTileControlAffinity.leading,
@@ -1942,62 +2674,89 @@ class _FeatureHomeState extends State<FeatureHome>
                     ),
                     const SizedBox(height: 6),
                   ],
-                  Text(outputLabel,
-                      style: const TextStyle(
-                          color: _textMuted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold)),
+                  Text(
+                    outputLabel,
+                    style: const TextStyle(
+                      color: _textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 4),
-                  Row(children: [
-                    Expanded(
-                      child: Text(
-                        outputDir ?? 'Next to source files',
-                        style: TextStyle(
-                            color: outputDir == null ? _textMuted : Colors.white,
-                            fontSize: 11),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          outputDir ?? 'Next to source files',
+                          style: TextStyle(
+                            color: outputDir == null
+                                ? _textMuted
+                                : Colors.white,
+                            fontSize: 11,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.folder_open,
-                          size: 16, color: _accentBlue),
-                      onPressed: _running ? null : onSelectOutput,
-                      constraints:
-                          const BoxConstraints(minWidth: 28, minHeight: 28),
-                      padding: EdgeInsets.zero,
-                    ),
-                  ]),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.folder_open,
+                          size: 16,
+                          color: _accentBlue,
+                        ),
+                        onPressed: _running ? null : onSelectOutput,
+                        constraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 28,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   if (!linked) ...[
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Files (${files.length})',
-                            style: const TextStyle(
-                                color: _textMuted,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold)),
-                        Row(children: [
-                          TextButton(
-                            onPressed: _running ? null : onAdd,
-                            style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(40, 24)),
-                            child:
-                                const Text('Add', style: TextStyle(fontSize: 11)),
+                        Text(
+                          'Files (${files.length})',
+                          style: const TextStyle(
+                            color: _textMuted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
                           ),
-                          TextButton(
-                            onPressed:
-                                _running || files.isEmpty ? null : onClear,
-                            style: TextButton.styleFrom(
+                        ),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: _running ? null : onAdd,
+                              style: TextButton.styleFrom(
                                 padding: EdgeInsets.zero,
-                                minimumSize: const Size(40, 24)),
-                            child: const Text('Clear',
-                                style:
-                                    TextStyle(color: Colors.red, fontSize: 11)),
-                          ),
-                        ]),
+                                minimumSize: const Size(40, 24),
+                              ),
+                              child: const Text(
+                                'Add',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _running || files.isEmpty
+                                  ? null
+                                  : onClear,
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(40, 24),
+                              ),
+                              child: const Text(
+                                'Clear',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -2010,39 +2769,62 @@ class _FeatureHomeState extends State<FeatureHome>
                       ),
                       child: files.isEmpty
                           ? const Center(
-                              child: Text('No files selected',
-                                  style: TextStyle(
-                                      color: _textMuted, fontSize: 11)))
+                              child: Text(
+                                'No files selected',
+                                style: TextStyle(
+                                  color: _textMuted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            )
                           : ListView.separated(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
                               itemCount: files.length,
                               separatorBuilder: (_, __) =>
                                   const Divider(color: _borderColor, height: 1),
-                              itemBuilder: (ctx, idx) => Row(children: [
-                                Text('${idx + 1}.',
+                              itemBuilder: (ctx, idx) => Row(
+                                children: [
+                                  Text(
+                                    '${idx + 1}.',
                                     style: const TextStyle(
-                                        color: _textMuted, fontSize: 10)),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Tooltip(
-                                    message: files[idx],
-                                    child: Text(_shortName(files[idx]),
-                                        style: const TextStyle(
-                                            color: Colors.white, fontSize: 11),
-                                        overflow: TextOverflow.ellipsis),
+                                      color: _textMuted,
+                                      fontSize: 10,
+                                    ),
                                   ),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.close,
-                                      size: 13, color: _textMuted),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                      minWidth: 20, minHeight: 20),
-                                  onPressed:
-                                      _running ? null : () => onRemove(idx),
-                                ),
-                              ]),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Tooltip(
+                                      message: files[idx],
+                                      child: Text(
+                                        _shortName(files[idx]),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.close,
+                                      size: 13,
+                                      color: _textMuted,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 20,
+                                      minHeight: 20,
+                                    ),
+                                    onPressed: _running
+                                        ? null
+                                        : () => onRemove(idx),
+                                  ),
+                                ],
+                              ),
                             ),
                     ),
                   ] else
@@ -2053,25 +2835,33 @@ class _FeatureHomeState extends State<FeatureHome>
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(color: _borderColor),
                       ),
-                      child: Row(children: [
-                        Icon(Icons.link, size: 14, color: color),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text('Uses the previous stage’s outputs.',
+                      child: Row(
+                        children: [
+                          Icon(Icons.link, size: 14, color: color),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Uses the previous stage’s outputs.',
                               style: TextStyle(
-                                  color: _textMuted,
-                                  fontSize: 11,
-                                  fontStyle: FontStyle.italic)),
-                        ),
-                      ]),
+                                color: _textMuted,
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   const SizedBox(height: 12),
                   if (options != null) ...[
-                    const Text('Stage Options',
-                        style: TextStyle(
-                            color: _textMuted,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Stage Options',
+                      style: TextStyle(
+                        color: _textMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 6),
                     options,
                   ],
@@ -2087,9 +2877,13 @@ class _FeatureHomeState extends State<FeatureHome>
               child: FilledButton.icon(
                 onPressed: (_running || !runEnabled) ? null : onRun,
                 icon: const Icon(Icons.play_arrow, size: 14),
-                label: Text(runLabel,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 12)),
+                label: Text(
+                  runLabel,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
                 style: FilledButton.styleFrom(
                   backgroundColor: color,
                   foregroundColor: Colors.white,
@@ -2123,7 +2917,8 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('[${i + 1}/${_batchPrepFiles.length}] ${_shortName(path)}');
       try {
         final dir = _batchPrepOutputDir ?? File(path).parent.path;
-        final outPath = '$dir${Platform.pathSeparator}'
+        final outPath =
+            '$dir${Platform.pathSeparator}'
             '${_stem(path)}_clean.ccseeg.json';
 
         final rec = await _loader.load(path);
@@ -2142,8 +2937,9 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           onProgress: (p, msg) {
             if (standalone) {
-              setState(() =>
-                  _progress = (i + p.clamp(0, 1)) / _batchPrepFiles.length);
+              setState(
+                () => _progress = (i + p.clamp(0, 1)) / _batchPrepFiles.length,
+              );
             }
             if (msg.isNotEmpty) _log('  $msg');
           },
@@ -2151,7 +2947,8 @@ class _FeatureHomeState extends State<FeatureHome>
 
         var finalPath = outPath;
         if (_cfg.sourceLocalization) {
-          final srcPath = '$dir${Platform.pathSeparator}'
+          final srcPath =
+              '$dir${Platform.pathSeparator}'
               '${_stem(path)}_source.ccseeg.json';
           current = await _service.preprocess(
             recording: current,
@@ -2184,8 +2981,10 @@ class _FeatureHomeState extends State<FeatureHome>
         _progress = 1.0;
       }
     });
-    _log('── PREPROCESSING DONE — ${written.length}/'
-        '${_batchPrepFiles.length} succeeded ──');
+    _log(
+      '── PREPROCESSING DONE — ${written.length}/'
+      '${_batchPrepFiles.length} succeeded ──',
+    );
     return written;
   }
 
@@ -2225,8 +3024,10 @@ class _FeatureHomeState extends State<FeatureHome>
         .where((p) => !_cfg.exclusions.any((x) => p.contains(x)))
         .toList();
     if (kept.length != inputs.length) {
-      _log('  Skipped ${inputs.length - kept.length} file(s) by exclusion '
-          'pattern (${_cfg.exclusions.join(', ')}).');
+      _log(
+        '  Skipped ${inputs.length - kept.length} file(s) by exclusion '
+        'pattern (${_cfg.exclusions.join(', ')}).',
+      );
     }
     if (kept.isEmpty) {
       _log('✗ Every file was excluded.');
@@ -2262,8 +3063,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('  Non-EEG channels across queue: ${nonEeg.join(', ')}');
     }
 
-    final combinedPath =
-        '$outDir${Platform.pathSeparator}Batch_features.csv';
+    final combinedPath = '$outDir${Platform.pathSeparator}Batch_features.csv';
 
     try {
       final outputs = await _service.run(
@@ -2331,8 +3131,9 @@ class _FeatureHomeState extends State<FeatureHome>
   List<String> _resolveBatchPlotInputs() {
     if (!_batchPlotUseFeat) return List.of(_batchPlotFiles);
     if (_batchFeatOutputs.isNotEmpty) {
-      final perFile =
-          _batchFeatOutputs.where((p) => !p.endsWith('Batch_features.csv'));
+      final perFile = _batchFeatOutputs.where(
+        (p) => !p.endsWith('Batch_features.csv'),
+      );
       return perFile.isNotEmpty ? perFile.toList() : List.of(_batchFeatOutputs);
     }
     final source = _batchFeatUsePrep ? _batchPrepFiles : _batchFeatFiles;
@@ -2360,11 +3161,7 @@ class _FeatureHomeState extends State<FeatureHome>
     _log('── BATCH PLOTTING (${inputs.length} CSV(s)) ──');
     try {
       final outDir = _batchPlotOutputDir ?? File(inputs.first).parent.path;
-      await _runPlotting(
-        csvPaths: inputs,
-        announce: false,
-        outputDir: outDir,
-      );
+      await _runPlotting(csvPaths: inputs, announce: false, outputDir: outDir);
     } finally {
       if (standalone && mounted) {
         setState(() {
@@ -2424,103 +3221,6 @@ class _FeatureHomeState extends State<FeatureHome>
   //  Shared widgets
   // ══════════════════════════════════════════════════════════════════════
 
-  Widget _buildStepCard({
-    required int step,
-    required IconData icon,
-    required String title,
-    required Color color,
-    bool optional = false,
-    required bool expanded,
-    required VoidCallback onToggle,
-    String? completedLabel,
-    required Color completedColor,
-    required List<Widget> children,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Material(
-          color: const Color(0xFF0A1628),
-          child: InkWell(
-            onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 9, 12, 7),
-              child: Row(
-                children: [
-                  Container(
-                    width: 22,
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.15),
-                      border: Border.all(color: color, width: 1.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text('$step',
-                          style: TextStyle(
-                              color: color,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(width: 7),
-                  Icon(icon, size: 13, color: color),
-                  const SizedBox(width: 3),
-                  Expanded(
-                    child: Text(title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.8)),
-                  ),
-                  if (optional) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(
-                        border:
-                            Border.all(color: color.withValues(alpha: 0.45)),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text('OPTIONAL',
-                          style: TextStyle(
-                              color: color.withValues(alpha: 0.7),
-                              fontSize: 7.5,
-                              letterSpacing: 0.4)),
-                    ),
-                  ],
-                  const SizedBox(width: 8),
-                  Icon(expanded ? Icons.expand_less : Icons.expand_more,
-                      size: 16, color: _textMuted),
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (completedLabel != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(42, 0, 12, 5),
-            child: Row(children: [
-              Icon(Icons.check_circle, size: 12, color: completedColor),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(completedLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: completedColor, fontSize: 10.5)),
-              ),
-            ]),
-          ),
-        if (expanded) ...children,
-        const Divider(color: _borderColor, height: 1, thickness: 1),
-      ],
-    );
-  }
-
   Widget _loadButton({
     required String label,
     required Color color,
@@ -2552,8 +3252,10 @@ class _FeatureHomeState extends State<FeatureHome>
       child: FilledButton.icon(
         onPressed: enabled ? onPressed : null,
         icon: Icon(icon, size: 15),
-        label: Text(label,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+        label: Text(
+          label,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5),
+        ),
         style: FilledButton.styleFrom(
           backgroundColor: color,
           foregroundColor: Colors.white,
@@ -2577,28 +3279,40 @@ class _FeatureHomeState extends State<FeatureHome>
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(children: [
-          Icon(Icons.graphic_eq,
-              color: active ? _accentBlue : _textMuted, size: 14),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(_shortName(rec.path),
+        Row(
+          children: [
+            Icon(
+              Icons.graphic_eq,
+              color: active ? _accentBlue : _textMuted,
+              size: 14,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _shortName(rec.path),
                 style: TextStyle(
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w600,
-                    fontSize: 12,
-                    color: Colors.white),
-                overflow: TextOverflow.ellipsis),
-          ),
-        ]),
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+                  fontSize: 12,
+                  color: Colors.white,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 6),
-        Row(children: [
-          _badge('${rec.labels.length} ch', _accentBlue),
-          const SizedBox(width: 4),
-          _badge('${rec.sampleRate.toStringAsFixed(0)} Hz', _accentAmber),
-          const SizedBox(width: 4),
-          _badge('${(rec.durationSeconds / 60).toStringAsFixed(1)} min',
-              _accentGreen),
-        ]),
+        Row(
+          children: [
+            _badge('${rec.labels.length} ch', _accentBlue),
+            const SizedBox(width: 4),
+            _badge('${rec.sampleRate.toStringAsFixed(0)} Hz', _accentAmber),
+            const SizedBox(width: 4),
+            _badge(
+              '${(rec.durationSeconds / 60).toStringAsFixed(1)} min',
+              _accentGreen,
+            ),
+          ],
+        ),
       ],
     ),
   );
@@ -2611,8 +3325,10 @@ class _FeatureHomeState extends State<FeatureHome>
       borderRadius: BorderRadius.circular(6),
       border: Border.all(color: color.withValues(alpha: 0.25)),
     ),
-    child: Text(text,
-        style: const TextStyle(color: _textMuted, fontSize: 10.5, height: 1.45)),
+    child: Text(
+      text,
+      style: const TextStyle(color: _textMuted, fontSize: 10.5, height: 1.45),
+    ),
   );
 
   Widget _field(
@@ -2644,16 +3360,20 @@ class _FeatureHomeState extends State<FeatureHome>
       borderRadius: BorderRadius.circular(6),
       border: Border.all(color: color.withValues(alpha: 0.35)),
     ),
-    child: Row(children: [
-      Icon(icon, size: 13, color: color),
-      const SizedBox(width: 6),
-      Expanded(
-        child: Text(label,
+    child: Row(
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: color, fontSize: 10.5)),
-      ),
-    ]),
+            style: TextStyle(color: color, fontSize: 10.5),
+          ),
+        ),
+      ],
+    ),
   );
 
   Widget _subAccordionHeader(String label, bool expanded, VoidCallback onTap) =>
@@ -2662,27 +3382,38 @@ class _FeatureHomeState extends State<FeatureHome>
         borderRadius: BorderRadius.circular(4),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Row(children: [
-            Icon(expanded ? Icons.expand_less : Icons.chevron_right,
-                size: 15, color: _textMuted),
-            const SizedBox(width: 4),
-            Text(label,
+          child: Row(
+            children: [
+              Icon(
+                expanded ? Icons.expand_less : Icons.chevron_right,
+                size: 15,
+                color: _textMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
                 style: const TextStyle(
-                    color: _textMuted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600)),
-          ]),
+                  color: _textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
       );
 
   Widget _subLabel(String text) => Padding(
     padding: const EdgeInsets.only(top: 2, bottom: 2),
-    child: Text(text,
-        style: const TextStyle(
-            color: _textMuted,
-            fontSize: 10,
-            letterSpacing: 0.6,
-            fontWeight: FontWeight.bold)),
+    child: Text(
+      text,
+      style: const TextStyle(
+        color: _textMuted,
+        fontSize: 10,
+        letterSpacing: 0.6,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
   );
 
   Widget _check(String text, bool value, void Function(bool) set) =>
@@ -2692,8 +3423,10 @@ class _FeatureHomeState extends State<FeatureHome>
         visualDensity: VisualDensity.compact,
         value: value,
         onChanged: _running ? null : (v) => setState(() => set(v!)),
-        title: Text(text,
-            style: const TextStyle(fontSize: 12, color: Colors.white)),
+        title: Text(
+          text,
+          style: const TextStyle(fontSize: 12, color: Colors.white),
+        ),
       );
 
   Widget _badge(String label, Color color) => Container(
@@ -2703,10 +3436,131 @@ class _FeatureHomeState extends State<FeatureHome>
       borderRadius: BorderRadius.circular(3),
       border: Border.all(color: color.withValues(alpha: 0.3)),
     ),
-    child: Text(label,
-        style: TextStyle(
-            color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+    child: Text(
+      label,
+      style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
+    ),
   );
+
+  // ── Coming-soon tab helpers ──────────────────────────────────────────────
+
+  // Retained for future pipeline modules.
+  // ignore: unused_element
+  Widget _buildComingSoonTab({
+    required IconData icon,
+    required String title,
+    required Color color,
+    required String description,
+    required List<String> capabilities,
+  }) {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 480),
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: color.withValues(alpha: 0.25)),
+              ),
+              child: Icon(icon, size: 36, color: color.withValues(alpha: 0.7)),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: color.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                'Coming Soon',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _textMuted,
+                fontSize: 13,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _cardColor.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _borderColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Planned capabilities',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final item in capabilities)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.circle,
+                            size: 5,
+                            color: color.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              item,
+                              style: const TextStyle(
+                                color: _textMuted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   // ── Log panel ───────────────────────────────────────────────────────────
 
@@ -2724,45 +3578,58 @@ class _FeatureHomeState extends State<FeatureHome>
             height: 32,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(children: [
-                const Icon(Icons.terminal, size: 13, color: _accentBlue),
-                const SizedBox(width: 6),
-                const Text('ACTIVITY LOG',
+              child: Row(
+                children: [
+                  const Icon(Icons.terminal, size: 13, color: _accentBlue),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'ACTIVITY LOG',
                     style: TextStyle(
-                        color: _accentBlue,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.8)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () => setState(() => _logs.clear()),
-                  icon: const Icon(Icons.clear_all, size: 12),
-                  label: const Text('Clear', style: TextStyle(fontSize: 11)),
-                  style: TextButton.styleFrom(
+                      color: _accentBlue,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => setState(() => _logs.clear()),
+                    icon: const Icon(Icons.clear_all, size: 12),
+                    label: const Text('Clear', style: TextStyle(fontSize: 11)),
+                    style: TextButton.styleFrom(
                       foregroundColor: _textMuted,
                       minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(horizontal: 8)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 14, color: _textMuted),
-                  onPressed: () => setState(() => _logVisible = false),
-                  padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 28, minHeight: 28),
-                ),
-              ]),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 14, color: _textMuted),
+                    onPressed: () => setState(() => _logVisible = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const Divider(color: _borderColor, height: 1),
           Expanded(
             child: _logs.isEmpty
                 ? const Center(
-                    child: Text('No activity yet.',
-                        style: TextStyle(color: _textMuted, fontSize: 12)))
+                    child: Text(
+                      'No activity yet.',
+                      style: TextStyle(color: _textMuted, fontSize: 12),
+                    ),
+                  )
                 : ListView.builder(
                     reverse: true,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
                     itemCount: _logs.length,
                     itemBuilder: (context, i) {
                       final line = _logs[_logs.length - 1 - i];
@@ -2779,11 +3646,14 @@ class _FeatureHomeState extends State<FeatureHome>
                       }
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(line,
-                            style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 11,
-                                color: color)),
+                        child: Text(
+                          line,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: color,
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -2795,15 +3665,16 @@ class _FeatureHomeState extends State<FeatureHome>
 
   // ── Path helpers ────────────────────────────────────────────────────────
 
-  String _shortName(String path) =>
-      path.split(Platform.pathSeparator).last;
+  String _shortName(String path) => path.split(Platform.pathSeparator).last;
 
   /// Filename without any known recording extension.
   String _stem(String path) => _shortName(path).replaceAll(
-        RegExp(r'\.(ccseeg\.json|edf|set|fif|vhdr|json|orb|signal|csv)$',
-            caseSensitive: false),
-        '',
-      );
+    RegExp(
+      r'\.(ccseeg\.json|edf|set|fif|vhdr|json|orb|signal|csv)$',
+      caseSensitive: false,
+    ),
+    '',
+  );
 
   String _durationLabel(DurationMode mode) => switch (mode) {
     DurationMode.full => 'Full recording',
