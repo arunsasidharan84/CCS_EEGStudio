@@ -202,7 +202,7 @@ pub fn cluster_permutation_test_1d(
     }
 
     // Critical t-threshold (approx 2.0 for alpha=0.05)
-    let df = (n_a + n_b - 2) as f64;
+    let _df = (n_a + n_b - 2) as f64;
     let t_thresh = 1.98;
 
     let calc_t = |a: &[Vec<f64>], b: &[Vec<f64>]| -> Vec<f64> {
