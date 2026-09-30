@@ -4,6 +4,17 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.5]
+
+### Release reliability
+
+- Pinned Flutter 3.41.9 across macOS, Windows, and Linux so CI runs the same
+  tested SDK on every platform instead of silently moving to a newer stable
+  toolchain.
+- Updated GitHub checkout steps to the Node 24-based action release.
+- Retains all application, ERP, microstate, viewer, format-loader, batch, and
+  reporting improvements documented for 1.2.4 below.
+
 ## [1.2.4]
 
 ### Microstate timeline and statistics
@@ -111,6 +122,7 @@ its matching section is missing.
 - Added Rust-backed EEG feature extraction, connectivity analysis, plotting,
   batch execution, CSV output, and PDF reporting.
 
+[1.2.5]: https://github.com/arunsasidharan84/CCS_EEGStudio/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/arunsasidharan84/CCS_EEGStudio/compare/v1.2.0...v1.2.4
 [1.2.3]: https://github.com/arunsasidharan84/CCS_EEGStudio/compare/v1.2.0...v1.2.3
 [1.2.0]: https://github.com/arunsasidharan84/CCS_EEGStudio/releases/tag/v1.2.0

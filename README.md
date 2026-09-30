@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.4</b> ·
+  <b>Current version: 1.2.5</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -29,7 +29,7 @@ CCS EEG Studio turns research EEG recordings into reproducible, analysis-ready o
 
 > The algorithms are ported from [`ccs_toolbox`](https://github.com/arunsasidharan84/ccs_toolbox) and continuously checked against the Python reference implementations and MNE Connectivity.
 
-### What is new in 1.2.4
+### What is new in 1.2.5
 
 - A synchronized microstate explorer with aligned sequence, EEG, and
   state-similarity timelines; selectable waveform density; and toggleable
@@ -39,9 +39,11 @@ CCS EEG Studio turns research EEG recordings into reproducible, analysis-ready o
 - Safer recording tabs for long filenames and clearer percentage-form
   microstate transition matrices.
 - Reproducible macOS, Windows, Debian/Ubuntu, and RHEL-family releases built by
-  GitHub Actions with checksums and version-specific notes.
+  GitHub Actions with a pinned Flutter SDK, checksums, and version-specific
+  notes.
 
-See the [1.2.4 release notes](CHANGELOG.md#124) for the complete list.
+See the [1.2.5 release notes](CHANGELOG.md#125) and the full
+[1.2.4 feature notes](CHANGELOG.md#124).
 
 ![CCS EEG Studio Main Window](screenshots/main.png)
 
