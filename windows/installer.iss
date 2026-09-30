@@ -11,8 +11,10 @@
 #define AppName      "CCS EEG Studio"
 #define AppExeName   "ccs_eeg_app.exe"
 #define AppPublisher "Centre for Consciousness Studies, NIMHANS"
-#define AppURL       "https://github.com/arunsasidharan84/CCS_EEGApp"
-#define AppVersion   "0.1.0"
+#define AppURL       "https://github.com/arunsasidharan84/CCS_EEGStudio"
+#ifndef AppVersion
+  #define AppVersion "1.2.4"
+#endif
 #define BuildDir     "..\build\windows\x64\runner\Release"
 #define OutputDir    "..\dist"
 

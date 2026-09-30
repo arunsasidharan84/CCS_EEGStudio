@@ -1,0 +1,10 @@
+file,n_std,n_dev,std_window_mean_uV,dev_window_mean_uV,t_window,df_window,p_window,cohend_window,d_ci_lo,d_ci_hi,mismatch_mean_uV,mismatch_ci_lo,mismatch_ci_hi,significant_clusters(start_s-end_s:p)
+2_Pilot_Tukdam_10.07.2026_EM_MMN_VR-epo_clean,600,150,-0.1268,-0.4445,0.7456,210.78,0.456717,0.0733,-0.1096,0.2618,-0.2821,-0.9955,0.4057,""
+3_Pilot_Tukdam_10.07.2026_RE_MMN-epo_clean,600,150,0.7130,0.1955,1.3952,214.38,0.164401,0.1350,-0.0588,0.3245,-0.5134,-1.2477,0.2268,""
+5_Pilot_Tukdam_10.07.2026_Meditation-epo_clean,594,154,0.0166,0.3129,-0.8219,225.76,0.411997,-0.0777,-0.2735,0.1102,0.3595,-0.4981,1.2637,""
+
+Between-file effect size (Cohen's d) of mismatch magnitude:
+file_a,file_b,cohend
+2_Pilot_Tukdam_10.07.2026_EM_MMN_VR-epo_clean,3_Pilot_Tukdam_10.07.2026_RE_MMN-epo_clean,0.6246
+2_Pilot_Tukdam_10.07.2026_EM_MMN_VR-epo_clean,5_Pilot_Tukdam_10.07.2026_Meditation-epo_clean,-1.5750
+3_Pilot_Tukdam_10.07.2026_RE_MMN-epo_clean,5_Pilot_Tukdam_10.07.2026_Meditation-epo_clean,-2.1128

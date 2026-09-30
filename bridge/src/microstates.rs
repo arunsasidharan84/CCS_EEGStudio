@@ -85,6 +85,10 @@ pub struct RecordingResult {
     pub states: Vec<StateStats>,
     pub transition_matrix: Vec<Vec<f64>>,
     pub sequence: Vec<usize>,
+    /// Per-sample relative fit for every state. Values are squared spatial
+    /// correlations normalized across states and therefore sum to one at each
+    /// time point.
+    pub state_probabilities: Vec<Vec<f64>>,
     pub sequence_metrics: SequenceStats,
     pub sequence_plot: String,
 }
@@ -220,6 +224,7 @@ pub fn analyse(
     for (ri, p) in prepared.iter().enumerate() {
         let (mut labels, correlations) = backfit(&p.data, &prototypes);
         smooth_short_segments(&mut labels, &correlations, p.rate, options.min_segment_ms);
+        let state_probabilities = normalized_fit_probabilities(&correlations);
         let state_stats = calculate_stats(p, &labels, &correlations, &prototypes, &state_labels);
         let transition_matrix = transitions(&labels, selected);
         let seq_stats = sequence_stats(&labels, &mut sequence_rng);
@@ -235,6 +240,7 @@ pub fn analyse(
             states: state_stats,
             transition_matrix,
             sequence: labels.iter().map(|x| x + 1).collect(),
+            state_probabilities,
             sequence_metrics: seq_stats,
             sequence_plot: plot_name,
         });
@@ -766,6 +772,26 @@ fn backfit(data: &[Vec<f64>], prototypes: &[Vec<f64>]) -> (Vec<usize>, Vec<Vec<f
             .unwrap();
     }
     (labels, correlations)
+}
+
+fn normalized_fit_probabilities(correlations: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    if correlations.is_empty() {
+        return Vec::new();
+    }
+    let samples = correlations[0].len();
+    let mut probabilities = vec![vec![0.0; samples]; correlations.len()];
+    for t in 0..samples {
+        let denominator = correlations
+            .iter()
+            .map(|state| state[t] * state[t])
+            .sum::<f64>();
+        if denominator > 1e-15 {
+            for (state_index, state) in correlations.iter().enumerate() {
+                probabilities[state_index][t] = state[t] * state[t] / denominator;
+            }
+        }
+    }
+    probabilities
 }
 
 fn smooth_short_segments(labels: &mut [usize], correlations: &[Vec<f64>], rate: f64, min_ms: f64) {
@@ -1411,6 +1437,16 @@ mod tests {
         let c = vec![vec![0.9; 5], vec![0.1; 5]];
         smooth_short_segments(&mut l, &c, 1000.0, 2.0);
         assert_eq!(l, vec![0; 5]);
+    }
+    #[test]
+    fn fit_probabilities_sum_to_one_per_sample() {
+        let correlations = vec![vec![0.2, 0.8], vec![0.4, 0.6], vec![0.1, 0.2]];
+        let probabilities = normalized_fit_probabilities(&correlations);
+        for sample in 0..2 {
+            let total = probabilities.iter().map(|state| state[sample]).sum::<f64>();
+            assert!((total - 1.0).abs() < 1e-12);
+        }
+        assert!(probabilities[1][0] > probabilities[0][0]);
     }
     #[test]
     fn numpy_shuffle_stream_matches_reference() {

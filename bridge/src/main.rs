@@ -121,6 +121,11 @@ fn main() -> Result<(), String> {
         }
 
         let datfile = data.map(|d| d.text.clone()).unwrap_or_default();
+        let preview = if datfile.is_empty() && data.is_some_and(|d| !d.numeric.is_empty()) {
+            Some(recording_from_embedded_set(&mat)?.channels)
+        } else {
+            None
+        };
         let json = serde_json::json!({
             "sample_rate": srate,
             "labels": labels,
@@ -128,6 +133,7 @@ fn main() -> Result<(), String> {
             "epoch_count": trials,
             "points_per_epoch": points_per_epoch,
             "datfile": datfile,
+            "preview": preview,
             "format": "set",
             "markers": markers,
         });
@@ -135,7 +141,7 @@ fn main() -> Result<(), String> {
         return Ok(());
     }
     if job.job_type == "inspect_fif" {
-        let rec = fif_loader::load_fif(Path::new(&job.input))?;
+        let rec = mne_fif::load_fif(Path::new(&job.input))?;
         let total_samples = rec.channels.first().map(Vec::len).unwrap_or(0);
         let points_per_epoch = rec.source_epoch_samples.unwrap_or(total_samples);
         let epoch_count = if points_per_epoch > 0 {
@@ -166,11 +172,50 @@ fn main() -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&json).map_err(err)?);
         return Ok(());
     }
+    if job.job_type == "inspect_mat" {
+        let rec = fieldtrip_loader::load_fieldtrip(Path::new(&job.input))?;
+        let total_samples = rec.channels.first().map(Vec::len).unwrap_or(0);
+        let points_per_epoch = rec.source_epoch_samples.unwrap_or(total_samples);
+        let epoch_count = if points_per_epoch > 0 {
+            total_samples / points_per_epoch
+        } else {
+            1
+        };
+        let stride = if epoch_count > 1 {
+            1
+        } else {
+            (total_samples / 50_000).max(1)
+        };
+        let preview: Vec<Vec<f32>> = rec
+            .channels
+            .iter()
+            .map(|channel| channel.iter().step_by(stride).copied().collect())
+            .collect();
+        let json = serde_json::json!({
+            "sample_rate": rec.rate,
+            "labels": rec.labels,
+            "sample_count": total_samples,
+            "epoch_count": epoch_count,
+            "points_per_epoch": points_per_epoch,
+            "epoch_labels": rec.epoch_labels,
+            "preview": preview,
+            "format": "mat"
+        });
+        println!("{}", serde_json::to_string_pretty(&json).map_err(err)?);
+        return Ok(());
+    }
 
     let mut recording = if job.format == "set" {
-        load_fdt(&job)?
+        if job.data_path.as_deref().is_some_and(|path| !path.is_empty()) {
+            load_fdt(&job)?
+        } else {
+            let mat = set_loader::load_set(Path::new(&job.input))?;
+            recording_from_embedded_set(&mat)?
+        }
     } else if job.format == "fif" || job.input.to_lowercase().ends_with(".fif") {
-        fif_loader::load_fif(Path::new(&job.input))?
+        mne_fif::load_fif(Path::new(&job.input))?
+    } else if job.format == "mat" || job.input.to_lowercase().ends_with(".mat") {
+        fieldtrip_loader::load_fieldtrip(Path::new(&job.input))?
     } else if job.format == "vhdr" || job.input.to_lowercase().ends_with(".vhdr") {
         vhdr_loader::load_vhdr(Path::new(&job.input))?
     } else if job.format == "ccseeg" || job.input.ends_with(".ccseeg.json") {
@@ -602,7 +647,84 @@ fn load_fdt(j: &Job) -> Result<Recording, String> {
         rate,
         labels,
         channels: ch,
-        source_epoch_samples: j.points_per_epoch,
+        source_epoch_samples: j
+            .points_per_epoch
+            .filter(|_| j.epoch_count.unwrap_or(1) > 1),
+        epoch_labels: None,
+    })
+}
+
+fn recording_from_embedded_set(mat: &set_loader::MatValue) -> Result<Recording, String> {
+    let rate = mat
+        .fields
+        .get("srate")
+        .and_then(|v| v.first())
+        .and_then(|v| v.numeric.first())
+        .copied()
+        .ok_or("SET sample rate missing")?;
+    let data = mat
+        .fields
+        .get("data")
+        .and_then(|v| v.first())
+        .ok_or("SET data missing")?;
+    if data.numeric.is_empty() {
+        return Err(if data.text.is_empty() {
+            "SET contains no embedded numeric data".into()
+        } else {
+            format!("SET references companion data file {}", data.text)
+        });
+    }
+    let channel_count = mat
+        .fields
+        .get("nbchan")
+        .and_then(|v| v.first())
+        .and_then(|v| v.numeric.first())
+        .copied()
+        .map(|v| v as usize)
+        .or_else(|| data.dims.first().map(|v| *v as usize))
+        .ok_or("SET channel count missing")?;
+    if channel_count == 0 || data.numeric.len() % channel_count != 0 {
+        return Err("Embedded SET data dimensions are inconsistent".into());
+    }
+    let sample_count = data.numeric.len() / channel_count;
+    let mut channels = vec![vec![0.0_f32; sample_count]; channel_count];
+    for sample in 0..sample_count {
+        for channel in 0..channel_count {
+            channels[channel][sample] = data.numeric[sample * channel_count + channel] as f32;
+        }
+    }
+    let mut labels = Vec::new();
+    if let Some(chanlocs) = mat.fields.get("chanlocs").and_then(|v| v.first()) {
+        if let Some(values) = chanlocs.fields.get("labels") {
+            labels.extend(values.iter().filter_map(|v| {
+                let label = v.text.trim();
+                (!label.is_empty()).then(|| label.to_string())
+            }));
+        }
+    }
+    while labels.len() < channel_count {
+        labels.push(format!("Ch {}", labels.len() + 1));
+    }
+    labels.truncate(channel_count);
+    let trials = mat
+        .fields
+        .get("trials")
+        .and_then(|v| v.first())
+        .and_then(|v| v.numeric.first())
+        .copied()
+        .unwrap_or(1.0) as usize;
+    let points = mat
+        .fields
+        .get("pnts")
+        .and_then(|v| v.first())
+        .and_then(|v| v.numeric.first())
+        .copied()
+        .unwrap_or(sample_count as f64) as usize;
+    Ok(Recording {
+        rate,
+        labels,
+        channels,
+        source_epoch_samples: (trials > 1 && points > 0).then_some(points),
         epoch_labels: None,
     })
 }

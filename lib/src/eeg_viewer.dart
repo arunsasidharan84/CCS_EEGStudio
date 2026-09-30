@@ -39,7 +39,6 @@ class EegViewer extends StatefulWidget {
   final ValueChanged<EegRecording>? onSelectRecording;
   final ValueChanged<EegRecording>? onEpochsGenerated;
 
-
   final ViewerSelection selection;
   final ValueChanged<ViewerSelection> onSelectionChanged;
 
@@ -62,7 +61,8 @@ class _EegViewerState extends State<EegViewer> {
   int _selectedChannel = 0;
   bool _notchEnabled = false;
   bool _bandpassEnabled = false; // default false so EEG morphology is untouched
-  bool _autoscale = false; // default false so Raw vs Processed use exact same 50 uV scale
+  bool _autoscale =
+      false; // default false so Raw vs Processed use exact same 50 uV scale
   int _windowSeconds = 20;
   double _startSeconds = 0.0;
 
@@ -71,22 +71,21 @@ class _EegViewerState extends State<EegViewer> {
 
   /// Which channels are visible in stacked mode.
   List<bool> _visible = [];
-  int _pageSize = 0; // 0 = All, 12, 24, 32
+  int _pageSize = 12; // 0 = All, 12, 24, 32
   int _currentPage = 0;
   double _traceSpacing = 1.0;
 
   int _currentEpochIndex = 0;
+  bool _stitchEpochs = false;
   double _accumulatedDragDx = 0.0;
   String? _cachedFilterKey;
   List<Float32List>? _cachedFilterPreview;
 
   final Set<String> _disabledMarkerLabels = {};
 
-
-  EegRecording? get _activeEeg =>
-      (_showRaw && widget.rawRecording != null)
-          ? widget.rawRecording
-          : widget.recording;
+  EegRecording? get _activeEeg => (_showRaw && widget.rawRecording != null)
+      ? widget.rawRecording
+      : widget.recording;
 
   List<Float32List> _getEffectivePreview(EegRecording eeg) {
     if (!_bandpassEnabled && !_notchEnabled) return eeg.preview;
@@ -97,7 +96,9 @@ class _EegViewerState extends State<EegViewer> {
     _cachedFilterKey = key;
     final out = <Float32List>[];
     for (var chIdx = 0; chIdx < eeg.preview.length; chIdx++) {
-      out.add(Float32List.fromList(_applyFiltersToSeries(eeg.preview[chIdx], eeg)));
+      out.add(
+        Float32List.fromList(_applyFiltersToSeries(eeg.preview[chIdx], eeg)),
+      );
     }
     _cachedFilterPreview = out;
     return out;
@@ -108,12 +109,17 @@ class _EegViewerState extends State<EegViewer> {
       return raw.map((v) => v.toDouble()).toList();
     }
     var out = raw.map((v) => v.toDouble()).toList();
-    final effectiveRate = (eeg.sampleCount > 0 && eeg.preview.isNotEmpty && eeg.preview.first.isNotEmpty)
+    final effectiveRate =
+        (eeg.sampleCount > 0 &&
+            eeg.preview.isNotEmpty &&
+            eeg.preview.first.isNotEmpty)
         ? eeg.sampleRate * (eeg.preview.first.length / eeg.sampleCount)
         : eeg.sampleRate;
     final dt = 1.0 / effectiveRate;
 
-    final chunkLen = eeg.isEpoched ? (eeg.pointsPerEpoch ?? out.length) : out.length;
+    final chunkLen = eeg.isEpoched
+        ? (eeg.pointsPerEpoch ?? out.length)
+        : out.length;
 
     for (var start = 0; start < out.length; start += chunkLen) {
       final end = math.min(out.length, start + chunkLen);
@@ -143,7 +149,7 @@ class _EegViewerState extends State<EegViewer> {
         final highHz = widget.highHz;
         final rcLP = 1.0 / (2 * math.pi * highHz);
         final alphaLP = dt / (rcLP + dt);
-        
+
         // Forward pass
         for (var i = start + 1; i < end; i++) {
           out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i - 1];
@@ -192,15 +198,30 @@ class _EegViewerState extends State<EegViewer> {
     final newPath = widget.recording?.path ?? widget.rawRecording?.path;
     final oldPath = oldWidget.recording?.path ?? oldWidget.rawRecording?.path;
     if (newPath != oldPath) {
-      _startSeconds = 0.0;
-      _currentEpochIndex = 0;
-      _selectedChannel = 0;
-      _currentPage = 0;
+      // Keep an absolute timeline position when comparing raw and derived
+      // recordings. For an epoched target, map that position to its epoch;
+      // for a continuous target, retain the epoch's absolute onset.
+      final next = widget.recording ?? widget.rawRecording;
+      if (next != null) {
+        final maxStart = next.isEpoched && !_stitchEpochs
+            ? math.max(0.0, next.durationSeconds - next.epochDurationSeconds)
+            : math.max(0.0, next.durationSeconds - _windowSeconds);
+        _startSeconds = _startSeconds.clamp(0.0, maxStart);
+        if (next.isEpoched && next.epochDurationSeconds > 0) {
+          _currentEpochIndex = (_startSeconds / next.epochDurationSeconds)
+              .floor()
+              .clamp(0, next.epochCount - 1);
+        }
+      }
       _cachedFilterKey = null;
       _cachedFilterPreview = null;
       _bandpassEnabled = widget.filterEnabled;
       _notchEnabled = widget.filterEnabled;
-      final n = widget.recording?.labels.length ?? widget.rawRecording?.labels.length ?? 0;
+      final n =
+          widget.recording?.labels.length ??
+          widget.rawRecording?.labels.length ??
+          0;
+      if (n > 0) _selectedChannel = _selectedChannel.clamp(0, n - 1);
       _visible = List.filled(n, true);
       widget.onSelectionChanged(const ViewerSelection.empty());
     } else if (widget.filterEnabled != oldWidget.filterEnabled ||
@@ -219,7 +240,10 @@ class _EegViewerState extends State<EegViewer> {
     super.initState();
     _bandpassEnabled = widget.filterEnabled;
     _notchEnabled = widget.filterEnabled;
-    final n = widget.recording?.labels.length ?? widget.rawRecording?.labels.length ?? 0;
+    final n =
+        widget.recording?.labels.length ??
+        widget.rawRecording?.labels.length ??
+        0;
     _visible = List.filled(n, true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focusNode.requestFocus();
@@ -230,6 +254,11 @@ class _EegViewerState extends State<EegViewer> {
   void dispose() {
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _setEpochIndex(EegRecording eeg, int index) {
+    _currentEpochIndex = index.clamp(0, eeg.epochCount - 1);
+    _startSeconds = _currentEpochIndex * eeg.epochDurationSeconds;
   }
 
   void _adjustGain(double factor) =>
@@ -246,7 +275,9 @@ class _EegViewerState extends State<EegViewer> {
     }
 
     final duration = eeg.durationSeconds;
-    final maxStart = math.max(0.0, duration - _windowSeconds);
+    final maxStart = eeg.isEpoched && !_stitchEpochs
+        ? math.max(0.0, duration - eeg.epochDurationSeconds)
+        : math.max(0.0, duration - _windowSeconds);
     _startSeconds = _startSeconds.clamp(0.0, maxStart);
 
     return DecoratedBox(
@@ -260,7 +291,7 @@ class _EegViewerState extends State<EegViewer> {
             const SizedBox(height: 10),
             _buildControls(eeg),
             const SizedBox(height: 8),
-            if (eeg.isEpoched) ...[
+            if (eeg.isEpoched && !_stitchEpochs) ...[
               _buildEpochStepper(eeg),
               const SizedBox(height: 4),
             ] else if (maxStart > 0) ...[
@@ -295,7 +326,10 @@ class _EegViewerState extends State<EegViewer> {
 
   // ── Header ──────────────────────────────────────────────────────────────
   Widget _buildHeader(EegRecording eeg) {
-    final hasRaw = widget.rawRecording != null;
+    final hasRaw =
+        widget.rawRecording != null &&
+        widget.recording != null &&
+        widget.rawRecording!.path != widget.recording!.path;
     return Row(
       children: [
         Expanded(
@@ -316,21 +350,43 @@ class _EegViewerState extends State<EegViewer> {
                 children: [
                   _badge('${eeg.labels.length} ch', const Color(0xFF3B82F6)),
                   const SizedBox(width: 4),
-                  _badge('${eeg.sampleRate.toStringAsFixed(0)} Hz', const Color(0xFFF59E0B)),
+                  _badge(
+                    '${eeg.sampleRate.toStringAsFixed(0)} Hz',
+                    const Color(0xFFF59E0B),
+                  ),
                   const SizedBox(width: 4),
                   if (eeg.isEpoched)
-                    _badge('${eeg.epochCount} epochs • ${eeg.epochDurationSeconds.toStringAsFixed(2)}s/ep', const Color(0xFF22C55E))
+                    _badge(
+                      '${eeg.epochCount} epochs • ${eeg.epochDurationSeconds.toStringAsFixed(2)}s/ep',
+                      const Color(0xFF22C55E),
+                    )
                   else
-                    _badge('${(eeg.durationSeconds / 60).toStringAsFixed(1)} min', const Color(0xFF22C55E)),
+                    _badge(
+                      '${(eeg.durationSeconds / 60).toStringAsFixed(1)} min',
+                      const Color(0xFF22C55E),
+                    ),
                   if (eeg.isEpoched) ...[
                     const SizedBox(width: 4),
-                    Builder(builder: (_) {
-                      final idx = _currentEpochIndex.clamp(0, eeg.epochCount - 1);
-                      final lbl = eeg.epochLabels != null && idx < eeg.epochLabels!.length
-                          ? ' • [${eeg.epochLabels![idx]}]'
-                          : '';
-                      return _badge('Epoch ${idx + 1}/${eeg.epochCount}$lbl', const Color(0xFFA855F7));
-                    }),
+                    if (_stitchEpochs)
+                      _badge('Stitched epochs', const Color(0xFFA855F7))
+                    else
+                      Builder(
+                        builder: (_) {
+                          final idx = _currentEpochIndex.clamp(
+                            0,
+                            eeg.epochCount - 1,
+                          );
+                          final lbl =
+                              eeg.epochLabels != null &&
+                                  idx < eeg.epochLabels!.length
+                              ? ' • [${eeg.epochLabels![idx]}]'
+                              : '';
+                          return _badge(
+                            'Epoch ${idx + 1}/${eeg.epochCount}$lbl',
+                            const Color(0xFFA855F7),
+                          );
+                        },
+                      ),
                   ],
                 ],
               ),
@@ -338,7 +394,8 @@ class _EegViewerState extends State<EegViewer> {
           ),
         ),
         // Pipeline stage / recording switcher
-        if (widget.allRecordings != null && widget.allRecordings!.length > 1) ...[
+        if (widget.allRecordings != null &&
+            widget.allRecordings!.length > 1) ...[
           _buildMultiStageSwitcher(),
           const SizedBox(width: 8),
         ] else if (hasRaw) ...[
@@ -351,21 +408,23 @@ class _EegViewerState extends State<EegViewer> {
 
   Widget _buildMultiStageSwitcher() {
     final list = widget.allRecordings!;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF334155)),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final rec in list) ...[
-              _stageBtn(rec, rec == widget.recording),
-            ]
-          ],
+    final maxWidth = math.min(520.0, MediaQuery.sizeOf(context).width * .42);
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF334155)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final rec in list) _stageBtn(rec, rec == widget.recording),
+            ],
+          ),
         ),
       ),
     );
@@ -374,36 +433,40 @@ class _EegViewerState extends State<EegViewer> {
   Widget _stageBtn(EegRecording rec, bool active) {
     String label;
     Color color;
-    if (rec.labels.length == 68 && (rec.labels.contains('bankssts-lh') || rec.path.contains('_source'))) {
-      label = '🧠 Source (${rec.labels.length} ch)';
+    final fileName = rec.path.split('/').last;
+    if (rec.labels.length == 68 &&
+        (rec.labels.contains('bankssts-lh') || rec.path.contains('_source'))) {
+      label = '🧠 $fileName';
       color = const Color(0xFFA855F7);
     } else if (rec.path.contains('_clean')) {
-      label = '🧹 Preprocessed (${rec.labels.length} ch)';
+      label = '🧹 $fileName';
       color = const Color(0xFF22C55E);
     } else {
-      label = '⚡ Raw (${rec.labels.length} ch)';
+      label = '⚡ $fileName';
       color = const Color(0xFFF59E0B);
     }
-    return GestureDetector(
-      onTap: () {
-        if (widget.onSelectRecording != null) {
-          widget.onSelectRecording!(rec);
-        }
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active ? color.withOpacity(0.18) : Colors.transparent,
-          borderRadius: BorderRadius.circular(7),
-          border: active ? Border.all(color: color.withOpacity(0.5)) : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: active ? color : const Color(0xFF64748B),
-            fontSize: 12,
-            fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+    return Tooltip(
+      message: fileName,
+      child: GestureDetector(
+        onTap: () => widget.onSelectRecording?.call(rec),
+        child: AnimatedContainer(
+          constraints: const BoxConstraints(maxWidth: 230),
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: active ? color.withOpacity(0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(7),
+            border: active ? Border.all(color: color.withOpacity(0.5)) : null,
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: active ? color : const Color(0xFF64748B),
+              fontSize: 12,
+              fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+            ),
           ),
         ),
       ),
@@ -420,16 +483,29 @@ class _EegViewerState extends State<EegViewer> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _toggleBtn('Raw', _showRaw, () => setState(() => _showRaw = true),
-              const Color(0xFFF59E0B)),
-          _toggleBtn('Processed', !_showRaw, () => setState(() => _showRaw = false),
-              const Color(0xFF22C55E)),
+          _toggleBtn(
+            'Raw',
+            _showRaw,
+            () => setState(() => _showRaw = true),
+            const Color(0xFFF59E0B),
+          ),
+          _toggleBtn(
+            'Processed',
+            !_showRaw,
+            () => setState(() => _showRaw = false),
+            const Color(0xFF22C55E),
+          ),
         ],
       ),
     );
   }
 
-  Widget _toggleBtn(String label, bool active, VoidCallback onTap, Color color) {
+  Widget _toggleBtn(
+    String label,
+    bool active,
+    VoidCallback onTap,
+    Color color,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -497,6 +573,25 @@ class _EegViewerState extends State<EegViewer> {
           onSelected: (v) => setState(() => _autoscale = v),
           visualDensity: VisualDensity.compact,
         ),
+        if (eeg.isEpoched)
+          FilterChip(
+            avatar: const Icon(Icons.view_week, size: 14),
+            label: const Text('Stitch epochs', style: TextStyle(fontSize: 12)),
+            tooltip: 'Show epochs consecutively, like EEGLAB scroll plots',
+            selected: _stitchEpochs,
+            onSelected: (value) => setState(() {
+              if (value) {
+                _startSeconds = _currentEpochIndex * eeg.epochDurationSeconds;
+              } else {
+                _setEpochIndex(
+                  eeg,
+                  (_startSeconds / eeg.epochDurationSeconds).floor(),
+                );
+              }
+              _stitchEpochs = value;
+            }),
+            visualDensity: VisualDensity.compact,
+          ),
         // Gain controls pill
         Container(
           height: 32,
@@ -523,7 +618,11 @@ class _EegViewerState extends State<EegViewer> {
                     padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Text(
                       '${(_gain * 100).round()}%',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -572,8 +671,14 @@ class _EegViewerState extends State<EegViewer> {
           if (_pageSize > 0) ...[
             IconButton(
               tooltip: 'Previous page',
-              icon: const Icon(Icons.chevron_left, size: 18, color: Colors.white70),
-              onPressed: _currentPage > 0 ? () => setState(() => _currentPage--) : null,
+              icon: const Icon(
+                Icons.chevron_left,
+                size: 18,
+                color: Colors.white70,
+              ),
+              onPressed: _currentPage > 0
+                  ? () => setState(() => _currentPage--)
+                  : null,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 32),
             ),
@@ -583,10 +688,17 @@ class _EegViewerState extends State<EegViewer> {
             ),
             IconButton(
               tooltip: 'Next page',
-              icon: const Icon(Icons.chevron_right, size: 18, color: Colors.white70),
+              icon: const Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: Colors.white70,
+              ),
               onPressed: () {
                 final totalVisible = _visible.where((v) => v).length;
-                final maxPage = math.max(0, (totalVisible / _pageSize).ceil() - 1);
+                final maxPage = math.max(
+                  0,
+                  (totalVisible / _pageSize).ceil() - 1,
+                );
                 if (_currentPage < maxPage) setState(() => _currentPage++);
               },
               padding: EdgeInsets.zero,
@@ -603,7 +715,11 @@ class _EegViewerState extends State<EegViewer> {
             onChanged: (v) => setState(() => _selectedChannel = v ?? 0),
           ),
         ActionChip(
-          avatar: const Icon(Icons.checklist, size: 14, color: Color(0xFF38BDF8)),
+          avatar: const Icon(
+            Icons.checklist,
+            size: 14,
+            color: Color(0xFF38BDF8),
+          ),
           label: Text(
             'Manage Channels (${widget.selection.selectedChannels.isEmpty ? eeg.labels.length : widget.selection.selectedChannels.length}/${eeg.labels.length})',
             style: const TextStyle(fontSize: 12, color: Colors.white),
@@ -614,7 +730,11 @@ class _EegViewerState extends State<EegViewer> {
         ),
         if (eeg.markers.isNotEmpty) ...[
           ActionChip(
-            avatar: const Icon(Icons.bookmark, size: 14, color: Color(0xFFF59E0B)),
+            avatar: const Icon(
+              Icons.bookmark,
+              size: 14,
+              color: Color(0xFFF59E0B),
+            ),
             label: Text(
               'Markers (${eeg.markers.length})',
               style: const TextStyle(fontSize: 12, color: Colors.white),
@@ -627,7 +747,11 @@ class _EegViewerState extends State<EegViewer> {
             avatar: const Icon(Icons.cut, size: 14, color: Color(0xFF10B981)),
             label: const Text(
               'Epoch Events',
-              style: TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             backgroundColor: const Color(0xFF065F46),
             side: const BorderSide(color: Color(0xFF10B981)),
@@ -650,16 +774,28 @@ class _EegViewerState extends State<EegViewer> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
-          final filteredLabels = eeg.labels.where((lbl) =>
-              lbl.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+          final filteredLabels = eeg.labels
+              .where(
+                (lbl) => lbl.toLowerCase().contains(searchQuery.toLowerCase()),
+              )
+              .toList();
 
           return AlertDialog(
             backgroundColor: const Color(0xFF0F172A),
             title: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Interactive Channels Manager', style: TextStyle(color: Colors.white, fontSize: 16)),
-                Text('${workingSet.length} of ${eeg.labels.length} active', style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13)),
+                const Text(
+                  'Interactive Channels Manager',
+                  style: TextStyle(color: Colors.white, fontSize: 16),
+                ),
+                Text(
+                  '${workingSet.length} of ${eeg.labels.length} active',
+                  style: const TextStyle(
+                    color: Color(0xFF38BDF8),
+                    fontSize: 13,
+                  ),
+                ),
               ],
             ),
             content: SizedBox(
@@ -671,12 +807,25 @@ class _EegViewerState extends State<EegViewer> {
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: 'Search channel labels (e.g. Fz, Cz, EOG)...',
-                      hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                      prefixIcon: const Icon(Icons.search, color: Color(0xFF64748B), size: 18),
+                      hintStyle: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 13,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Color(0xFF64748B),
+                        size: 18,
+                      ),
                       filled: true,
                       fillColor: const Color(0xFF1E293B),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                     ),
                     onChanged: (val) => setDialogState(() => searchQuery = val),
                   ),
@@ -686,28 +835,60 @@ class _EegViewerState extends State<EegViewer> {
                     runSpacing: 8,
                     children: [
                       ActionChip(
-                        label: const Text('Select All', style: TextStyle(fontSize: 12, color: Colors.white)),
+                        label: const Text(
+                          'Select All',
+                          style: TextStyle(fontSize: 12, color: Colors.white),
+                        ),
                         backgroundColor: const Color(0xFF1E293B),
-                        onPressed: () => setDialogState(() => workingSet.addAll(eeg.labels)),
+                        onPressed: () =>
+                            setDialogState(() => workingSet.addAll(eeg.labels)),
                       ),
                       ActionChip(
-                        label: const Text('Deselect All', style: TextStyle(fontSize: 12, color: Colors.white)),
+                        label: const Text(
+                          'Deselect All',
+                          style: TextStyle(fontSize: 12, color: Colors.white),
+                        ),
                         backgroundColor: const Color(0xFF1E293B),
-                        onPressed: () => setDialogState(() => workingSet.clear()),
+                        onPressed: () =>
+                            setDialogState(() => workingSet.clear()),
                       ),
                       ActionChip(
-                        label: const Text('Remove Non-EEG / Ref', style: TextStyle(fontSize: 12, color: Colors.white)),
+                        label: const Text(
+                          'Remove Non-EEG / Ref',
+                          style: TextStyle(fontSize: 12, color: Colors.white),
+                        ),
                         backgroundColor: const Color(0xFF1E293B),
                         onPressed: () => setDialogState(() {
-                          const nonEeg = {'ecg', 'eog', 'emg', 'm1', 'm2', 'a1', 'a2', 'tp9', 'tp10', 'ft9', 'ft10', 'ref', 'status'};
-                          workingSet.removeWhere((lbl) => nonEeg.contains(lbl.toLowerCase()));
+                          const nonEeg = {
+                            'ecg',
+                            'eog',
+                            'emg',
+                            'm1',
+                            'm2',
+                            'a1',
+                            'a2',
+                            'tp9',
+                            'tp10',
+                            'ft9',
+                            'ft10',
+                            'ref',
+                            'status',
+                          };
+                          workingSet.removeWhere(
+                            (lbl) => nonEeg.contains(lbl.toLowerCase()),
+                          );
                         }),
                       ),
                       ActionChip(
-                        label: const Text('Invert Selection', style: TextStyle(fontSize: 12, color: Colors.white)),
+                        label: const Text(
+                          'Invert Selection',
+                          style: TextStyle(fontSize: 12, color: Colors.white),
+                        ),
                         backgroundColor: const Color(0xFF1E293B),
                         onPressed: () => setDialogState(() {
-                          final inv = eeg.labels.where((l) => !workingSet.contains(l)).toSet();
+                          final inv = eeg.labels
+                              .where((l) => !workingSet.contains(l))
+                              .toSet();
                           workingSet.clear();
                           workingSet.addAll(inv);
                         }),
@@ -724,14 +905,31 @@ class _EegViewerState extends State<EegViewer> {
                         children: filteredLabels.map((lbl) {
                           final selected = workingSet.contains(lbl);
                           return FilterChip(
-                            label: Text(lbl, style: TextStyle(fontSize: 12, color: selected ? Colors.white : const Color(0xFF94A3B8))),
+                            label: Text(
+                              lbl,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: selected
+                                    ? Colors.white
+                                    : const Color(0xFF94A3B8),
+                              ),
+                            ),
                             selected: selected,
-                            selectedColor: const Color(0xFF0284C7).withOpacity(0.4),
+                            selectedColor: const Color(
+                              0xFF0284C7,
+                            ).withOpacity(0.4),
                             checkmarkColor: const Color(0xFF38BDF8),
                             backgroundColor: const Color(0xFF1E293B),
-                            side: BorderSide(color: selected ? const Color(0xFF38BDF8) : const Color(0xFF334155)),
+                            side: BorderSide(
+                              color: selected
+                                  ? const Color(0xFF38BDF8)
+                                  : const Color(0xFF334155),
+                            ),
                             onSelected: (val) => setDialogState(() {
-                              if (val) workingSet.add(lbl); else workingSet.remove(lbl);
+                              if (val)
+                                workingSet.add(lbl);
+                              else
+                                workingSet.remove(lbl);
                             }),
                           );
                         }).toList(),
@@ -744,20 +942,34 @@ class _EegViewerState extends State<EegViewer> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(color: Color(0xFF94A3B8)),
+                ),
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0284C7),
+                ),
                 onPressed: () {
                   Navigator.of(ctx).pop();
-                  final finalList = workingSet.length == eeg.labels.length ? const <String>[] : eeg.labels.where((l) => workingSet.contains(l)).toList();
-                  widget.onSelectionChanged(ViewerSelection(
-                    selectedChannels: finalList,
-                    acceptedIntervals: widget.selection.acceptedIntervals,
-                    rejectedIntervals: widget.selection.rejectedIntervals,
-                  ));
+                  final finalList = workingSet.length == eeg.labels.length
+                      ? const <String>[]
+                      : eeg.labels
+                            .where((l) => workingSet.contains(l))
+                            .toList();
+                  widget.onSelectionChanged(
+                    ViewerSelection(
+                      selectedChannels: finalList,
+                      acceptedIntervals: widget.selection.acceptedIntervals,
+                      rejectedIntervals: widget.selection.rejectedIntervals,
+                    ),
+                  );
                 },
-                child: const Text('Apply Selection', style: TextStyle(color: Colors.white)),
+                child: const Text(
+                  'Apply Selection',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
           );
@@ -772,36 +984,37 @@ class _EegViewerState extends State<EegViewer> {
     required String Function(T) label,
     Color Function(T)? itemColor,
     required ValueChanged<T?> onChanged,
-  }) =>
-      DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFF334155)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: DropdownButton<T>(
-            value: value,
-            dropdownColor: const Color(0xFF1E293B),
-            style: const TextStyle(color: Colors.white, fontSize: 12),
-            underline: const SizedBox(),
-            isDense: true,
-            items: items
-                .map((i) => DropdownMenuItem(
-                      value: i,
-                      child: Text(
-                        label(i),
-                        style: itemColor != null
-                            ? TextStyle(color: itemColor(i), fontSize: 12)
-                            : null,
-                      ),
-                    ))
-                .toList(),
-            onChanged: onChanged,
-          ),
-        ),
-      );
+  }) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xFF0F172A),
+      borderRadius: BorderRadius.circular(6),
+      border: Border.all(color: const Color(0xFF334155)),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: DropdownButton<T>(
+        value: value,
+        dropdownColor: const Color(0xFF1E293B),
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+        underline: const SizedBox(),
+        isDense: true,
+        items: items
+            .map(
+              (i) => DropdownMenuItem(
+                value: i,
+                child: Text(
+                  label(i),
+                  style: itemColor != null
+                      ? TextStyle(color: itemColor(i), fontSize: 12)
+                      : null,
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: onChanged,
+      ),
+    ),
+  );
 
   // ── Time scroll bar ─────────────────────────────────────────────────────
   Widget _buildScrollBar(double maxStart, double duration) {
@@ -865,11 +1078,17 @@ class _EegViewerState extends State<EegViewer> {
             icon: const Icon(Icons.chevron_left, size: 18, color: Colors.white),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: idx > 0 ? () => setState(() => _currentEpochIndex--) : null,
+            onPressed: idx > 0
+                ? () => setState(() => _setEpochIndex(eeg, idx - 1))
+                : null,
           ),
           Text(
             'Epoch ${idx + 1} / ${eeg.epochCount}',
-            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(width: 8),
           _badge(lbl, const Color(0xFFA855F7)),
@@ -886,17 +1105,27 @@ class _EegViewerState extends State<EegViewer> {
               child: Slider(
                 value: idx.toDouble(),
                 min: 0,
-                max: (eeg.epochCount - 1).toDouble().clamp(0.0, double.infinity),
+                max: (eeg.epochCount - 1).toDouble().clamp(
+                  0.0,
+                  double.infinity,
+                ),
                 divisions: math.max(1, eeg.epochCount - 1),
-                onChanged: (val) => setState(() => _currentEpochIndex = val.round()),
+                onChanged: (val) =>
+                    setState(() => _setEpochIndex(eeg, val.round())),
               ),
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.chevron_right, size: 18, color: Colors.white),
+            icon: const Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: Colors.white,
+            ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: idx < eeg.epochCount - 1 ? () => setState(() => _currentEpochIndex++) : null,
+            onPressed: idx < eeg.epochCount - 1
+                ? () => setState(() => _setEpochIndex(eeg, idx + 1))
+                : null,
           ),
         ],
       ),
@@ -936,7 +1165,8 @@ class _EegViewerState extends State<EegViewer> {
       },
       onPointerSignal: (signal) {
         if (signal is PointerScrollEvent) {
-          final isVert = signal.scrollDelta.dy.abs() > signal.scrollDelta.dx.abs();
+          final isVert =
+              signal.scrollDelta.dy.abs() > signal.scrollDelta.dx.abs();
           if (isVert && signal.scrollDelta.dy.abs() > 1.0) {
             // Page through channels vertically
             if (_stacked && _pageSize > 0) {
@@ -947,24 +1177,41 @@ class _EegViewerState extends State<EegViewer> {
               }
             } else if (!_stacked) {
               if (signal.scrollDelta.dy > 3) {
-                setState(() => _selectedChannel = (_selectedChannel + 1).clamp(0, eeg.labels.length - 1));
+                setState(
+                  () => _selectedChannel = (_selectedChannel + 1).clamp(
+                    0,
+                    eeg.labels.length - 1,
+                  ),
+                );
               } else if (signal.scrollDelta.dy < -3) {
-                setState(() => _selectedChannel = (_selectedChannel - 1).clamp(0, eeg.labels.length - 1));
+                setState(
+                  () => _selectedChannel = (_selectedChannel - 1).clamp(
+                    0,
+                    eeg.labels.length - 1,
+                  ),
+                );
               }
             }
           } else if (!isVert || signal.scrollDelta.dx.abs() > 1.0) {
             // Navigate horizontally across time or epochs
-            if (eeg.isEpoched) {
+            if (eeg.isEpoched && !_stitchEpochs) {
               if (signal.scrollDelta.dx > 5) {
-                setState(() => _currentEpochIndex = math.min(eeg.epochCount - 1, _currentEpochIndex + 1));
+                setState(() => _setEpochIndex(eeg, _currentEpochIndex + 1));
               } else if (signal.scrollDelta.dx < -5) {
-                setState(() => _currentEpochIndex = math.max(0, _currentEpochIndex - 1));
+                setState(() => _setEpochIndex(eeg, _currentEpochIndex - 1));
               }
             } else {
-              final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
+              final maxStart = math.max(
+                0.0,
+                eeg.durationSeconds - _windowSeconds,
+              );
               if (maxStart > 0) {
                 final secPerPx = _windowSeconds / (context.size?.width ?? 800);
-                setState(() => _startSeconds = (_startSeconds + signal.scrollDelta.dx * secPerPx * 3.0).clamp(0.0, maxStart));
+                setState(
+                  () => _startSeconds =
+                      (_startSeconds + signal.scrollDelta.dx * secPerPx * 3.0)
+                          .clamp(0.0, maxStart),
+                );
               }
             }
           }
@@ -978,35 +1225,61 @@ class _EegViewerState extends State<EegViewer> {
             return KeyEventResult.ignored;
           }
           if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            if (eeg.isEpoched) {
-              setState(() => _currentEpochIndex = math.min(eeg.epochCount - 1, _currentEpochIndex + 1));
+            if (eeg.isEpoched && !_stitchEpochs) {
+              setState(() => _setEpochIndex(eeg, _currentEpochIndex + 1));
             } else {
-              final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
-              final step = (event is KeyRepeatEvent) ? _windowSeconds * 0.1 : _windowSeconds * 0.5;
-              setState(() => _startSeconds = (_startSeconds + step).clamp(0.0, maxStart));
+              final maxStart = math.max(
+                0.0,
+                eeg.durationSeconds - _windowSeconds,
+              );
+              final step = (event is KeyRepeatEvent)
+                  ? _windowSeconds * 0.1
+                  : _windowSeconds * 0.5;
+              setState(
+                () =>
+                    _startSeconds = (_startSeconds + step).clamp(0.0, maxStart),
+              );
             }
             return KeyEventResult.handled;
           } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            if (eeg.isEpoched) {
-              setState(() => _currentEpochIndex = math.max(0, _currentEpochIndex - 1));
+            if (eeg.isEpoched && !_stitchEpochs) {
+              setState(() => _setEpochIndex(eeg, _currentEpochIndex - 1));
             } else {
-              final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
-              final step = (event is KeyRepeatEvent) ? _windowSeconds * 0.1 : _windowSeconds * 0.5;
-              setState(() => _startSeconds = (_startSeconds - step).clamp(0.0, maxStart));
+              final maxStart = math.max(
+                0.0,
+                eeg.durationSeconds - _windowSeconds,
+              );
+              final step = (event is KeyRepeatEvent)
+                  ? _windowSeconds * 0.1
+                  : _windowSeconds * 0.5;
+              setState(
+                () =>
+                    _startSeconds = (_startSeconds - step).clamp(0.0, maxStart),
+              );
             }
             return KeyEventResult.handled;
           } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
             if (_stacked && _pageSize > 0) {
               setState(() => _currentPage++);
             } else if (!_stacked) {
-              setState(() => _selectedChannel = (_selectedChannel + 1).clamp(0, eeg.labels.length - 1));
+              setState(
+                () => _selectedChannel = (_selectedChannel + 1).clamp(
+                  0,
+                  eeg.labels.length - 1,
+                ),
+              );
             }
             return KeyEventResult.handled;
           } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
             if (_stacked && _pageSize > 0) {
               setState(() => _currentPage = math.max(0, _currentPage - 1));
             } else if (!_stacked) {
-              setState(() => _selectedChannel = (_selectedChannel - 1).clamp(0, eeg.labels.length - 1));
+              setState(
+                () => _selectedChannel = (_selectedChannel - 1).clamp(
+                  0,
+                  eeg.labels.length - 1,
+                ),
+              );
             }
             return KeyEventResult.handled;
           }
@@ -1015,22 +1288,32 @@ class _EegViewerState extends State<EegViewer> {
         child: GestureDetector(
           onTapDown: (_) => _focusNode.requestFocus(),
           onScaleStart: (_) => _baseGain = _gain,
-          onScaleUpdate: (details) =>
-              setState(() => _gain = (_baseGain * details.scale).clamp(0.1, 16.0)),
+          onScaleUpdate: (details) => setState(
+            () => _gain = (_baseGain * details.scale).clamp(0.1, 16.0),
+          ),
           onDoubleTap: () => setState(() => _gain = 1.0),
           onHorizontalDragUpdate: (details) {
-            if (eeg.isEpoched) {
+            if (eeg.isEpoched && !_stitchEpochs) {
               _accumulatedDragDx -= details.delta.dx;
               if (_accumulatedDragDx.abs() > 40) {
                 final steps = (_accumulatedDragDx / 40).floor();
                 _accumulatedDragDx -= steps * 40;
-                setState(() => _currentEpochIndex = (_currentEpochIndex + steps).clamp(0, eeg.epochCount - 1));
+                setState(() => _setEpochIndex(eeg, _currentEpochIndex + steps));
               }
             } else {
-              final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
+              final maxStart = math.max(
+                0.0,
+                eeg.durationSeconds - _windowSeconds,
+              );
               if (maxStart <= 0) return;
               final secPerPx = _windowSeconds / (context.size?.width ?? 800);
-              setState(() => _startSeconds = (_startSeconds - details.delta.dx * secPerPx).clamp(0.0, maxStart));
+              setState(
+                () => _startSeconds =
+                    (_startSeconds - details.delta.dx * secPerPx).clamp(
+                      0.0,
+                      maxStart,
+                    ),
+              );
             }
           },
           child: ClipRect(
@@ -1040,18 +1323,16 @@ class _EegViewerState extends State<EegViewer> {
                 effectivePreview: _getEffectivePreview(eeg),
                 currentEpochIndex: _currentEpochIndex,
                 channelIndices: channelIndices,
-                startSeconds: _startSeconds,
+                startSeconds: eeg.isEpoched && !_stitchEpochs
+                    ? 0
+                    : _startSeconds,
                 windowSeconds: _windowSeconds.toDouble(),
                 gain: _gain,
                 autoscale: _autoscale,
                 stacked: _stacked,
                 traceSpacing: _traceSpacing,
-                visibleMarkers: [
-                  for (final m in eeg.markers)
-                    if (!_disabledMarkerLabels.contains(m.label))
-                      if (!eeg.isEpoched || m.epochIndex == _currentEpochIndex || (m.epochIndex == null && m.startSeconds <= eeg.epochDurationSeconds))
-                        m,
-                ],
+                stitchedEpochs: _stitchEpochs,
+                visibleMarkers: _markersForView(eeg),
               ),
               child: const SizedBox.expand(),
             ),
@@ -1059,6 +1340,37 @@ class _EegViewerState extends State<EegViewer> {
         ),
       ),
     );
+  }
+
+  List<EegMarker> _markersForView(EegRecording eeg) {
+    final enabled = eeg.markers.where(
+      (marker) => !_disabledMarkerLabels.contains(marker.label),
+    );
+    if (!eeg.isEpoched) return enabled.toList();
+    if (!_stitchEpochs) {
+      return [
+        for (final marker in enabled)
+          if (marker.epochIndex == _currentEpochIndex ||
+              (marker.epochIndex == null &&
+                  marker.startSeconds <= eeg.epochDurationSeconds))
+            marker,
+      ];
+    }
+
+    return [
+      for (final marker in enabled)
+        EegMarker(
+          type: marker.type,
+          description: marker.description,
+          startSeconds: marker.epochIndex == null
+              ? marker.startSeconds
+              : marker.epochIndex! * eeg.epochDurationSeconds +
+                    marker.startSeconds,
+          durationSeconds: marker.durationSeconds,
+          channelIndex: marker.channelIndex,
+          epochIndex: marker.epochIndex,
+        ),
+    ];
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1076,9 +1388,10 @@ class _EegViewerState extends State<EegViewer> {
       borderRadius: BorderRadius.circular(4),
       border: Border.all(color: color.withOpacity(0.35)),
     ),
-    child: Text(label,
-        style: TextStyle(
-            color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+    child: Text(
+      label,
+      style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+    ),
   );
 
   static const _channelColors = [
@@ -1128,7 +1441,11 @@ class _EegViewerState extends State<EegViewer> {
                 children: [
                   const Text(
                     'Marker Types & Visibility',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Wrap(
@@ -1140,8 +1457,15 @@ class _EegViewerState extends State<EegViewer> {
                       final isVisible = !_disabledMarkerLabels.contains(label);
                       return FilterChip(
                         selected: isVisible,
-                        avatar: Icon(Icons.circle, size: 10, color: _markerColor(label)),
-                        label: Text('$label ($count)', style: const TextStyle(fontSize: 12)),
+                        avatar: Icon(
+                          Icons.circle,
+                          size: 10,
+                          color: _markerColor(label),
+                        ),
+                        label: Text(
+                          '$label ($count)',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         onSelected: (val) {
                           setState(() {
                             if (val) {
@@ -1161,7 +1485,11 @@ class _EegViewerState extends State<EegViewer> {
                     children: [
                       const Text(
                         'Event Timeline (Click to Jump)',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
                       ),
                       TextButton.icon(
                         icon: const Icon(Icons.cut, size: 14),
@@ -1183,11 +1511,14 @@ class _EegViewerState extends State<EegViewer> {
                       ),
                       child: ListView.separated(
                         itemCount: eeg.markers.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFF334155)),
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, color: Color(0xFF334155)),
                         itemBuilder: (ctx, i) {
                           final m = eeg.markers[i];
                           final label = m.label;
-                          final isVisible = !_disabledMarkerLabels.contains(label);
+                          final isVisible = !_disabledMarkerLabels.contains(
+                            label,
+                          );
                           return ListTile(
                             dense: true,
                             enabled: isVisible,
@@ -1203,24 +1534,48 @@ class _EegViewerState extends State<EegViewer> {
                               '$label (${m.type})',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
-                                color: isVisible ? Colors.white : Colors.white38,
+                                color: isVisible
+                                    ? Colors.white
+                                    : Colors.white38,
                               ),
                             ),
                             subtitle: Text(
                               'Onset: ${m.startSeconds.toStringAsFixed(3)} s'
                               '${m.durationSeconds > 0 ? ' | Dur: ${m.durationSeconds.toStringAsFixed(3)} s' : ''}',
-                              style: const TextStyle(fontSize: 11, color: Colors.white54),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white54,
+                              ),
                             ),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios,
+                              size: 12,
+                              color: Colors.white30,
+                            ),
                             onTap: () {
-                              if (eeg.isEpoched && m.epochIndex != null) {
+                              if (eeg.isEpoched &&
+                                  m.epochIndex != null &&
+                                  !_stitchEpochs) {
                                 setState(() {
-                                  _currentEpochIndex = m.epochIndex!.clamp(0, eeg.epochCount - 1);
+                                  _setEpochIndex(eeg, m.epochIndex!);
                                 });
                               } else {
-                                final maxStart = math.max(0.0, eeg.durationSeconds - _windowSeconds);
+                                final maxStart = math.max(
+                                  0.0,
+                                  eeg.durationSeconds - _windowSeconds,
+                                );
+                                final markerSeconds =
+                                    eeg.isEpoched &&
+                                        _stitchEpochs &&
+                                        m.epochIndex != null
+                                    ? m.epochIndex! * eeg.epochDurationSeconds +
+                                          m.startSeconds
+                                    : m.startSeconds;
                                 setState(() {
-                                  _startSeconds = (m.startSeconds - 2.0).clamp(0.0, maxStart);
+                                  _startSeconds = (markerSeconds - 2.0).clamp(
+                                    0.0,
+                                    maxStart,
+                                  );
                                 });
                               }
                               Navigator.pop(ctx);
@@ -1280,7 +1635,11 @@ class _EegViewerState extends State<EegViewer> {
                   children: [
                     const Text(
                       'Select Target Event IDs / Markers:',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Container(
@@ -1296,12 +1655,21 @@ class _EegViewerState extends State<EegViewer> {
                           spacing: 6,
                           runSpacing: 4,
                           children: uniqueMarkers.map((evt) {
-                            final count = eeg.markers.where((m) => m.label == evt).length;
+                            final count = eeg.markers
+                                .where((m) => m.label == evt)
+                                .length;
                             final isSel = selectedEvents.contains(evt);
                             return FilterChip(
                               selected: isSel,
-                              avatar: Icon(Icons.circle, size: 10, color: _markerColor(evt)),
-                              label: Text('$evt ($count)', style: const TextStyle(fontSize: 12)),
+                              avatar: Icon(
+                                Icons.circle,
+                                size: 10,
+                                color: _markerColor(evt),
+                              ),
+                              label: Text(
+                                '$evt ($count)',
+                                style: const TextStyle(fontSize: 12),
+                              ),
                               onSelected: (val) {
                                 setDialogState(() {
                                   if (val) {
@@ -1319,7 +1687,11 @@ class _EegViewerState extends State<EegViewer> {
                     const SizedBox(height: 16),
                     const Text(
                       'Epoch Time Window (Seconds relative to event):',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -1327,7 +1699,10 @@ class _EegViewerState extends State<EegViewer> {
                         Expanded(
                           child: TextField(
                             controller: tminCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
                             decoration: const InputDecoration(
                               labelText: 'tmin (s)',
                               helperText: 'e.g. -0.5',
@@ -1338,7 +1713,10 @@ class _EegViewerState extends State<EegViewer> {
                         Expanded(
                           child: TextField(
                             controller: tmaxCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
                             decoration: const InputDecoration(
                               labelText: 'tmax (s)',
                               helperText: 'e.g. 1.2',
@@ -1349,12 +1727,22 @@ class _EegViewerState extends State<EegViewer> {
                     ),
                     const SizedBox(height: 16),
                     CheckboxListTile(
-                      title: const Text('Apply Baseline Correction', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                      subtitle: const Text('Subtract channel mean during baseline window', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                      title: const Text(
+                        'Apply Baseline Correction',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Subtract channel mean during baseline window',
+                        style: TextStyle(fontSize: 11, color: Colors.white54),
+                      ),
                       value: applyBaseline,
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      onChanged: (v) => setDialogState(() => applyBaseline = v ?? true),
+                      onChanged: (v) =>
+                          setDialogState(() => applyBaseline = v ?? true),
                     ),
                     if (applyBaseline) ...[
                       const SizedBox(height: 8),
@@ -1363,7 +1751,11 @@ class _EegViewerState extends State<EegViewer> {
                           Expanded(
                             child: TextField(
                               controller: bMinCtrl,
-                              keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    signed: true,
+                                    decimal: true,
+                                  ),
                               decoration: const InputDecoration(
                                 labelText: 'Baseline Min (s)',
                                 helperText: 'e.g. -0.2',
@@ -1374,7 +1766,11 @@ class _EegViewerState extends State<EegViewer> {
                           Expanded(
                             child: TextField(
                               controller: bMaxCtrl,
-                              keyboardType: const TextInputType.numberWithOptions(signed: true, decimal: true),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    signed: true,
+                                    decimal: true,
+                                  ),
                               decoration: const InputDecoration(
                                 labelText: 'Baseline Max (s)',
                                 helperText: 'e.g. 0.0',
@@ -1450,7 +1846,6 @@ class _EegViewerState extends State<EegViewer> {
   }
 }
 
-
 // ── Signal Painter ────────────────────────────────────────────────────────────
 class _EegSignalPainter extends CustomPainter {
   const _EegSignalPainter({
@@ -1464,6 +1859,7 @@ class _EegSignalPainter extends CustomPainter {
     required this.autoscale,
     required this.stacked,
     required this.traceSpacing,
+    required this.stitchedEpochs,
     this.visibleMarkers = const [],
   });
 
@@ -1477,74 +1873,89 @@ class _EegSignalPainter extends CustomPainter {
   final bool autoscale;
   final bool stacked;
   final double traceSpacing;
+  final bool stitchedEpochs;
   final List<EegMarker> visibleMarkers;
 
   static const _timeAxisH = 20.0;
-
-  static const _colors = [
-    Color(0xFF14B8A6),
-    Color(0xFF3B82F6),
-    Color(0xFFF87171),
-    Color(0xFFFBBF24),
-    Color(0xFF8B5CF6),
-    Color(0xFF10B981),
-    Color(0xFF38BDF8),
-    Color(0xFFF472B6),
-    Color(0xFF4ADE80),
-    Color(0xFFFF7043),
-    Color(0xFF26C6DA),
-    Color(0xFFFFCA28),
-    Color(0xFFEC407A),
-    Color(0xFF7E57C2),
-    Color(0xFF26A69A),
-    Color(0xFF8D6E63),
-  ];
+  static const _labelGutter = 76.0;
+  static const _traceColor = Color(0xFF172033);
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFFFFFFF),
+    );
     if (channelIndices.isEmpty) return;
 
     final drawH = size.height - _timeAxisH;
+    final plotLeft = math.min(_labelGutter, size.width * 0.22);
+    final plotW = math.max(1.0, size.width - plotLeft);
     final numLanes = channelIndices.length;
     final laneH = drawH / numLanes;
 
-    // ── Grid (identical to ScoringNidra) ────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, plotLeft, drawH),
+      Paint()..color = const Color(0xFFF8FAFC),
+    );
+    canvas.drawLine(
+      Offset(plotLeft, 0),
+      Offset(plotLeft, drawH),
+      Paint()
+        ..color = const Color(0xFFCBD5E1)
+        ..strokeWidth = 1,
+    );
+
+    // Light signal paper, following the CCS SleepStudio viewer.
     final grid = Paint()
-      ..color = const Color(0xFF334155)
-      ..strokeWidth = 1;
+      ..color = const Color(0xFFE5E7EB)
+      ..strokeWidth = 0.75;
     for (var i = 1; i < 4; i++) {
       final y = drawH * i / 4;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+      canvas.drawLine(Offset(plotLeft, y), Offset(size.width, y), grid);
     }
     for (var i = 1; i < 8; i++) {
-      final x = size.width * i / 8;
+      final x = plotLeft + plotW * i / 8;
       canvas.drawLine(Offset(x, 0), Offset(x, drawH), grid);
     }
 
     // ── Epoch boundary background & edge indicator ───────────────────
-    final double drawW = eeg.isEpoched
-        ? math.min(size.width, (eeg.epochDurationSeconds / windowSeconds) * size.width)
-        : size.width;
+    final double signalW = eeg.isEpoched && !stitchedEpochs
+        ? math.min(plotW, (eeg.epochDurationSeconds / windowSeconds) * plotW)
+        : plotW;
 
-    if (eeg.isEpoched && drawW < size.width) {
+    if (eeg.isEpoched && !stitchedEpochs && signalW < plotW) {
       canvas.drawRect(
-        Rect.fromLTWH(0, 0, drawW, drawH),
+        Rect.fromLTWH(plotLeft, 0, signalW, drawH),
         Paint()..color = const Color(0xFFA855F7).withOpacity(0.05),
       );
       final edgePaint = Paint()
         ..color = const Color(0xFFA855F7).withOpacity(0.45)
         ..strokeWidth = 1.5;
-      canvas.drawLine(Offset(drawW, 0), Offset(drawW, drawH), edgePaint);
+      final epochEdge = plotLeft + signalW;
+      canvas.drawLine(
+        Offset(epochEdge, 0),
+        Offset(epochEdge, drawH),
+        edgePaint,
+      );
 
       // Label showing epoch end time
       final endLbl = TextPainter(
         text: TextSpan(
           text: '${eeg.epochDurationSeconds.toStringAsFixed(1)}s (Epoch End)',
-          style: const TextStyle(color: Color(0xFFA855F7), fontSize: 10, fontWeight: FontWeight.w600),
+          style: const TextStyle(
+            color: Color(0xFFA855F7),
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      endLbl.paint(canvas, Offset(drawW + 4, 4));
+      endLbl.paint(canvas, Offset(epochEdge + 4, 4));
+    }
+
+    if (eeg.isEpoched && stitchedEpochs) {
+      _paintEpochBoundaries(canvas, drawH, plotLeft, signalW);
     }
 
     // ── Markers & Annotations ─────────────────────────────────────────
@@ -1553,16 +1964,13 @@ class _EegSignalPainter extends CustomPainter {
       if (marker.startSeconds >= startSeconds - marker.durationSeconds &&
           marker.startSeconds <= windowEnd) {
         final relSec = marker.startSeconds - startSeconds;
-        final x = (relSec / windowSeconds) * drawW;
+        final x = plotLeft + (relSec / windowSeconds) * signalW;
         final color = _markerColor(marker.label);
 
         if (marker.durationSeconds > 0) {
-          final durW = (marker.durationSeconds / windowSeconds) * drawW;
-          final durRect = Rect.fromLTWH(math.max(0.0, x), 0, durW, drawH);
-          canvas.drawRect(
-            durRect,
-            Paint()..color = color.withOpacity(0.12),
-          );
+          final durW = (marker.durationSeconds / windowSeconds) * signalW;
+          final durRect = Rect.fromLTWH(math.max(plotLeft, x), 0, durW, drawH);
+          canvas.drawRect(durRect, Paint()..color = color.withOpacity(0.12));
         }
 
         final linePaint = Paint()
@@ -1583,9 +1991,16 @@ class _EegSignalPainter extends CustomPainter {
           textDirection: TextDirection.ltr,
         )..layout();
 
-        final double bgX = x.clamp(0.0, math.max(0.0, size.width - labelPainter.width - 4)).toDouble();
+        final double bgX = x
+            .clamp(0.0, math.max(0.0, size.width - labelPainter.width - 4))
+            .toDouble();
         final bgRect = RRect.fromRectAndRadius(
-          Rect.fromLTWH(bgX, 2, labelPainter.width + 4, labelPainter.height + 2),
+          Rect.fromLTWH(
+            bgX,
+            2,
+            labelPainter.width + 4,
+            labelPainter.height + 2,
+          ),
           const Radius.circular(3),
         );
         canvas.drawRRect(bgRect, Paint()..color = color.withOpacity(0.85));
@@ -1593,14 +2008,17 @@ class _EegSignalPainter extends CustomPainter {
       }
     }
 
-
     // ── Lane separator lines ─────────────────────────────────────────
     if (numLanes > 1) {
       final sep = Paint()
-        ..color = const Color(0xFF253347)
+        ..color = const Color(0xFFD1D5DB)
         ..strokeWidth = 0.5;
       for (var l = 1; l < numLanes; l++) {
-        canvas.drawLine(Offset(0, l * laneH), Offset(size.width, l * laneH), sep);
+        canvas.drawLine(
+          Offset(plotLeft, l * laneH),
+          Offset(size.width, l * laneH),
+          sep,
+        );
       }
     }
 
@@ -1609,35 +2027,40 @@ class _EegSignalPainter extends CustomPainter {
 
     for (var lane = 0; lane < numLanes; lane++) {
       final chIdx = channelIndices[lane];
-      final color = _colors[chIdx % _colors.length];
       final label = chIdx < eeg.labels.length ? eeg.labels[chIdx] : 'Ch $chIdx';
       final centerY = lane * laneH + laneH * 0.5;
 
-      // Channel label — top-left of each lane (matches ScoringNidra)
+      // A dedicated gutter keeps labels readable instead of drawing signals
+      // through them, even when many channels are visible.
       labelPainter.text = TextSpan(
         text: label,
         style: TextStyle(
-          color: color,
-          fontSize: math.max(8.0, math.min(10.0, laneH * 0.4)),
+          color: _traceColor,
+          fontSize: math.max(7.0, math.min(11.0, laneH * 0.52)),
           fontWeight: FontWeight.w600,
         ),
       );
-      labelPainter.layout();
-      labelPainter.paint(canvas, Offset(4, laneH * lane + 2));
+      labelPainter.layout(maxWidth: math.max(1, plotLeft - 10));
+      labelPainter.paint(canvas, Offset(6, centerY - labelPainter.height / 2));
 
-      final values = _windowedSamples(chIdx);
-      if (values.length < 2) continue;
+      final sampleWindow = _sampleWindow(chIdx);
+      final values = sampleWindow.$1;
+      final start = sampleWindow.$2;
+      final end = sampleWindow.$3;
+      final n = end - start;
+      if (n < 2) continue;
 
       // Calculate channel mean within visible window to center the trace cleanly
       var mean = 0.0;
-      var minV = values[0];
-      var maxV = values[0];
-      for (final v in values) {
+      var minV = values[start];
+      var maxV = values[start];
+      for (var i = start; i < end; i++) {
+        final v = values[i];
         mean += v;
         if (v < minV) minV = v;
         if (v > maxV) maxV = v;
       }
-      mean /= values.length;
+      mean /= n;
 
       var laneScale = 50.0;
       if (autoscale && maxV > minV) {
@@ -1646,43 +2069,36 @@ class _EegSignalPainter extends CustomPainter {
       }
 
       final path = Path();
-      final n = values.length;
-
-      if (n > drawW * 2) {
-        final step = n / drawW;
-        for (var px = 0; px <= drawW.ceil(); px++) {
-          final idxStart = (px * step).floor().clamp(0, n - 1);
-          final idxEnd = ((px + 1) * step).ceil().clamp(idxStart + 1, n);
-          var segMin = values[idxStart];
-          var segMax = values[idxStart];
-          for (var i = idxStart; i < idxEnd; i++) {
-            if (values[i] < segMin) segMin = values[i];
-            if (values[i] > segMax) segMax = values[i];
-          }
-          final yMin = (centerY - ((segMax - mean) / laneScale) * laneH * 0.42 * gain * traceSpacing).clamp(0.0, size.height);
-          final yMax = (centerY - ((segMin - mean) / laneScale) * laneH * 0.42 * gain * traceSpacing).clamp(0.0, size.height);
-          final x = px.toDouble();
-          if (px == 0) {
-            path.moveTo(x, yMin);
-          } else {
-            path.lineTo(x, yMin);
-          }
-          if ((yMax - yMin).abs() > 0.5) {
-            path.lineTo(x, yMax);
-          }
+      // Draw at most about 1.5 points per physical pixel. Each display point
+      // is a bin average, avoiding the min/max vertical zig-zag that made
+      // 30–60 second windows shimmer while dragging.
+      final targetPoints = math.max(2, (signalW * 1.5).ceil());
+      final stride = math.max(1, (n / targetPoints).ceil());
+      var point = 0;
+      for (var binStart = start; binStart < end; binStart += stride) {
+        final binEnd = math.min(end, binStart + stride);
+        var total = 0.0;
+        for (var i = binStart; i < binEnd; i++) {
+          total += values[i];
         }
-      } else {
-        for (var i = 0; i < n; i++) {
-          final x = i * drawW / math.max(1, n - 1);
-          final y = (centerY - ((values[i] - mean) / laneScale) * laneH * 0.42 * gain * traceSpacing).clamp(0.0, size.height);
-          i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-        }
+        final value = total / (binEnd - binStart);
+        final relative = (binStart - start) / math.max(1, n - 1);
+        final x = plotLeft + relative * signalW;
+        final y =
+            (centerY -
+                    ((value - mean) / laneScale) *
+                        laneH *
+                        0.42 *
+                        gain *
+                        traceSpacing)
+                .clamp(0.0, drawH);
+        point++ == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
       }
 
       canvas.drawPath(
         path,
         Paint()
-          ..color = color
+          ..color = _traceColor
           ..strokeWidth = stacked ? 1.2 : 1.6
           ..style = PaintingStyle.stroke
           ..isAntiAlias = true
@@ -1691,45 +2107,103 @@ class _EegSignalPainter extends CustomPainter {
     }
 
     // ── Time axis ────────────────────────────────────────────────────
-    _paintTimeAxis(canvas, size, drawH);
+    _paintTimeAxis(canvas, size, drawH, plotLeft, plotW);
   }
 
-  void _paintTimeAxis(Canvas canvas, Size size, double drawH) {
+  void _paintEpochBoundaries(
+    Canvas canvas,
+    double drawH,
+    double plotLeft,
+    double drawW,
+  ) {
+    final epochDuration = eeg.epochDurationSeconds;
+    if (epochDuration <= 0 || windowSeconds <= 0) return;
+    final firstBoundary = math.max(0, (startSeconds / epochDuration).ceil());
+    final lastBoundary = math.min(
+      eeg.epochCount,
+      ((startSeconds + windowSeconds) / epochDuration).floor(),
+    );
+    final boundaryPaint = Paint()
+      ..color = const Color(0xFFA855F7).withOpacity(0.65)
+      ..strokeWidth = 1.25;
+    for (var boundary = firstBoundary; boundary <= lastBoundary; boundary++) {
+      final seconds = boundary * epochDuration;
+      final relativeX = (seconds - startSeconds) / windowSeconds * drawW;
+      if (relativeX < 0 || relativeX > drawW) continue;
+      final x = plotLeft + relativeX;
+      canvas.drawLine(Offset(x, 0), Offset(x, drawH), boundaryPaint);
+      if (boundary < eeg.epochCount) {
+        final label = TextPainter(
+          text: TextSpan(
+            text: ' E${boundary + 1} ',
+            style: const TextStyle(
+              color: Color(0xFF7E22CE),
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              backgroundColor: Color(0xFFF3E8FF),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        label.paint(
+          canvas,
+          Offset(
+            (x + 2).clamp(
+              plotLeft,
+              math.max(plotLeft, plotLeft + drawW - label.width),
+            ),
+            3,
+          ),
+        );
+      }
+    }
+  }
+
+  void _paintTimeAxis(
+    Canvas canvas,
+    Size size,
+    double drawH,
+    double plotLeft,
+    double plotW,
+  ) {
     canvas.drawRect(
       Rect.fromLTWH(0, drawH, size.width, _timeAxisH),
-      Paint()..color = const Color(0xFF0F172A),
+      Paint()..color = const Color(0xFFF8FAFC),
     );
     canvas.drawLine(
       Offset(0, drawH),
       Offset(size.width, drawH),
       Paint()
-        ..color = const Color(0xFF334155)
+        ..color = const Color(0xFFCBD5E1)
         ..strokeWidth = 1,
     );
 
-    final approxTicks = (size.width / 80).floor().clamp(4, 12);
+    final approxTicks = (plotW / 80).floor().clamp(4, 12);
     final niceInterval = _niceInterval(windowSeconds / approxTicks);
 
     final tickPaint = Paint()
-      ..color = const Color(0xFF475569)
+      ..color = const Color(0xFF94A3B8)
       ..strokeWidth = 1;
     final labelPainter = TextPainter(textDirection: TextDirection.ltr);
 
     final firstTick = (startSeconds / niceInterval).ceil() * niceInterval;
     var t = firstTick;
     while (t <= startSeconds + windowSeconds + 1e-9) {
-      final x = (t - startSeconds) / windowSeconds * size.width;
-      if (x >= 0 && x <= size.width) {
+      final x = plotLeft + (t - startSeconds) / windowSeconds * plotW;
+      if (x >= plotLeft && x <= size.width) {
         canvas.drawLine(Offset(x, drawH), Offset(x, drawH + 5), tickPaint);
         labelPainter.text = TextSpan(
           text: _formatTime(t),
-          style: const TextStyle(fontSize: 9, color: Color(0xFF64748B)),
+          style: const TextStyle(fontSize: 9, color: Color(0xFF475569)),
         );
         labelPainter.layout();
         labelPainter.paint(
           canvas,
           Offset(
-            (x - labelPainter.width / 2).clamp(0, size.width - labelPainter.width),
+            (x - labelPainter.width / 2).clamp(
+              0,
+              size.width - labelPainter.width,
+            ),
             drawH + 6,
           ),
         );
@@ -1739,29 +2213,46 @@ class _EegSignalPainter extends CustomPainter {
   }
 
   // ── Sample extraction ────────────────────────────────────────────────────
-  List<double> _windowedSamples(int chIdx) {
-    if (chIdx >= effectivePreview.length) return [];
+  (Float32List, int, int) _sampleWindow(int chIdx) {
+    if (chIdx >= effectivePreview.length) return (Float32List(0), 0, 0);
     final all = effectivePreview[chIdx];
-    if (all.isEmpty) return [];
-    if (eeg.isEpoched) {
+    if (all.isEmpty) return (all, 0, 0);
+    if (eeg.isEpoched && !stitchedEpochs) {
       final pts = eeg.pointsPerEpoch ?? all.length;
       final epochIdx = currentEpochIndex.clamp(0, eeg.epochCount - 1);
       final startIdx = epochIdx * pts;
       final endIdx = math.min(all.length, (epochIdx + 1) * pts);
-      if (startIdx >= all.length) return [];
-      return all.sublist(startIdx, endIdx).map((v) => v.toDouble()).toList();
+      if (startIdx >= all.length) return (all, 0, 0);
+      return (all, startIdx, endIdx);
     }
     final duration = eeg.durationSeconds;
-    if (duration <= 0) return all.map((v) => v.toDouble()).toList();
+    if (duration <= 0) return (all, 0, all.length);
     final a = ((startSeconds / duration).clamp(0.0, 1.0) * all.length).floor();
-    final b = (((startSeconds + windowSeconds) / duration).clamp(0.0, 1.0) * all.length)
-        .ceil()
-        .clamp(a + 1, all.length);
-    return all.sublist(a, b).map((v) => v.toDouble()).toList();
+    final b =
+        (((startSeconds + windowSeconds) / duration).clamp(0.0, 1.0) *
+                all.length)
+            .ceil()
+            .clamp(a + 1, all.length);
+    return (all, a, b);
   }
 
   static double _niceInterval(double raw) {
-    const c = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 6.0, 10.0, 15.0, 20.0, 30.0, 60.0, 120.0, 300.0];
+    const c = [
+      0.1,
+      0.2,
+      0.5,
+      1.0,
+      2.0,
+      5.0,
+      6.0,
+      10.0,
+      15.0,
+      20.0,
+      30.0,
+      60.0,
+      120.0,
+      300.0,
+    ];
     for (final v in c) if (v >= raw) return v;
     return raw;
   }
@@ -1787,6 +2278,7 @@ class _EegSignalPainter extends CustomPainter {
       old.autoscale != autoscale ||
       old.stacked != stacked ||
       old.traceSpacing != traceSpacing ||
+      old.stitchedEpochs != stitchedEpochs ||
       old.visibleMarkers != visibleMarkers;
 }
 
@@ -1804,4 +2296,3 @@ Color _markerColor(String label) {
   ];
   return palette[hash % palette.length];
 }
-

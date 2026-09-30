@@ -1,5 +1,9 @@
 import 'dart:typed_data';
 
+import 'erp/stim_epochs.dart';
+
+export 'erp/stim_epochs.dart' show StimEpochSpec;
+
 class LoadedEeg {
   const LoadedEeg({
     required this.sampleRateHz,
@@ -34,22 +38,22 @@ class EegMarker {
   String get label => description.isNotEmpty ? description : type;
 
   Map<String, dynamic> toJson() => {
-        'type': type,
-        'description': description,
-        'start_seconds': startSeconds,
-        'duration_seconds': durationSeconds,
-        if (channelIndex != null) 'channel_index': channelIndex,
-        if (epochIndex != null) 'epoch_index': epochIndex,
-      };
+    'type': type,
+    'description': description,
+    'start_seconds': startSeconds,
+    'duration_seconds': durationSeconds,
+    if (channelIndex != null) 'channel_index': channelIndex,
+    if (epochIndex != null) 'epoch_index': epochIndex,
+  };
 
   factory EegMarker.fromJson(Map<String, dynamic> json) => EegMarker(
-        type: json['type'] as String? ?? 'Marker',
-        description: json['description'] as String? ?? '',
-        startSeconds: (json['start_seconds'] as num?)?.toDouble() ?? 0.0,
-        durationSeconds: (json['duration_seconds'] as num?)?.toDouble() ?? 0.0,
-        channelIndex: (json['channel_index'] as num?)?.toInt(),
-        epochIndex: (json['epoch_index'] as num?)?.toInt(),
-      );
+    type: json['type'] as String? ?? 'Marker',
+    description: json['description'] as String? ?? '',
+    startSeconds: (json['start_seconds'] as num?)?.toDouble() ?? 0.0,
+    durationSeconds: (json['duration_seconds'] as num?)?.toDouble() ?? 0.0,
+    channelIndex: (json['channel_index'] as num?)?.toInt(),
+    epochIndex: (json['epoch_index'] as num?)?.toInt(),
+  );
 }
 
 class EegRecording {
@@ -65,6 +69,7 @@ class EegRecording {
     this.pointsPerEpoch,
     this.epochLabels,
     this.markers = const [],
+    this.epochTmin,
   });
 
   final String path;
@@ -79,12 +84,15 @@ class EegRecording {
   final List<String>? epochLabels;
   final List<EegMarker> markers;
 
+  /// Start of each epoch relative to its event (s), for stimulus-locked
+  /// epochs. Null for continuous data or fixed-length epochs.
+  final double? epochTmin;
+
   double get durationSeconds => sampleCount / sampleRate;
   bool get isEpoched => epochCount > 1 && (pointsPerEpoch ?? 0) > 0;
   double get epochDurationSeconds =>
       isEpoched ? (pointsPerEpoch! / sampleRate) : durationSeconds;
 }
-
 
 enum DurationMode { full, interval, bins, middleTwoMinutes }
 
@@ -126,7 +134,12 @@ class PreprocessingOptions {
     this.sourceLocalization = false,
     this.epochBeforeGedai = false,
     this.nonEegChannels = const [],
+    this.stimEpochs,
   });
+
+  /// Stimulus-locked epoching (ERP): cut epochs around these markers after
+  /// filtering and before bad-channel detection / GEDAI / interpolation.
+  final StimEpochSpec? stimEpochs;
 
   final bool downsample;
   final double downsampleFreq;
@@ -161,6 +174,7 @@ class PreprocessingOptions {
     'source_localization': sourceLocalization,
     'epoch_before_gedai': epochBeforeGedai,
     'non_eeg_channels': nonEegChannels,
+    if (stimEpochs != null) 'stim_epochs_spec': stimEpochs!.toJson(),
   };
 }
 
@@ -265,6 +279,35 @@ class AnalysisConfig {
   bool epochBeforeGedai = true;
   double gedaiEpochSeconds = 1;
 
+  // ── Stimulus-locked epochs (ERP) ────────────────────────────────────────
+  bool stimEpochs = false;
+  List<String> stimMarkers = const ['S 51', 'S 52'];
+  String stimPattern = '';
+  double stimTmin = -0.5;
+  double stimTmax = 1.2;
+  bool stimBaseline = true;
+  double stimBaselineStart = -0.2;
+  double stimBaselineEnd = 0.0;
+  String stimCropMarker = '';
+  double stimCropMinutes = 0;
+
+  StimEpochSpec? get stimEpochSpec => !stimEpochs
+      ? null
+      : StimEpochSpec(
+          markers: stimMarkers,
+          pattern: stimPattern,
+          tmin: stimTmin,
+          tmax: stimTmax,
+          baseline: stimBaseline,
+          baselineStart: stimBaselineStart,
+          baselineEnd: stimBaselineEnd,
+          cropStartMarker: stimCropMarker,
+          cropMinutes: stimCropMinutes,
+        );
+
+  /// File suffix of preprocessed outputs ("-epo_clean" for stimulus epochs).
+  String get cleanSuffix => stimEpochs ? '-epo_clean' : '_clean';
+
   // ── Source space ─────────────────────────────────────────────────────────
   bool sourceLocalization = false;
 
@@ -317,15 +360,13 @@ class AnalysisConfig {
 
   bool generatePlots = true;
 
-  /// Render a separate plot set for each input file.
-  bool perFilePlots = true;
-
-  /// Render a group overlay plot with one trace per input file.
-  bool groupOverlayPlots = true;
+  /// Also write one combined TopoStats PDF (summary + every figure) and one
+  /// stats table per recording next to the PNGs.
+  bool topoStatsPdf = true;
 
   bool generatePdfReport = true;
 
-  int nTopoWindows = 10;
+  int nTopoWindows = 2;
   int smoothingWindow = 25;
 
   // ── Derived option objects ───────────────────────────────────────────────
@@ -367,6 +408,7 @@ class AnalysisConfig {
       sourceLocalization: false,
       epochBeforeGedai: epochBeforeGedai,
       nonEegChannels: nonEegChannels,
+      stimEpochs: stimEpochSpec,
     );
   }
 

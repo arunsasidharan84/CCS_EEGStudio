@@ -32,13 +32,53 @@ permissions:
   contents: write
 
 jobs:
+  validate-release:
+    name: Validate version and release notes
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate version metadata
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          version="${version%%+*}"
+          test -n "$version"
+          installer_version="$(awk '/#define AppVersion/ {gsub(/\"/, "", $3); print $3; exit}' windows/installer.iss)"
+          engine_version="$(awk -F'\"' '/^version = / {print $2; exit}' bridge/Cargo.toml)"
+          if [[ "$installer_version" != "$version" || "$engine_version" != "$version" ]]; then
+            echo "Version mismatch: pubspec=$version installer=$installer_version engine=$engine_version" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match pubspec version v$version" >&2
+            exit 1
+          fi
+          bash scripts/release_notes.sh "$version" > release-notes.md
+          test -s release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload validated release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
   # ──────────────────────────────────────────────────────────────────────────
   # macOS build job
-  # Runner: macos-15 (Apple Silicon + x86 universal)
+  # Runner: macos-15 (runner-native architecture)
   # Output: CCSEEGStudio-macos.zip (ad-hoc signed .app bundle)
   # ──────────────────────────────────────────────────────────────────────────
   build-macos:
     name: macOS
+    needs: validate-release
     runs-on: macos-15
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -107,7 +147,7 @@ jobs:
           name: CCSEEGStudio-macos
           path: dist/CCSEEGStudio-macos.zip
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   # ──────────────────────────────────────────────────────────────────────────
   # Windows build job
@@ -116,6 +156,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   build-windows:
     name: Windows
+    needs: validate-release
     runs-on: windows-2022
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -169,7 +210,10 @@ jobs:
       # Requires Inno Setup to be pre-installed on windows-2022 runner.
       # windows-2022 includes Inno Setup in the default tool cache.
       - name: Build Windows installer (Inno Setup)
-        run: iscc /F"CCSEEGStudio-Installer" windows\installer.iss
+        shell: pwsh
+        run: |
+          iscc /DAppVersion="${{ needs.validate-release.outputs.version }}" `
+            /F"CCSEEGStudio-Installer" windows\installer.iss
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
@@ -177,7 +221,7 @@ jobs:
           name: CCSEEGStudio-Installer
           path: dist\CCSEEGStudio-Installer.exe
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   # ──────────────────────────────────────────────────────────────────────────
   # Linux build job
@@ -187,6 +231,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   build-linux:
     name: Linux
+    needs: validate-release
     runs-on: ubuntu-22.04
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -284,7 +329,7 @@ jobs:
             dist/CCSEEGStudio-linux-amd64.deb
             dist/CCSEEGStudio-linux-x86_64.rpm
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
   # ──────────────────────────────────────────────────────────────────────────
   # Release job: aggregates all platform artifacts and creates/updates the
@@ -294,13 +339,22 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   release:
     name: Release Assets
-    needs: [build-macos, build-windows, build-linux]
+    needs: [validate-release, build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       (startsWith(github.ref, 'refs/tags/v') || contains(toJSON(github.event.commits), '[build desktop]'))
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: release
+
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
@@ -334,6 +388,16 @@ jobs:
             echo "prerelease=true"                >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate artifact checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum \
+            CCSEEGStudio-macos.zip \
+            CCSEEGStudio-Installer.exe \
+            CCSEEGStudio-linux-amd64.deb \
+            CCSEEGStudio-linux-x86_64.rpm > SHA256SUMS.txt
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -345,8 +409,10 @@ jobs:
             dist/CCSEEGStudio-Installer.exe
             dist/CCSEEGStudio-linux-amd64.deb
             dist/CCSEEGStudio-linux-x86_64.rpm
+            dist/SHA256SUMS.txt
           draft: false
           make_latest: ${{ steps.release_info.outputs.tag != 'latest' && 'true' || 'false' }}
-          generate_release_notes: true
+          body_path: release/release-notes.md
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

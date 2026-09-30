@@ -1,91 +1,139 @@
-# CCS EEG Studio
+<p align="center">
+  <img src="screenshots/ccs_logo.png" width="170" alt="Centre for Consciousness Studies, NIMHANS">
+</p>
+
+<h1 align="center">CCS EEG Studio</h1>
 
 <p align="center">
-  <img src="screenshots/ccs_logo.png" width="200" alt="CCS NIMHANS Logo">
+  <b>Native-speed EEG preprocessing, feature extraction, connectivity, statistics, and reporting.</b>
 </p>
 
 <p align="center">
-  Developed by the <b>Team from Centre for Consciousness Studies (CCS)</b>,<br>
-  Department of Neurophysiology,<br>
-  <b>National Institute of Mental Health and Neurosciences (NIMHANS)</b>, Bangalore, India.
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/arunsasidharan84/CCS_EEGStudio?style=for-the-badge&color=3b82f6"></a>
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/actions/workflows/build.yml"><img alt="Desktop build" src="https://img.shields.io/github/actions/workflow/status/arunsasidharan84/CCS_EEGStudio/build.yml?style=for-the-badge&label=desktop%20build"></a>
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/arunsasidharan84/CCS_EEGStudio/total?style=for-the-badge&color=22c55e"></a>
 </p>
 
-Welcome to **CCS EEG Studio**, a high-performance, cross-platform desktop application for epoch-wise EEG feature extraction and functional connectivity analysis. It provides a lightweight GUI wrapper for a native Rust computational engine (`ccs-eeg-engine`) that implements spectral, nonlinear, aperiodic, and connectivity analyses with numerical parity to the Python reference codes (`https://github.com/arunsasidharan84/ccs_toolbox`).
+<p align="center">
+  Developed by the <b>Centre for Consciousness Studies</b>, Department of Neurophysiology,<br>
+  <b>NIMHANS</b>, Bengaluru, India.
+</p>
 
-Built using **Flutter** for a lightweight, fluid UI and **Rust** for native-speed signal processing, the application reads EDF and EEGLAB SET/FDT recordings and produces combined per-epoch, per-channel CSV outputs without requiring any Python or MATLAB runtime.
+<p align="center">
+  <b>Current version: 1.2.4</b> ·
+  <a href="CHANGELOG.md">Detailed changelog</a> ·
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
+</p>
+
+CCS EEG Studio turns research EEG recordings into reproducible, analysis-ready outputs without requiring Python or MATLAB on the end user's computer. A Flutter desktop interface orchestrates a native Rust engine for preprocessing, source projection, epoch-wise features, functional connectivity, ERP analysis, microstates, topographic statistics, plots, and PDF reports.
+
+> The algorithms are ported from [`ccs_toolbox`](https://github.com/arunsasidharan84/ccs_toolbox) and continuously checked against the Python reference implementations and MNE Connectivity.
+
+### What is new in 1.2.4
+
+- A synchronized microstate explorer with aligned sequence, EEG, and
+  state-similarity timelines; selectable waveform density; and toggleable
+  state traces.
+- ERP scalp maps at a selected time point or averaged time window, including
+  A, B, B−A, Welch-t, and FDR-corrected electrode significance views.
+- Safer recording tabs for long filenames and clearer percentage-form
+  microstate transition matrices.
+- Reproducible macOS, Windows, Debian/Ubuntu, and RHEL-family releases built by
+  GitHub Actions with checksums and version-specific notes.
+
+See the [1.2.4 release notes](CHANGELOG.md#124) for the complete list.
 
 ![CCS EEG Studio Main Window](screenshots/main.png)
 
----
+## Why CCS EEG Studio?
+
+| | Capability |
+|---|---|
+| ⚡ | Native Rust processing with parallel epoch dispatch |
+| 🧠 | Spectral, aperiodic, nonlinear, connectivity, ERP, source-space, and microstate analysis |
+| 📊 | Channel-level CSVs, scalp maps, statistics, plots, and publication-ready PDF reports |
+| 📁 | EDF/EDF+, EEGLAB SET/FDT, MNE FIF, FieldTrip MAT, BrainVision, and portable CCS EEG files |
+| 〰️ | SleepStudio-style light waveform canvas with uniform traces and EEGLAB-style stitched epoch scrolling |
+| 🧹 | Configurable GEDAI window/epoch size for continuous and memory-safe preprocessing |
+| 🔁 | Single-recording exploration and unattended batch pipelines share one configuration |
+| ⬆️ | Built-in update checker downloads the correct installer from GitHub Releases |
 
 ## About
 
-**CCS EEG Studio** is a standalone desktop platform that automates the CCS EEG feature-extraction pipeline described in `https://github.com/arunsasidharan84/ccs_toolbox`. It replaces a multi-hour Python workflow with a Rust-native engine that completes the same extraction in a fraction of the time while producing bit-level-compatible outputs.
+CCS EEG Studio is a standalone desktop implementation of the CCS EEG analysis pipeline. The interface keeps raw, preprocessed, source-space, feature, and report stages visible in one workspace, while the computation engine owns the numerical work and writes outputs directly to disk.
 
-The UI and file loaders are ported from [ScoringNidra](https://github.com/arunsasidharan84/ScoringNidra). The workflow is validated against `ccstools.eegfeatures` and `mne-connectivity 0.8` via automated parity test suites that run against real SET/FDT and EDF fixtures.
+The workflow is validated with deterministic fixtures and real recordings against `ccstools.eegfeatures`, MNE-Python, and `mne-connectivity`. See the parity scripts under [`scripts/`](scripts/) for reproducible comparisons.
 
 ---
 
-## 📥 Download Standalone Releases
+## Download
 
-Pre-built installers are compiled automatically via **GitHub Actions** on every push to `main` that contains `[build desktop]` in the commit message, as well as on any tagged release (`v*`) or manual workflow dispatch.
+Pre-built desktop packages are published through GitHub Releases. The links below always resolve to the newest versioned release.
 
-[![Release asset downloads](https://img.shields.io/github/downloads/arunsasidharan84/CCS_EEGStudio/total?label=release%20downloads&style=flat-square)](https://github.com/arunsasidharan84/CCS_EEGStudio/releases)
+| Platform | Package | Download |
+|---|---|---|
+| macOS | Ad-hoc-signed application ZIP | [CCSEEGStudio-macos.zip](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-macos.zip) |
+| Windows 10/11 | x64 installer | [CCSEEGStudio-Installer.exe](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-Installer.exe) |
+| Debian / Ubuntu | amd64 DEB | [CCSEEGStudio-linux-amd64.deb](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-amd64.deb) |
+| RHEL / AlmaLinux / Rocky | x86_64 RPM | [CCSEEGStudio-linux-x86_64.rpm](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-x86_64.rpm) |
 
-| Operating System | Package Type | Download Link |
-|------------------|--------------|---------------|
-| **macOS** | Universal ZIP (.app) | [Download macOS](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.1.3/CCSEEGStudio-macos.zip) |
-| **Windows** | x64 Installer EXE | [Download Windows](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.1.3/CCSEEGStudio-Installer.exe) |
-| **Linux (Debian/Ubuntu)** | x64 DEB Installer | [Download Linux DEB](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.1.3/CCSEEGStudio-linux-amd64.deb) |
-| **Linux (RHEL/AlmaLinux)** | x86_64 RPM Installer | [Download Linux RPM](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/download/v1.1.3/CCSEEGStudio-linux-x86_64.rpm) |
+Every release also includes
+[`SHA256SUMS.txt`](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/SHA256SUMS.txt)
+for download verification.
 
-**Install on Debian / Ubuntu / Linux Mint:**
+Once installed, choose **Updates** in the app's top bar to check, download, and launch the correct update package. On macOS the app verifies, replaces, and restarts itself; Windows and Linux hand the downloaded package to the native installer.
+
+### Linux installation
+
+Debian, Ubuntu, or Linux Mint:
+
 ```sh
 sudo apt install ./CCSEEGStudio-linux-amd64.deb
 ```
-The installer registers the application in the desktop menu and adds the `ccseegstudio` command.
 
-**Install on RHEL 9 / AlmaLinux 9 / Rocky Linux 9:**
+RHEL, AlmaLinux, or Rocky Linux:
+
 ```sh
 sudo dnf install ./CCSEEGStudio-linux-x86_64.rpm
 ```
-Each release is smoke-tested inside an AlmaLinux 9 Docker container before publication.
 
-The `latest` tag is a rolling pre-release — its assets are replaced on each successful build. The download counter badge counts only assets that are still retained in GitHub Releases. Versioned releases such as `v1.0.0` retain their own permanent asset counters.
+The Linux installers register the desktop entry and the `ccseegstudio` command. RPM packages are smoke-tested in AlmaLinux before publication.
 
-### For macOS Users
-Because the application is signed ad-hoc, you must clear the macOS Gatekeeper quarantine flag after extracting:
-1. Download & Extract the zip folder into your **Downloads** folder.
-2. Open **Terminal**.
-3. Copy, Paste & Run the following command:
-    ```sh
-    xattr -rd com.apple.quarantine ~/Downloads/ccs_eeg_app.app
-    ```
-4. Now you are ready to run **CCSEEGStudio.app**.
-5. Drag and drop the **CCSEEGStudio.app** into the **Applications** folder so you can open it like any other app in future.
+### macOS Gatekeeper
+
+If macOS blocks an ad-hoc-signed development build after download, extract it and run:
+
+```sh
+xattr -rd com.apple.quarantine ~/Downloads/ccs_eeg_app.app
+```
+
+Move the app to `/Applications` before using in-app updates so it has a stable installation location.
 
 ---
 
-## ⚡ Architecture & Performance
+## Architecture
 
-CCS EEG Studio uses the same hybrid Flutter + Rust architecture as ScoringNidra:
+CCS EEG Studio uses a compact Flutter + Rust architecture:
 
 1. **Flutter UI**: Provides the recording loader panel, channel selector, extraction options, and progress/results views. Heavy computation is never performed on the main Dart thread.
-2. **Rust Engine (`ccs-eeg-engine`)**: A standalone CLI binary launched as a subprocess by the Flutter layer via JSON job files. It is the exclusive owner of all mathematics:
+2. **Rust Engine (`ccs-eeg-engine`)**: A standalone CLI binary launched as a subprocess by the Flutter layer via JSON job files. It owns preprocessing and high-throughput feature computation:
    - Multi-threaded epoch dispatch via **Rayon** parallel iterators.
    - Spectral analysis (Welch/Hamming PSD, Morlet wavelet, coherence, PLV) via **rustfft**.
    - Linear algebra for GEDAI / source localization via **nalgebra**.
    - Nonlinear metrics (Sample Entropy, Lempel-Ziv, Hurst) in native Rust.
    - FOOOF and IRASA aperiodic decomposition ported from `analyseNidra`.
-3. **Zero-Copy Data Paths**: JSON jobs reference memory-mapped paths; the Rust engine writes CSV rows directly without round-tripping through the Dart heap.
-4. **No External Runtimes**: No Python, MATLAB, or R installation is required on the user's machine.
+3. **Dart analysis layer**: ERP statistics, topographic statistics, interactive
+   visualization, and publication reports run in background isolates and share
+   the same portable recording metadata.
+4. **File-backed jobs**: JSON jobs reference recording paths and the Rust engine writes CSV rows directly, avoiding unnecessary UI-layer copies during extraction.
+5. **No External Runtimes**: No Python, MATLAB, or R installation is required on the user's machine.
 
 ---
 
 ## 📂 Repository Layout
 
 ```
-CCS_EEGApp/
+CCS_EEGStudio/
 ├── lib/                        # Flutter front-end
 │   ├── main.dart               # App entry point
 │   └── src/
@@ -95,26 +143,21 @@ CCS_EEGApp/
 │       ├── models.dart         # Shared data models (Recording, Options, Row)
 │       ├── edf_loader.dart     # EDF/EDF+ file parser
 │       ├── fif_loader.dart     # MNE FIF format parser
+│       ├── fieldtrip_mat_loader.dart # FieldTrip MAT integration
 │       ├── recording_loader.dart    # Unified loader dispatcher
 │       ├── set_loader.dart     # EEGLAB SET/FDT format parser
+│       ├── update_checker.dart # GitHub release updater
 │       └── vhdr_loader.dart    # BrainVision VHDR/EEG/VMRK parser
 ├── bridge/                     # Rust computation engine
 │   ├── Cargo.toml              # Rust package manifest
 │   └── src/
-│       ├── main.rs             # CLI entry: parses job JSON, dispatches work
 │       ├── lib.rs              # Shared types, band definitions, module declarations
-│       ├── preprocessing.rs    # Filtering (Chebyshev), re-referencing, CAR
-│       ├── spectral.rs         # Welch PSD, FOOOF, IRASA, Morlet wavelets
-│       ├── connectivity.rs     # MIC, MIM, GC, GC-TR, coherence, PLV, ciPLV, PLI, wPLI
-│       ├── features.rs         # Band-power aggregation and relative PSD
-│       ├── nonlinear.rs        # Sample entropy, Hurst, Lempel-Ziv, ACW
-│       ├── montage.rs          # GEDAI algorithm, source localization helpers
-│       ├── ransac.rs           # Robust line fitting (RANSAC) for aperiodic slopes
-│       ├── source_loc.rs       # Source localization utilities
-│       ├── signal.rs           # Low-level signal primitives
-│       ├── set_loader.rs       # MATLAB v5 MAT file parser (SET/FDT)
-│       ├── fif_loader.rs       # FIF file parser
-│       └── vhdr_loader.rs      # BrainVision VHDR parser
+│       ├── main.rs             # Job dispatch and output writing
+│       ├── fieldtrip_loader.rs # FieldTrip structs and trial conversion
+│       ├── mat_v5.rs           # MATLAB v5 structs, cells, chars, numerics
+│       ├── mne_fif.rs          # Raw + epoched MNE FIF loading
+│       ├── microstates.rs      # Microstate analysis
+│       └── stats.rs            # Statistical utilities
 ├── scripts/                    # Build & packaging helper scripts
 │   ├── build_macos.sh          # Local macOS app bundle packaging
 │   ├── package_linux_deb.sh    # Debian/Ubuntu .deb installer builder
@@ -162,6 +205,18 @@ Both modes bind to the **same** analysis configuration object. Every option
 duration mode, plotting) appears in both places, and a setting you tune on one
 recording carries straight over to the batch queue.
 
+Choose **Pipeline Batch** to give the batch workspace the full application
+area. Each card contains a clearly marked **Batch parameters · shared with
+Single Recording** section. Folders can be added recursively as well as
+individual files. During execution, a SleepStudio-style progress window shows
+the current recording, overall progress, per-file success/failure state, live
+logs, and cancellation controls.
+
+Feature extraction streams one recording at a time and appends to the pooled
+CSV incrementally. Large corpora therefore do not require every recording to
+fit in RAM, and one malformed file is reported without aborting the remaining
+queue.
+
 ### Pipeline stages
 
 Each stage has its own **Run** button and can be entered directly by loading a
@@ -196,17 +251,42 @@ Detection is token- and prefix-based rather than substring-based, so labels like
 
 ### Recording Formats Supported
 - **EDF / EDF+** — Standard European Data Format, including Annotations (TAL) channels.
-- **EEGLAB SET / FDT** — MATLAB v5 MAT header with external float32 binary data file.
+- **EEGLAB SET / FDT** — Standalone embedded `.set` data or `.set` plus external float32 `.fdt`.
+- **FieldTrip MAT** — MATLAB v5 `ftData` structs with continuous numeric trials or cell-array trials.
 - **BrainVision VHDR / EEG / VMRK** — BrainProducts binary and ASCII formats.
-- **MNE FIF** — MNE-Python native format.
+- **MNE FIF** — Continuous raw and epoched MNE-Python FIF recordings.
+- **CCS EEG JSON** — Portable preprocessed or epoched recordings produced by the app.
 
-![CCS EEG Studio — Main Window](screenshots/main.png)
+> MATLAB v7.3/HDF5 containers are detected but require a separate HDF5 loader; MATLAB v5 FieldTrip files are supported natively.
 
 ### Preprocessing
 - **Re-referencing**: Common-average reference (CAR) or arbitrary reference channel subtraction.
 - **Channel exclusion**: Auto-detection of non-EEG channels (ECG, EOG, EMG, GSR, respiration, PPG, motion, references, triggers), reviewable and overridable per channel — see [Channel types](#channel-types).
 - **Duration modes**: Full recording, fixed interval (start/end seconds), fixed bin size, or the *middle two minutes* mode used by the CCS pipeline.
 - **Accepted / rejected interval masks**: Restrict extraction to annotated clean segments.
+- **GEDAI windows**: Explicitly configure the window/epoch size used for GEDAI,
+  with memory-safe pre-epoching for long recordings.
+- **Stimulus epochs**: Cut event-locked trials after filtering and before GEDAI,
+  retain marker labels and epoch timing, and optionally apply baseline
+  correction.
+
+### ERP analysis
+
+- Define conditions from marker chips or regular expressions.
+- Plot condition means ± SEM and test temporal clusters by permutation.
+- Compute component-window Welch tests, Cohen's d, and bootstrap confidence
+  intervals.
+- Map both a selected latency and a time-window average over the scalp for
+  condition A, condition B, B−A, and Welch t.
+- Mark electrodes passing Benjamini–Hochberg FDR correction.
+
+### EEG microstates
+
+- Four- to eight-state solutions with canonical A–G template assignment.
+- GFP, occurrence, duration, coverage, GEV, spatial correlation, sequence
+  complexity, entropy production, and transition summaries.
+- Synchronized sequence, waveform, and state-similarity exploration with one
+  absolute-time axis.
 
 ### Spectral Analysis
 - **Relative Welch / Hamming PSD** across 7 frequency bands:
@@ -285,20 +365,28 @@ output directory with no subfolders.
 
 ---
 
-## ✅ Scientific Parity
+## ✅ Scientific validation
 
-The Rust engine is continuously tested against the Python reference extractor via automated parity scripts in `scripts/` and fixtures in `parity_test/`.
+The Rust engine is continuously checked against the Python reference extractor
+using deterministic fixtures and real recordings. PSD relative band power,
+IRASA oscillatory band powers, nonlinear metrics, ACW, and the common bivariate
+connectivity measures agree to floating-point precision on the reference
+datasets.
 
-| Module | Python Reference | Maximum Error | Status |
-|--------|-----------------|---------------|--------|
-| **IRASA band-power** | `ccstools.eegfeatures` | `< 3 × 10⁻¹²` | ✅ Pass |
-| **FOOOF band-power** | `ccstools.eegfeatures` | `< 8 × 10⁻⁹` | ✅ Pass |
-| **FOOOF fitted params** | `ccstools.eegfeatures` | `< 1 × 10⁻⁴` | ✅ Pass |
-| **MIC / MIM** | `mne-connectivity 0.8` | `< 2 × 10⁻¹⁵` | ✅ Pass |
-| **Coherence / PLV / ciPLV / PLI / wPLI** | `mne-connectivity 0.8` | `< 2 × 10⁻¹⁵` | ✅ Pass |
-| **GC / GC-TR** | `mne-connectivity 0.8` | `< 2 × 10⁻¹²` | ✅ Pass |
+The validation suite also records known numerical sensitivities instead of
+hiding them:
 
-Morlet frequencies, cycles, epoch grouping, and 25-lag GC configuration are matched exactly to the Python extractor. Deterministic fixtures at 250 Hz and 1000 Hz sampling rates are used for regression tests.
+- FOOOF peak selection can diverge when the Python and Rust candidate-peak
+  finders choose different models.
+- MIC eigenvectors can change orientation/order for nearly degenerate
+  cross-spectral matrices even when the underlying MIM subspace agrees.
+- Gamma1 connectivity is more sensitive to short-epoch wavelet estimation than
+  lower-frequency bands.
+
+ERP waveforms and statistics are regression-tested against the Python workflow,
+and topographic interpolation/statistics have dedicated synthetic and real-data
+tests. Morlet frequencies, cycles, epoch grouping, and 25-lag GC configuration
+remain matched to the reference pipeline.
 
 
 See [`scripts/compare_parity.py`](scripts/compare_parity.py) and [`scripts/run_parity_test.sh`](scripts/run_parity_test.sh) for instructions on running your own parity validation against a reference dataset.
@@ -440,7 +528,9 @@ python scripts/compare_gedai_signals.py
 
 ## 🤖 Automated Builds (GitHub Actions)
 
-Desktop installers are built automatically on every push to `main` or `master` that includes `[build desktop]` in the commit message, on any `v*` tag push, or via manual workflow dispatch.
+Desktop installers are built on a `v*` tag, on a `main`/`master` commit carrying
+`[build desktop]`, or via manual workflow dispatch. Tagged releases are
+permanent; branch builds update the rolling `latest` prerelease.
 
 **To trigger a build from a commit:**
 ```
@@ -456,9 +546,31 @@ The workflow (`.github/workflows/build.yml`) runs three parallel jobs:
 | `build-windows` | `windows-2022` | `CCSEEGStudio-Installer.exe` |
 | `build-linux` | `ubuntu-22.04` | `CCSEEGStudio-linux-amd64.deb` + `CCSEEGStudio-linux-x86_64.rpm` |
 
-After all three build jobs complete, a `release` job assembles all artifacts and creates or updates the `latest` GitHub Release, or creates a permanent versioned release for `v*` tags.
+Before compiling, CI verifies that the tag, `pubspec.yaml`, Windows installer
+version, and matching `CHANGELOG.md` section agree. After all three platform
+jobs complete, the release job assembles the installers, generates SHA-256
+checksums, and publishes the exact changelog section as the release notes.
 
 The Linux RPM is smoke-tested inside an **AlmaLinux 9** Docker container before upload to confirm library resolution on RHEL-family systems.
+
+### Publishing a version
+
+1. Set `version:` in `pubspec.yaml` and keep the Windows installer fallback at
+   the same semantic version.
+2. Add a detailed `## [x.y.z]` section to [`CHANGELOG.md`](CHANGELOG.md).
+3. Commit the release and push the matching `vx.y.z` tag.
+
+```sh
+git tag -a v1.2.4 -m "CCS EEG Studio 1.2.4"
+git push origin main v1.2.4
+```
+
+CI refuses mismatched tags or missing changelog sections. This helper shows
+exactly what will become the GitHub Release description:
+
+```sh
+bash scripts/release_notes.sh 1.2.4
+```
 
 ---
 
@@ -483,6 +595,7 @@ The Linux RPM is smoke-tested inside an **AlmaLinux 9** Docker container before 
 | Repository | Description |
 |------------|-------------|
 | [ScoringNidra](https://github.com/arunsasidharan84/ScoringNidra) | Sleep EEG visualization, manual scoring, automated staging, and AnalyseNidra quantitative reports |
+| [CCS Sleep Studio](https://github.com/arunsasidharan84/CCS_SleepStudio) | Sleep recording review, scoring, preprocessing, batch analysis, and reporting |
 
 ---
 

@@ -85,7 +85,7 @@ Architecture: amd64
 Installed-Size: $installed_size
 Depends: libgtk-3-0, libblkid1, liblzma5
 Maintainer: CCS NIMHANS <noreply@github.com>
-Homepage: https://github.com/arunsasidharan84/CCS_EEGApp
+Homepage: https://github.com/arunsasidharan84/CCS_EEGStudio
 Description: $description
  CCS EEG Studio is a desktop application for epoch-wise EEG
  feature extraction and functional connectivity analysis, implementing

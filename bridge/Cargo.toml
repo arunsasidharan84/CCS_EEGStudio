@@ -1,6 +1,6 @@
 [package]
 name = "ccs_eeg_engine"
-version = "1.2.0"
+version = "1.2.4"
 edition = "2021"
 publish = false
 
@@ -14,7 +14,7 @@ name = "ccs-eeg-engine"
 path = "src/main.rs"
 
 [dependencies]
-ccs_algorithm = { git = "https://github.com/arunsasidharan84/CCS_Algorithm.git" }
+ccs_algorithm = { git = "https://github.com/arunsasidharan84/CCS_Algorithm.git", rev = "c65bfbd356b5580996cd2ec7c2162fe662ddc59e" }
 rayon = "1.10"
 rustfft = "6.2"
 nalgebra = "0.32"
@@ -27,6 +27,3 @@ regex = "1"
 
 [dev-dependencies]
 approx = "0.5"
-
-[patch."https://github.com/arunsasidharan84/CCS_Algorithm.git"]
-ccs_algorithm = { path = "../../CCS_Algorithm" }

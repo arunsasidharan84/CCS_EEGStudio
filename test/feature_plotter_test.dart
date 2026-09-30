@@ -16,10 +16,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   // ── Mirror PlotFeatures_20260710.py settings ─────────────────────────────
-  const recId      = 'Pilot_Tukdam_09.07.2026';
-  const epochSize  = 2.0;
+  const recId = 'Pilot_Tukdam_09.07.2026';
+  const epochSize = 2.0;
   const windowSize = 25;
-  const nTopoWin   = 10;
+  const nTopoWin = 10;
 
   // Match the Python featurelist (subset for speed — add more as needed).
   final featureList = [
@@ -34,103 +34,137 @@ void main() {
   ];
 
   final dataDir = '/Users/arunsasidharan/EEGdata/ThukdamStudy/20260709';
-  final outDir  = '/Users/arunsasidharan/EEGdata/ThukdamStudy/DartPlots';
+  final outDir = '/Users/arunsasidharan/EEGdata/ThukdamStudy/DartPlots';
+  final fixtureAvailable =
+      Directory(dataDir).existsSync() &&
+      Directory(dataDir).listSync().whereType<File>().any(
+        (file) =>
+            file.path.contains(recId) && file.path.endsWith('.features.csv'),
+      );
 
   test(
     'generates feature plots matching PlotFeatures_20260710.py output',
     () async {
-    // ── Discover CSV files (same glob as the Python script) ─────────────────
-    final dir = Directory(dataDir);
-    expect(dir.existsSync(), isTrue,
-        reason: 'Data directory not found: $dataDir');
+      // ── Discover CSV files (same glob as the Python script) ─────────────────
+      final dir = Directory(dataDir);
+      expect(
+        dir.existsSync(),
+        isTrue,
+        reason: 'Data directory not found: $dataDir',
+      );
 
-    final csvFiles = dir
-        .listSync()
-        .whereType<File>()
-        .where((f) =>
-            f.path.contains(recId) && f.path.endsWith('.features.csv'))
-        .map((f) => f.path)
-        .toList()
-      ..sort();
+      final csvFiles =
+          dir
+              .listSync()
+              .whereType<File>()
+              .where(
+                (f) =>
+                    f.path.contains(recId) && f.path.endsWith('.features.csv'),
+              )
+              .map((f) => f.path)
+              .toList()
+            ..sort();
 
-    expect(csvFiles, isNotEmpty,
-        reason: 'No .features.csv files found for $recId in $dataDir');
+      expect(
+        csvFiles,
+        isNotEmpty,
+        reason: 'No .features.csv files found for $recId in $dataDir',
+      );
 
-    print('\n── Input files (${csvFiles.length}) ──────────────────────────');
-    for (final f in csvFiles) {
-      print('  ${f.split('/').last}');
-    }
+      print('\n── Input files (${csvFiles.length}) ──────────────────────────');
+      for (final f in csvFiles) {
+        print('  ${f.split('/').last}');
+      }
 
-    // ── Create output directory ───────────────────────────────────────────
-    Directory(outDir).createSync(recursive: true);
-    print('\n── Output directory ─────────────────────────────────────────');
-    print('  $outDir\n');
+      // ── Create output directory ───────────────────────────────────────────
+      Directory(outDir).createSync(recursive: true);
+      print('\n── Output directory ─────────────────────────────────────────');
+      print('  $outDir\n');
 
-    // ── Generate plots ────────────────────────────────────────────────────
-    print('── Generating ${featureList.length} plots… ──────────────────');
-    final saved = await generateFeaturePlotsDetailed(
-      csvPaths: csvFiles,
-      outputDir: outDir,
-      options: PlotOptions(
-        nTopoWindows:     nTopoWin,
-        smoothingWindow:  windowSize,
-        epochSizeSeconds: epochSize,
-        features:         featureList,
-        montagePath:      null, // use auto standard 10-10
-      ),
-      onProgress: (p, msg) {
-        final bar = ('█' * (p * 40).round()).padRight(40, '░');
-        print('[$bar] ${(p * 100).toStringAsFixed(0).padLeft(3)}%  $msg');
-      },
-    );
+      // ── Generate plots ────────────────────────────────────────────────────
+      print('── Generating ${featureList.length} plots… ──────────────────');
+      final saved = await generateFeaturePlotsDetailed(
+        csvPaths: csvFiles,
+        outputDir: outDir,
+        options: PlotOptions(
+          nTopoWindows: nTopoWin,
+          smoothingWindow: windowSize,
+          epochSizeSeconds: epochSize,
+          features: featureList,
+          montagePath: null, // use auto standard 10-10
+        ),
+        onProgress: (p, msg) {
+          final bar = ('█' * (p * 40).round()).padRight(40, '░');
+          print('[$bar] ${(p * 100).toStringAsFixed(0).padLeft(3)}%  $msg');
+        },
+      );
 
-    // ── Verify output ─────────────────────────────────────────────────────
-    print('\n── Saved PNGs ───────────────────────────────────────────────');
-    for (final r in saved) {
-      final file = File(r.path);
-      expect(file.existsSync(), isTrue, reason: 'PNG not created: ${r.path}');
-      final size = file.lengthSync();
-      expect(size, greaterThan(1024),
-          reason: 'PNG suspiciously small: ${r.path}');
-      print('  ${r.scope.padRight(28)}'
+      // ── Verify output ─────────────────────────────────────────────────────
+      print('\n── Saved PNGs ───────────────────────────────────────────────');
+      for (final r in saved) {
+        final file = File(r.path);
+        expect(file.existsSync(), isTrue, reason: 'PNG not created: ${r.path}');
+        final size = file.lengthSync();
+        expect(
+          size,
+          greaterThan(1024),
+          reason: 'PNG suspiciously small: ${r.path}',
+        );
+        print(
+          '  ${r.scope.padRight(28)}'
           '${r.feature.padRight(28)}'
-          '${(size / 1024).toStringAsFixed(1)} KB');
-    }
+          '${(size / 1024).toStringAsFixed(1)} KB',
+        );
+      }
 
-    // Plots are now emitted per source recording plus a group overlay, so the
-    // expected count scales with the number of distinct recordings found.
-    final scopes = saved.map((r) => r.scope).toSet();
-    print('\n── Scopes (${scopes.length}) ──');
-    for (final s in scopes) {
-      print('  $s');
-    }
+      // Plots are now emitted per source recording plus a group overlay, so the
+      // expected count scales with the number of distinct recordings found.
+      final scopes = saved.map((r) => r.scope).toSet();
+      print('\n── Scopes (${scopes.length}) ──');
+      for (final s in scopes) {
+        print('  $s');
+      }
 
-    expect(saved.length, equals(featureList.length * scopes.length),
-        reason: 'Expected ${featureList.length} plots per scope across '
-            '${scopes.length} scopes, got ${saved.length}');
+      expect(
+        saved.length,
+        equals(featureList.length * scopes.length),
+        reason:
+            'Expected ${featureList.length} plots per scope across '
+            '${scopes.length} scopes, got ${saved.length}',
+      );
 
-    // Every feature must be present in every scope.
-    for (final scope in scopes) {
-      final inScope =
-          saved.where((r) => r.scope == scope).map((r) => r.feature).toSet();
-      expect(inScope, containsAll(featureList),
-          reason: 'Scope $scope is missing features');
-    }
+      // Every feature must be present in every scope.
+      for (final scope in scopes) {
+        final inScope = saved
+            .where((r) => r.scope == scope)
+            .map((r) => r.feature)
+            .toSet();
+        expect(
+          inScope,
+          containsAll(featureList),
+          reason: 'Scope $scope is missing features',
+        );
+      }
 
-    // A group overlay must exist whenever more than one recording was found.
-    if (scopes.length > 1) {
-      expect(scopes, contains('group'),
-          reason: 'Multi-recording run produced no group overlay');
-    }
+      // A group overlay must exist whenever more than one recording was found.
+      if (scopes.length > 1) {
+        expect(
+          scopes,
+          contains('group'),
+          reason: 'Multi-recording run produced no group overlay',
+        );
+      }
 
-    // Open the output folder for visual inspection.
-    if (Platform.isMacOS) {
-      await Process.run('open', [outDir]);
-    }
+      // Open the output folder for visual inspection.
+      if (Platform.isMacOS) {
+        await Process.run('open', [outDir]);
+      }
 
-    print('\n✓ All ${saved.length} plots verified.');
-  },
-    skip: !Directory(dataDir).existsSync() ? 'Local data directory not found: $dataDir' : false,
+      print('\n✓ All ${saved.length} plots verified.');
+    },
+    skip: fixtureAvailable
+        ? false
+        : 'External feature CSV fixtures are unavailable',
     timeout: const Timeout(Duration(minutes: 5)),
   );
 }

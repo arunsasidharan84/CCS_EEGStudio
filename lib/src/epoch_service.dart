@@ -40,7 +40,9 @@ class EpochService {
       throw ArgumentError('Recording contains no valid data or sample rate.');
     }
 
-    final targetSet = options.targetEvents.map((e) => e.trim().toLowerCase()).toSet();
+    final targetSet = options.targetEvents
+        .map((e) => e.trim().toLowerCase())
+        .toSet();
     final matchingMarkers = recording.markers.where((m) {
       final desc = m.description.trim().toLowerCase();
       final type = m.type.trim().toLowerCase();
@@ -62,16 +64,28 @@ class EpochService {
     final totalSamples = recording.sampleCount;
     final numChannels = recording.preview.length;
 
+    // MNE convention: samples round(tmin·rate) ..= round(tmax·rate).
     final tminSamples = (options.tmin * rate).round();
-    final pointsPerEpoch = ((options.tmax - options.tmin) * rate).round();
+    final pointsPerEpoch = (options.tmax * rate).round() - tminSamples + 1;
     if (pointsPerEpoch <= 0) {
-      throw ArgumentError('Invalid tmin/tmax window: epoch length must be > 0.');
+      throw ArgumentError(
+        'Invalid tmin/tmax window: epoch length must be > 0.',
+      );
     }
 
-    final baselineStartRel = ((options.baselineMin - options.tmin) * rate).round().clamp(0, pointsPerEpoch);
-    final baselineEndRel = ((options.baselineMax - options.tmin) * rate).round().clamp(0, pointsPerEpoch);
+    final baselineStartRel = ((options.baselineMin - options.tmin) * rate)
+        .round()
+        .clamp(0, pointsPerEpoch);
+    final baselineEndRel =
+        (((options.baselineMax - options.tmin) * rate).round() + 1).clamp(
+          0,
+          pointsPerEpoch,
+        );
 
-    final epochedChannels = List<List<double>>.generate(numChannels, (_) => <double>[]);
+    final epochedChannels = List<List<double>>.generate(
+      numChannels,
+      (_) => <double>[],
+    );
     final epochLabels = <String>[];
     final retainedMarkers = <EegMarker>[];
 
@@ -107,21 +121,24 @@ class EpochService {
         epochedChannels[c].addAll(epochWindow);
       }
 
-      epochLabels.add(marker.label.isNotEmpty ? marker.label : 'Epoch ${epochIdx + 1}');
+      final evLabel = StimEpochSpec.eventLabel(marker);
+      epochLabels.add(evLabel.isNotEmpty ? evLabel : 'Epoch ${epochIdx + 1}');
 
       // Extract all markers from continuous recording that fall within this epoch's window
       for (final m in recording.markers) {
         final mSample = (m.startSeconds * rate).round();
         if (mSample >= epochStartSample && mSample < epochEndSample) {
           final relSec = (mSample - epochStartSample) / rate;
-          retainedMarkers.add(EegMarker(
-            type: m.type,
-            description: m.description,
-            startSeconds: relSec,
-            durationSeconds: m.durationSeconds,
-            channelIndex: m.channelIndex,
-            epochIndex: epochIdx,
-          ));
+          retainedMarkers.add(
+            EegMarker(
+              type: m.type,
+              description: m.description,
+              startSeconds: relSec,
+              durationSeconds: m.durationSeconds,
+              channelIndex: m.channelIndex,
+              epochIndex: epochIdx,
+            ),
+          );
         }
       }
 
@@ -129,7 +146,9 @@ class EpochService {
     }
 
     if (epochIdx == 0) {
-      throw StateError('All matching events fell out of bounds near recording boundaries.');
+      throw StateError(
+        'All matching events fell out of bounds near recording boundaries.',
+      );
     }
 
     final newSampleCount = epochIdx * pointsPerEpoch;
@@ -150,6 +169,7 @@ class EpochService {
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
       markers: retainedMarkers,
+      epochTmin: tminSamples / rate,
     );
   }
 }

@@ -7,8 +7,12 @@ void main() {
   group('EpochService', () {
     test('generates event-based epochs with baseline correction', () {
       const rate = 100.0;
-      final ch0 = Float32List.fromList(List.generate(1000, (i) => i.toDouble()));
-      final ch1 = Float32List.fromList(List.generate(1000, (i) => (i * 2).toDouble()));
+      final ch0 = Float32List.fromList(
+        List.generate(1000, (i) => i.toDouble()),
+      );
+      final ch1 = Float32List.fromList(
+        List.generate(1000, (i) => (i * 2).toDouble()),
+      );
 
       final recording = EegRecording(
         path: 'test.vhdr',
@@ -18,9 +22,21 @@ void main() {
         sampleCount: 1000,
         format: 'vhdr',
         markers: const [
-          EegMarker(type: 'Stimulus', description: 'S 51', startSeconds: 2.0), // sample 200
-          EegMarker(type: 'Stimulus', description: 'S 52', startSeconds: 5.0), // sample 500
-          EegMarker(type: 'Stimulus', description: 'S 51', startSeconds: 7.0), // sample 700
+          EegMarker(
+            type: 'Stimulus',
+            description: 'S 51',
+            startSeconds: 2.0,
+          ), // sample 200
+          EegMarker(
+            type: 'Stimulus',
+            description: 'S 52',
+            startSeconds: 5.0,
+          ), // sample 500
+          EegMarker(
+            type: 'Stimulus',
+            description: 'S 51',
+            startSeconds: 7.0,
+          ), // sample 700
         ],
       );
 
@@ -39,10 +55,10 @@ void main() {
 
       expect(epoched.epochCount, 2);
       expect(epoched.isEpoched, isTrue);
-      // tmin = -0.5s (-50 samples), tmax = 1.0s (+100 samples) -> length 150 samples per epoch
-      expect(epoched.pointsPerEpoch, 150);
-      expect(epoched.sampleCount, 300); // 2 epochs * 150
-      expect(epoched.epochLabels, const ['S 51', 'S 51']);
+      // MNE includes both endpoints: -50 through +100 is 151 samples.
+      expect(epoched.pointsPerEpoch, 151);
+      expect(epoched.sampleCount, 302); // 2 epochs * 151
+      expect(epoched.epochLabels, const ['Stimulus/S 51', 'Stimulus/S 51']);
     });
   });
 }

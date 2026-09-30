@@ -87,7 +87,7 @@ Version:        $version
 Release:        1%{?dist}
 Summary:        $description
 License:        Proprietary
-URL:            https://github.com/arunsasidharan84/CCS_EEGApp
+URL:            https://github.com/arunsasidharan84/CCS_EEGStudio
 BuildArch:      x86_64
 Requires:       gtk3, glibc, libstdc++, xz-libs
 AutoReqProv:    no

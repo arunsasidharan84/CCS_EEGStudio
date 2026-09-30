@@ -140,6 +140,7 @@ class MicrostateRecordingResult {
     required this.states,
     required this.transitions,
     required this.sequence,
+    required this.stateProbabilities,
     required this.sequenceMetrics,
   });
 
@@ -149,6 +150,7 @@ class MicrostateRecordingResult {
   final List<Map<String, dynamic>> states;
   final List<List<double>> transitions;
   final List<int> sequence;
+  final List<List<double>> stateProbabilities;
   final Map<String, num> sequenceMetrics;
 
   factory MicrostateRecordingResult.fromJson(Map<String, dynamic> json) =>
@@ -167,6 +169,12 @@ class MicrostateRecordingResult {
         sequence: [
           for (final x in json['sequence'] as List) (x as num).toInt(),
         ],
+        stateProbabilities: json['state_probabilities'] is List
+            ? [
+                for (final row in json['state_probabilities'] as List)
+                  [for (final x in row as List) (x as num).toDouble()],
+              ]
+            : const [],
         sequenceMetrics: (json['sequence_metrics'] as Map<String, dynamic>).map(
           (k, v) => MapEntry(k, v as num),
         ),
@@ -310,6 +318,11 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
   MicrostateResult? _result;
   int _recordingIndex = 0;
   EegRecording? _interactiveRecording;
+  List<EegRecording> _analysisInputs = const [];
+  double _timelineStartSeconds = 0;
+  double _timelineWindowSeconds = 20;
+  int _timelineWaveformChannels = 6;
+  final Set<int> _hiddenSimilarityStates = {};
 
   EegRecording? get _interactiveInput =>
       _interactiveRecording ?? widget.activeRecording;
@@ -331,6 +344,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
         'edf',
         'set',
         'fif',
+        'mat',
         'vhdr',
         'json',
         'orb',
@@ -354,6 +368,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
         'edf',
         'set',
         'fif',
+        'mat',
         'vhdr',
         'json',
         'orb',
@@ -419,8 +434,10 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
       );
       if (mounted)
         setState(() {
+          _analysisInputs = recordings;
           _result = result;
           _recordingIndex = 0;
+          _timelineStartSeconds = 0;
         });
     } catch (e) {
       if (mounted) setState(() => _message = 'Error: $e');
@@ -586,10 +603,8 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
                 icon: const Icon(Icons.folder),
                 label: Text(
                   _outputDirectory == null
-                      ? 'Choose output…'
-                      : File(
-                          _outputDirectory!,
-                        ).uri.pathSegments.where((x) => x.isNotEmpty).last,
+                      ? 'Choose output folder…'
+                      : 'Output: ${File(_outputDirectory!).uri.pathSegments.where((x) => x.isNotEmpty).last}',
                 ),
               ),
               const SizedBox(height: 8),
@@ -688,7 +703,10 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
                   for (final (i, r) in result.recordings.indexed)
                     DropdownMenuItem(value: i, child: Text(r.filename)),
                 ],
-                onChanged: (v) => setState(() => _recordingIndex = v ?? 0),
+                onChanged: (v) => setState(() {
+                  _recordingIndex = v ?? 0;
+                  _timelineStartSeconds = 0;
+                }),
               ),
           ],
         ),
@@ -707,7 +725,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
         Text(
           result.stateLabels.any((label) => label.startsWith('U'))
               ? 'Canonical labels are assigned A-first using the accs_CompareTemplateMaps |r| > 0.5 rule. U states did not meet the remaining template threshold.'
-              : 'States are polarity-aligned and assigned A-first against MetaMaps_2023_06 using MATLAB-parity spherical-spline remapping.',
+              : 'The r above each headmap is its absolute spatial correlation with the matched MetaMaps_2023_06 canonical template. States are polarity-aligned and assigned A-first using MATLAB-parity spherical-spline remapping.',
           textAlign: TextAlign.center,
           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
         ),
@@ -721,15 +739,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
           style: const TextStyle(color: Color(0xFF94A3B8)),
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          height: 58,
-          child: CustomPaint(
-            painter: _SequencePainter(
-              recording.sequence,
-              result.selectedStates,
-            ),
-          ),
-        ),
+        _timelineExplorer(result, recording),
         const SizedBox(height: 14),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -741,7 +751,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
               DataColumn(label: Text('Duration ms')),
               DataColumn(label: Text('Coverage')),
               DataColumn(label: Text('GEV')),
-              DataColumn(label: Text('Spatial r')),
+              DataColumn(label: Text('Mean assigned-state r')),
             ],
             rows: [
               for (final s in recording.states)
@@ -778,6 +788,239 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
         ),
       ],
     );
+  }
+
+  EegRecording? _recordingFor(MicrostateRecordingResult result) {
+    for (final recording in _analysisInputs) {
+      if (_name(recording.path) == result.filename) return recording;
+    }
+    return _analysisInputs.length == 1 ? _analysisInputs.first : null;
+  }
+
+  Widget _timelineExplorer(
+    MicrostateResult result,
+    MicrostateRecordingResult recording,
+  ) {
+    final duration = recording.sequence.length / recording.sampleRate;
+    final window = math.min(_timelineWindowSeconds, duration);
+    final maxStart = math.max(0.0, duration - window);
+    final start = _timelineStartSeconds.clamp(0.0, maxStart);
+    final startSample = (start * recording.sampleRate).floor().clamp(
+      0,
+      recording.sequence.length,
+    );
+    final endSample = ((start + window) * recording.sampleRate).ceil().clamp(
+      startSample,
+      recording.sequence.length,
+    );
+    final source = _recordingFor(recording);
+
+    return Card(
+      color: const Color(0xFF101B30),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Timeline explorer',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${_time(start)} – ${_time(start + window)}',
+                  style: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11,
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'Window',
+                  style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                ),
+                const SizedBox(width: 6),
+                DropdownButton<double>(
+                  value: _timelineWindowSeconds,
+                  items: [
+                    for (final seconds in const [
+                      2.0,
+                      5.0,
+                      10.0,
+                      20.0,
+                      30.0,
+                      60.0,
+                    ])
+                      DropdownMenuItem(
+                        value: seconds,
+                        child: Text('${seconds.toInt()} s'),
+                      ),
+                  ],
+                  onChanged: (value) => setState(() {
+                    _timelineWindowSeconds = value ?? 20;
+                    _timelineStartSeconds = start.clamp(
+                      0.0,
+                      math.max(0.0, duration - _timelineWindowSeconds),
+                    );
+                  }),
+                ),
+              ],
+            ),
+            const Text(
+              'Similarity traces (tap a state to show or hide it)',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+            ),
+            Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                for (final (index, label) in result.stateLabels.indexed)
+                  FilterChip(
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    selected: !_hiddenSimilarityStates.contains(index),
+                    selectedColor: _stateColors[index % _stateColors.length]
+                        .withValues(alpha: .35),
+                    avatar: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: _stateColors[index % _stateColors.length],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    label: Text(label, style: const TextStyle(fontSize: 10)),
+                    onSelected: (selected) => setState(() {
+                      selected
+                          ? _hiddenSimilarityStates.remove(index)
+                          : _hiddenSimilarityStates.add(index);
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            LayoutBuilder(
+              builder: (context, constraints) => GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) => setState(() {
+                  final fraction =
+                      details.localPosition.dx / constraints.maxWidth;
+                  _timelineStartSeconds = (fraction * duration - window / 2)
+                      .clamp(0.0, maxStart);
+                }),
+                child: SizedBox(
+                  height: 34,
+                  width: double.infinity,
+                  child: CustomPaint(
+                    painter: _TimelineSequencePainter(
+                      recording.sequence,
+                      startSample,
+                      endSample,
+                      start,
+                      window,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (maxStart > 0)
+              Slider(
+                min: 0,
+                max: maxStart,
+                value: start,
+                onChanged: (value) =>
+                    setState(() => _timelineStartSeconds = value),
+              ),
+            if (source != null) ...[
+              Row(
+                children: [
+                  const Text(
+                    'EEG waveform',
+                    style: TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Text(
+                    'Visible channels',
+                    style: TextStyle(color: Color(0xFF64748B), fontSize: 10),
+                  ),
+                  const SizedBox(width: 6),
+                  DropdownButton<int>(
+                    value: _timelineWaveformChannels,
+                    isDense: true,
+                    items: [
+                      for (final n in const [3, 6, 12, 24])
+                        DropdownMenuItem(value: n, child: Text('$n')),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _timelineWaveformChannels = value ?? 6),
+                  ),
+                ],
+              ),
+              SizedBox(
+                height: math.max(150, _timelineWaveformChannels * 24),
+                child: CustomPaint(
+                  painter: _MicrostateWaveformPainter(
+                    source,
+                    start,
+                    window,
+                    _timelineWaveformChannels,
+                  ),
+                  size: Size.infinite,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            const Text(
+              'Per-state similarity probability',
+              style: TextStyle(
+                color: Color(0xFF94A3B8),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Text(
+              'Squared spatial correlations normalized across states at every sample (the traces sum to 1).',
+              style: TextStyle(color: Color(0xFF64748B), fontSize: 10),
+            ),
+            SizedBox(
+              height: 150,
+              child: recording.stateProbabilities.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Re-run this analysis to generate similarity traces.',
+                        style: TextStyle(color: Color(0xFF94A3B8)),
+                      ),
+                    )
+                  : CustomPaint(
+                      painter: _ProbabilityPainter(
+                        recording.stateProbabilities,
+                        startSample,
+                        endSample,
+                        start,
+                        window,
+                        {..._hiddenSimilarityStates},
+                      ),
+                      size: Size.infinite,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _time(double seconds) {
+    final minutes = seconds ~/ 60;
+    final remainder = (seconds % 60).toStringAsFixed(1).padLeft(4, '0');
+    return minutes > 0
+        ? '$minutes:$remainder'
+        : '${seconds.toStringAsFixed(1)} s';
   }
 
   static String _n(Object? x) => x is num ? x.toStringAsFixed(4) : '—';
@@ -881,34 +1124,277 @@ const _stateColors = [
   Color(0xFF84CC16),
 ];
 
-class _SequencePainter extends CustomPainter {
-  const _SequencePainter(this.sequence, this.states);
+class _TimelineSequencePainter extends CustomPainter {
+  const _TimelineSequencePainter(
+    this.sequence,
+    this.start,
+    this.end,
+    this.startSeconds,
+    this.windowSeconds,
+  );
   final List<int> sequence;
-  final int states;
+  final int start;
+  final int end;
+  final double startSeconds, windowSeconds;
+
   @override
   void paint(Canvas canvas, Size size) {
-    if (sequence.isEmpty) return;
-    var start = 0;
-    for (var i = 1; i <= sequence.length; i++) {
-      if (i == sequence.length || sequence[i] != sequence[start]) {
+    final rect = _timelinePlotRect(size);
+    canvas.drawRect(rect, Paint()..color = const Color(0xFF0F172A));
+    if (sequence.isEmpty || end <= start) return;
+    var runStart = start;
+    for (var i = start + 1; i <= end; i++) {
+      if (i == end || sequence[i] != sequence[runStart]) {
         canvas.drawRect(
           Rect.fromLTWH(
-            start / sequence.length * size.width,
-            8,
-            (i - start) / sequence.length * size.width,
-            size.height - 16,
+            rect.left + (runStart - start) / (end - start) * rect.width,
+            rect.top + 2,
+            (i - runStart) / (end - start) * rect.width + .5,
+            rect.height - 4,
           ),
           Paint()
-            ..color = _stateColors[(sequence[start] - 1) % _stateColors.length],
+            ..color =
+                _stateColors[(sequence[runStart] - 1) % _stateColors.length],
         );
-        start = i;
+        runStart = i;
       }
     }
+    _paintTimelineAxis(canvas, size, startSeconds, windowSeconds);
   }
 
   @override
-  bool shouldRepaint(covariant _SequencePainter old) =>
-      old.sequence != sequence;
+  bool shouldRepaint(covariant _TimelineSequencePainter old) =>
+      old.sequence != sequence ||
+      old.start != start ||
+      old.end != end ||
+      old.startSeconds != startSeconds ||
+      old.windowSeconds != windowSeconds;
+}
+
+class _ProbabilityPainter extends CustomPainter {
+  const _ProbabilityPainter(
+    this.probabilities,
+    this.start,
+    this.end,
+    this.startSeconds,
+    this.windowSeconds,
+    this.hiddenStates,
+  );
+  final List<List<double>> probabilities;
+  final int start;
+  final int end;
+  final double startSeconds, windowSeconds;
+  final Set<int> hiddenStates;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = _timelinePlotRect(size);
+    final left = rect.left;
+    final width = rect.width;
+    final height = rect.height;
+    canvas.drawRect(rect, Paint()..color = const Color(0xFFF8FAFC));
+    final grid = Paint()
+      ..color = const Color(0xFFDDE3EA)
+      ..strokeWidth = .6;
+    for (var i = 0; i <= 4; i++) {
+      final y = rect.top + height * i / 4;
+      canvas.drawLine(Offset(left, y), Offset(rect.right, y), grid);
+    }
+    final range = end - start;
+    if (range < 2) return;
+    final stride = math.max(1, (range / math.max(2, width.ceil())).ceil());
+    for (final (state, values) in probabilities.indexed) {
+      if (hiddenStates.contains(state)) continue;
+      if (values.isEmpty) continue;
+      final path = Path();
+      var point = 0;
+      for (var binStart = start; binStart < end; binStart += stride) {
+        final binEnd = math.min(end, binStart + stride);
+        var total = 0.0;
+        var count = 0;
+        for (var i = binStart; i < binEnd && i < values.length; i++) {
+          total += values[i];
+          count++;
+        }
+        if (count == 0) continue;
+        final x = left + (binStart - start) / math.max(1, range - 1) * width;
+        final y = rect.top + height * (1 - total / count);
+        point++ == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = _stateColors[state % _stateColors.length]
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.25
+          ..isAntiAlias = true,
+      );
+    }
+    _axisText(canvas, '1', Offset(5, rect.top));
+    _axisText(canvas, '0', Offset(5, rect.bottom - 10));
+    _paintTimelineAxis(canvas, size, startSeconds, windowSeconds);
+  }
+
+  void _axisText(Canvas canvas, String text, Offset offset) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(color: Color(0xFF64748B), fontSize: 9),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ProbabilityPainter old) =>
+      old.probabilities != probabilities ||
+      old.start != start ||
+      old.end != end ||
+      old.hiddenStates != hiddenStates ||
+      old.startSeconds != startSeconds ||
+      old.windowSeconds != windowSeconds;
+}
+
+class _MicrostateWaveformPainter extends CustomPainter {
+  const _MicrostateWaveformPainter(
+    this.recording,
+    this.startSeconds,
+    this.windowSeconds,
+    this.channelCount,
+  );
+  final EegRecording recording;
+  final double startSeconds;
+  final double windowSeconds;
+  final int channelCount;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = _timelinePlotRect(size);
+    final left = rect.left;
+    final width = rect.width;
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+    final channels = math.min(channelCount, recording.preview.length);
+    if (channels == 0) return;
+    final lane = rect.height / channels;
+    final duration = recording.durationSeconds;
+    for (var channel = 0; channel < channels; channel++) {
+      final values = recording.preview[channel];
+      if (values.length < 2 || duration <= 0) continue;
+      final a = (startSeconds / duration * values.length).floor().clamp(
+        0,
+        values.length - 1,
+      );
+      final b = ((startSeconds + windowSeconds) / duration * values.length)
+          .ceil()
+          .clamp(a + 1, values.length);
+      var mean = 0.0;
+      var peak = 1e-6;
+      for (var i = a; i < b; i++) mean += values[i];
+      mean /= b - a;
+      for (var i = a; i < b; i++)
+        peak = math.max(peak, (values[i] - mean).abs());
+      final center = rect.top + lane * (channel + .5);
+      final path = Path();
+      final stride = math.max(1, ((b - a) / math.max(2, width.ceil())).ceil());
+      var point = 0;
+      for (var i = a; i < b; i += stride) {
+        final x = left + (i - a) / math.max(1, b - a - 1) * width;
+        final y = center - (values[i] - mean) / peak * lane * .38;
+        point++ == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF172033)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..isAntiAlias = true,
+      );
+      final label = TextPainter(
+        text: TextSpan(
+          text: recording.labels[channel],
+          style: const TextStyle(
+            color: Color(0xFF334155),
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        maxLines: 1,
+        ellipsis: '…',
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: left - 6);
+      label.paint(canvas, Offset(4, center - label.height / 2));
+      canvas.drawLine(
+        Offset(left, rect.top + lane * (channel + 1)),
+        Offset(rect.right, rect.top + lane * (channel + 1)),
+        Paint()
+          ..color = const Color(0xFFE2E8F0)
+          ..strokeWidth = .5,
+      );
+    }
+    _paintTimelineAxis(
+      canvas,
+      size,
+      startSeconds,
+      windowSeconds,
+      darkText: true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _MicrostateWaveformPainter old) =>
+      old.recording != recording ||
+      old.startSeconds != startSeconds ||
+      old.windowSeconds != windowSeconds ||
+      old.channelCount != channelCount;
+}
+
+const _timelineLeft = 58.0;
+const _timelineRight = 8.0;
+const _timelineBottom = 18.0;
+
+Rect _timelinePlotRect(Size size) => Rect.fromLTWH(
+  _timelineLeft,
+  0,
+  math.max(1, size.width - _timelineLeft - _timelineRight),
+  math.max(1, size.height - _timelineBottom),
+);
+
+void _paintTimelineAxis(
+  Canvas canvas,
+  Size size,
+  double start,
+  double window, {
+  bool darkText = false,
+}) {
+  final rect = _timelinePlotRect(size);
+  final color = darkText ? const Color(0xFF475569) : const Color(0xFF94A3B8);
+  final grid = Paint()
+    ..color = color.withValues(alpha: .18)
+    ..strokeWidth = .5;
+  for (var i = 0; i <= 4; i++) {
+    final x = rect.left + rect.width * i / 4;
+    canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), grid);
+    final seconds = start + window * i / 4;
+    final text = seconds >= 60
+        ? '${seconds ~/ 60}:${(seconds % 60).toStringAsFixed(1).padLeft(4, '0')}'
+        : '${seconds.toStringAsFixed(window <= 5 ? 1 : 0)} s';
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: color, fontSize: 8),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(
+        (x - tp.width / 2).clamp(rect.left, rect.right - tp.width),
+        rect.bottom + 3,
+      ),
+    );
+  }
 }
 
 class _TopographyPainter extends CustomPainter {
@@ -971,8 +1457,8 @@ class _TopographyPainter extends CustomPainter {
         radius,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.8
-          ..color = const Color(0xFFE2E8F0),
+          ..strokeWidth = 3
+          ..color = _stateColors[s % _stateColors.length],
       );
       // Nose and ears follow the conventional EEGLAB topoplot silhouette.
       c.drawPath(
@@ -1017,8 +1503,8 @@ class _TopographyPainter extends CustomPainter {
           text: correlation != null
               ? '${labels[s]}  r=${correlation.toStringAsFixed(2)}'
               : labels[s],
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: _stateColors[s % _stateColors.length],
             fontWeight: FontWeight.bold,
             fontSize: 12,
           ),
@@ -1103,7 +1589,7 @@ class _TransitionPainter extends CustomPainter {
         );
         final t = TextPainter(
           text: TextSpan(
-            text: matrix[i][j].toStringAsFixed(3),
+            text: '${(matrix[i][j] * 100).toStringAsFixed(2)}%',
             style: TextStyle(
               color: v > .5 ? Colors.black : Colors.white,
               fontSize: math.min(10, cell * .22),

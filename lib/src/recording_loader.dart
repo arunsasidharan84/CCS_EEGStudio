@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'edf_loader.dart';
+import 'fieldtrip_mat_loader.dart';
 import 'fif_loader.dart';
 import 'models.dart';
 import 'orbit_loader.dart';
@@ -13,11 +14,17 @@ class RecordingLoader {
   final _setLoader = SetLoader();
   final _vhdrLoader = VhdrLoader();
   final _fifLoader = FifLoader();
+  final _fieldTripMatLoader = FieldTripMatLoader();
 
   Future<EegRecording> load(String path) async {
-    if (path.toLowerCase().endsWith('.ccseeg.json') || path.toLowerCase().endsWith('.json')) return _loadPortable(path);
+    if (path.toLowerCase().endsWith('.ccseeg.json') ||
+        path.toLowerCase().endsWith('.json'))
+      return _loadPortable(path);
     if (path.toLowerCase().endsWith('.fif')) {
       return await _fifLoader.load(path);
+    }
+    if (path.toLowerCase().endsWith('.mat')) {
+      return await _fieldTripMatLoader.load(path);
     }
     if (path.toLowerCase().endsWith('.set')) {
       return await _setLoader.load(path);
@@ -25,7 +32,8 @@ class RecordingLoader {
     if (path.toLowerCase().endsWith('.vhdr')) {
       return _vhdrLoader.load(path);
     }
-    if (path.toLowerCase().endsWith('.orb') || path.toLowerCase().endsWith('.signal')) {
+    if (path.toLowerCase().endsWith('.orb') ||
+        path.toLowerCase().endsWith('.signal')) {
       return OrbLoader().load(path);
     }
     // EDF / EDF+
@@ -63,8 +71,14 @@ class RecordingLoader {
     final sampleRate = (json['sample_rate'] as num).toDouble();
     final sampleCount = channels.isEmpty ? 0 : channels.first.length;
     final sourceEpochSamples = (json['source_epoch_samples'] as num?)?.toInt();
-    final int? pointsPerEpoch = (sourceEpochSamples != null && sourceEpochSamples > 0) ? sourceEpochSamples : null;
-    final int epochCount = (pointsPerEpoch != null && pointsPerEpoch > 0 && sampleCount >= pointsPerEpoch)
+    final int? pointsPerEpoch =
+        (sourceEpochSamples != null && sourceEpochSamples > 0)
+        ? sourceEpochSamples
+        : null;
+    final int epochCount =
+        (pointsPerEpoch != null &&
+            pointsPerEpoch > 0 &&
+            sampleCount >= pointsPerEpoch)
         ? (sampleCount ~/ pointsPerEpoch)
         : 1;
     final epochLabels = json['epoch_labels'] == null
@@ -93,6 +107,7 @@ class RecordingLoader {
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
       markers: markers,
+      epochTmin: (json['epoch_tmin'] as num?)?.toDouble(),
     );
   }
 }

@@ -13,32 +13,37 @@ class SetLoader {
     final executable = ExtractionService.findEngine();
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_inspect_');
     final job = File('${temp.path}/inspect.json');
-    await job.writeAsString(jsonEncode({
-      'job_type': 'inspect_set',
-      'input': path,
-      'output': '',
-      'format': 'set',
-      'epoch_seconds': 1.0,
-      'options': {
-        'mode': 'inspect',
-        'start_seconds': 0.0,
-        'end_seconds': 0.0,
-        'bin_seconds': 1.0,
-        'psd': false,
-        'fooof': false,
-        'irasa': false,
-        'nonlinear': false,
-        'acw': false,
-        'connectivity': false,
-      },
-    }));
+    await job.writeAsString(
+      jsonEncode({
+        'job_type': 'inspect_set',
+        'input': path,
+        'output': '',
+        'format': 'set',
+        'epoch_seconds': 1.0,
+        'options': {
+          'mode': 'inspect',
+          'start_seconds': 0.0,
+          'end_seconds': 0.0,
+          'bin_seconds': 1.0,
+          'psd': false,
+          'fooof': false,
+          'irasa': false,
+          'nonlinear': false,
+          'acw': false,
+          'connectivity': false,
+        },
+      }),
+    );
 
     final process = await Process.run(executable, [job.path]);
-    try { await temp.delete(recursive: true); } catch (_) {}
+    try {
+      await temp.delete(recursive: true);
+    } catch (_) {}
 
     if (process.exitCode != 0) {
       throw FormatException(
-          'Engine failed to inspect SET file: ${process.stderr}');
+        'Engine failed to inspect SET file: ${process.stderr}',
+      );
     }
 
     final jsonStr = process.stdout
@@ -58,19 +63,31 @@ class SetLoader {
     final channelCount = labels.length;
 
     // Resolve companion .fdt path (same folder as the .set)
-    final String? fdtPath = fdtOverridePath ??
+    final String? fdtPath =
+        fdtOverridePath ??
         (datfile.isEmpty
             ? null
             : File(path).parent.uri.resolve(datfile).toFilePath());
 
     final List<Float32List> preview;
     if (fdtPath == null) {
-      preview = _previewZero(channelCount, sampleCount);
+      final embedded = data['preview'];
+      preview = embedded is List
+          ? <Float32List>[
+              for (final channel in embedded)
+                Float32List.fromList([
+                  for (final value in channel as List)
+                    (value as num).toDouble(),
+                ]),
+            ]
+          : _previewZero(channelCount, sampleCount);
     } else {
       // No sandbox — direct read. If the file is missing, throw clearly.
       if (!File(fdtPath).existsSync()) {
         throw FileSystemException(
-            'Companion .fdt file not found. Expected: $fdtPath', fdtPath);
+          'Companion .fdt file not found. Expected: $fdtPath',
+          fdtPath,
+        );
       }
       preview = _readFdt(fdtPath, channelCount, sampleCount);
     }
@@ -107,7 +124,8 @@ class SetLoader {
     final expected = channels * samples * 4;
     if (bytes.length < expected) {
       throw FormatException(
-          'FDT truncated: expected $expected bytes, got ${bytes.length}.');
+        'FDT truncated: expected $expected bytes, got ${bytes.length}.',
+      );
     }
     final bd = ByteData.sublistView(bytes);
     const stride = 1;
