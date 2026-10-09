@@ -4,7 +4,7 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
-## [1.2.7]
+## [1.2.8]
 
 ### Batch results and plotting
 
@@ -19,6 +19,13 @@ its matching section is missing.
   of retaining an invalid baseline or stale figure.
 - The batch result viewer inherits the configured epoch, smoothing, and window
   settings. Combined CSV previews export beside the source CSV.
+
+### Release packaging
+
+- Fixed RPM installation steps to use shell syntax supported by rpmbuild and
+  explicitly run Bash-based desktop launcher setup with Bash.
+- Added engine --help support for the Linux installer smoke test.
+- Supersedes the unpublished 1.2.7 build, whose RPM packaging check failed.
 
 ### Validation
 

@@ -35,6 +35,10 @@ fn main() -> Result<(), String> {
     let job_path = env::args()
         .nth(1)
         .ok_or("usage: ccs-eeg-engine <job.json>")?;
+    if job_path == "--help" || job_path == "-h" {
+        println!("usage: ccs-eeg-engine <job.json>");
+        return Ok(());
+    }
     let job: Job = serde_json::from_slice(&fs::read(&job_path).map_err(err)?).map_err(err)?;
     eprintln!("PROGRESS 0 Loading {}", job.input);
     if job.job_type == "microstates" {

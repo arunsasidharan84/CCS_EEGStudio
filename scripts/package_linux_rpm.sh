@@ -116,14 +116,14 @@ install -m 0644 %{_sourcedir}/ccseegstudio.desktop \
   %{buildroot}/usr/share/applications/ccseegstudio.desktop
 
 # Install icon only if it was found.
-if [[ -f "%{_sourcedir}/ccseegstudio.png" ]]; then
+if [ -f "%{_sourcedir}/ccseegstudio.png" ]; then
   install -m 0644 %{_sourcedir}/ccseegstudio.png \
     %{buildroot}/usr/share/pixmaps/ccseegstudio.png
   install -m 0644 %{_sourcedir}/ccseegstudio.png \
     %{buildroot}/usr/share/icons/hicolor/256x256/apps/ccseegstudio.png
 fi
 
-%post
+%post -p /bin/bash
 # 1. Update desktop database and icon caches
 if which update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications 2>/dev/null || true
@@ -161,7 +161,7 @@ if [ -f "\$launcher" ]; then
   done
 fi
 
-%postun
+%postun -p /bin/bash
 if [ "\$1" -eq 0 ]; then
   rm -f /etc/skel/Desktop/ccseegstudio.desktop
   if which update-desktop-database >/dev/null 2>&1; then
@@ -180,7 +180,7 @@ fi
 /usr/share/icons/hicolor/256x256/apps/ccseegstudio.png
 
 %changelog
-* Fri Jul 04 2026 CCS NIMHANS <noreply@github.com> - $version-1
+* Sat Jul 04 2026 CCS NIMHANS <noreply@github.com> - $version-1
 - Automated desktop release
 EOF
 
