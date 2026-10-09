@@ -40,7 +40,7 @@ echo "==> Building Flutter macOS app (release)..."
 cd "$ROOT"
 flutter build macos --release
 
-APP="$ROOT/build/macos/Build/Products/Release/ccs_eeg_app.app"
+APP="$ROOT/build/macos/Build/Products/Release/CCS EEG Studio.app"
 if [[ ! -d "$APP" ]]; then
   echo "Error: Expected .app bundle not found at $APP" >&2
   exit 1
@@ -62,4 +62,4 @@ echo ""
 echo "✅  Built: $APP"
 echo ""
 echo "To clear Gatekeeper quarantine after distributing:"
-echo "    xattr -rd com.apple.quarantine ~/Downloads/ccs_eeg_app.app"
+echo "    xattr -rd com.apple.quarantine ~/Downloads/CCS\\ EEG\\ Studio.app"

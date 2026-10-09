@@ -102,29 +102,82 @@ the CCS pipeline with a native Rust computation engine.
 %build
 
 %install
-mkdir -p \\
-  %{buildroot}/usr/lib/ccseegstudio \\
-  %{buildroot}/usr/bin \\
-  %{buildroot}/usr/share/applications \\
+mkdir -p \
+  %{buildroot}/usr/lib/ccseegstudio \
+  %{buildroot}/usr/bin \
+  %{buildroot}/usr/share/applications \
+  %{buildroot}/usr/share/pixmaps \
   %{buildroot}/usr/share/icons/hicolor/256x256/apps
 
 cp -a %{_sourcedir}/bundle/. %{buildroot}/usr/lib/ccseegstudio/
 ln -s ../lib/ccseegstudio/ccs_eeg_app %{buildroot}/usr/bin/ccseegstudio
 
-install -m 0644 %{_sourcedir}/ccseegstudio.desktop \\
+install -m 0644 %{_sourcedir}/ccseegstudio.desktop \
   %{buildroot}/usr/share/applications/ccseegstudio.desktop
 
 # Install icon only if it was found.
 if [[ -f "%{_sourcedir}/ccseegstudio.png" ]]; then
-  install -m 0644 %{_sourcedir}/ccseegstudio.png \\
+  install -m 0644 %{_sourcedir}/ccseegstudio.png \
+    %{buildroot}/usr/share/pixmaps/ccseegstudio.png
+  install -m 0644 %{_sourcedir}/ccseegstudio.png \
     %{buildroot}/usr/share/icons/hicolor/256x256/apps/ccseegstudio.png
+fi
+
+%post
+# 1. Update desktop database and icon caches
+if which update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+if which gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+# 2. Multi-user desktop launcher setup
+if [ -d /etc/skel ]; then
+  mkdir -p /etc/skel/Desktop
+  cp -f /usr/share/applications/ccseegstudio.desktop /etc/skel/Desktop/
+  chmod 755 /etc/skel/Desktop/ccseegstudio.desktop 2>/dev/null || true
+fi
+
+launcher=/usr/share/applications/ccseegstudio.desktop
+if [ -f "\$launcher" ]; then
+  while IFS=: read -r _ _ uid gid _ homedir _; do
+    if [ "\$uid" -ge 1000 ] 2>/dev/null && [ -d "\$homedir/Desktop" ]; then
+      cp -f "\$launcher" "\$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chmod 755 "\$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chown "\$uid:\$gid" "\$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+    fi
+  done < <(getent passwd 2>/dev/null || cat /etc/passwd)
+
+  for udir in /home/* /serverdata/ccshome/* /export/home/* /data/home/*; do
+    if [ -d "\$udir/Desktop" ]; then
+      cp -f "\$launcher" "\$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chmod 755 "\$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      owner_id=\$(stat -c '%u:%g' "\$udir" 2>/dev/null || true)
+      if [ -n "\$owner_id" ]; then
+        chown "\$owner_id" "\$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      fi
+    fi
+  done
+fi
+
+%postun
+if [ "\$1" -eq 0 ]; then
+  rm -f /etc/skel/Desktop/ccseegstudio.desktop
+  if which update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+  fi
+  if which gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+  fi
 fi
 
 %files
 /usr/bin/ccseegstudio
 /usr/lib/ccseegstudio
 /usr/share/applications/ccseegstudio.desktop
-%{?_iconsdir:/usr/share/icons/hicolor/256x256/apps/ccseegstudio.png}
+/usr/share/pixmaps/ccseegstudio.png
+/usr/share/icons/hicolor/256x256/apps/ccseegstudio.png
 
 %changelog
 * Fri Jul 04 2026 CCS NIMHANS <noreply@github.com> - $version-1

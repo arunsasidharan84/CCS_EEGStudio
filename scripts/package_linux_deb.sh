@@ -50,6 +50,7 @@ mkdir -p \
   "$install_dir" \
   "$package_root/usr/bin" \
   "$package_root/usr/share/applications" \
+  "$package_root/usr/share/pixmaps" \
   "$package_root/usr/share/icons/hicolor/256x256/apps"
 
 # Copy entire Flutter bundle into the install prefix.
@@ -70,6 +71,8 @@ for candidate in \
   fi
 done
 if [[ -n "$icon_src" ]]; then
+  install -m 0644 "$icon_src" \
+    "$package_root/usr/share/pixmaps/ccseegstudio.png"
   install -m 0644 "$icon_src" \
     "$package_root/usr/share/icons/hicolor/256x256/apps/ccseegstudio.png"
 fi
@@ -105,6 +108,64 @@ Categories=Science;Education;MedicalSoftware;
 StartupNotify=true
 StartupWMClass=ccs_eeg_app
 EOF
+
+# ── DEBIAN/postinst ────────────────────────────────────────────────────────
+cat > "$package_root/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if which update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+if which gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+if [ -d /etc/skel ]; then
+  mkdir -p /etc/skel/Desktop
+  cp -f /usr/share/applications/ccseegstudio.desktop /etc/skel/Desktop/
+  chmod 755 /etc/skel/Desktop/ccseegstudio.desktop 2>/dev/null || true
+fi
+
+launcher=/usr/share/applications/ccseegstudio.desktop
+if [ -f "$launcher" ]; then
+  while IFS=: read -r _ _ uid gid _ homedir _; do
+    if [ "$uid" -ge 1000 ] 2>/dev/null && [ -d "$homedir/Desktop" ]; then
+      cp -f "$launcher" "$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chmod 755 "$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chown "$uid:$gid" "$homedir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+    fi
+  done < /etc/passwd
+
+  for udir in /home/* /serverdata/ccshome/* /export/home/* /data/home/*; do
+    if [ -d "$udir/Desktop" ]; then
+      cp -f "$launcher" "$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      chmod 755 "$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      owner_id=$(stat -c '%u:%g' "$udir" 2>/dev/null || true)
+      if [ -n "$owner_id" ]; then
+        chown "$owner_id" "$udir/Desktop/ccseegstudio.desktop" 2>/dev/null || true
+      fi
+    fi
+  done
+fi
+EOF
+chmod 755 "$package_root/DEBIAN/postinst"
+
+# ── DEBIAN/postrm ──────────────────────────────────────────────────────────
+cat > "$package_root/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+  rm -f /etc/skel/Desktop/ccseegstudio.desktop
+  if which update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+  fi
+  if which gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+  fi
+fi
+EOF
+chmod 755 "$package_root/DEBIAN/postrm"
 
 # ── Build .deb ─────────────────────────────────────────────────────────────
 mkdir -p "$(dirname "$output_deb")"

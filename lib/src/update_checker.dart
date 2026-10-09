@@ -308,12 +308,115 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       return;
     }
     if (Platform.isLinux) {
-      await Process.run('xdg-open', [file.path]);
-      if (mounted)
-        setState(() => _status = 'Package opened in your software installer.');
+      await _installLinuxUpdate(file);
       return;
     }
     await _installMacUpdate(file);
+  }
+
+  Future<void> _installLinuxUpdate(File file) async {
+    if (mounted) {
+      setState(() => _status = 'Launching package installer (sudo required)…');
+    }
+
+    try {
+      final helperScript = File('${Directory.systemTemp.path}${Platform.pathSeparator}apply_ccs_eeg_update.sh');
+      final scriptContent = '''#!/bin/bash
+set -e
+echo "======================================================================"
+echo "          CCS EEG Studio - Installing System Update                   "
+echo "======================================================================"
+echo "Package: ${file.path}"
+echo "Administrative (sudo) privileges are required to update this package."
+echo "Please enter your password when prompted below."
+echo "----------------------------------------------------------------------"
+
+if command -v dnf >/dev/null 2>&1; then
+  sudo dnf install -y "${file.path}"
+elif command -v yum >/dev/null 2>&1; then
+  sudo yum install -y "${file.path}"
+elif command -v rpm >/dev/null 2>&1; then
+  sudo rpm -Uvh --replacepkgs "${file.path}"
+elif command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get install -y "${file.path}"
+elif command -v dpkg >/dev/null 2>&1; then
+  sudo dpkg -i "${file.path}" || sudo apt-get install -f -y
+else
+  echo "Error: Supported package manager (dnf/yum/rpm/apt-get/dpkg) not found." >&2
+  exit 1
+fi
+
+EXIT_CODE=\$?
+if [ \$EXIT_CODE -eq 0 ]; then
+  echo ""
+  echo "======================================================================"
+  echo "  CCS EEG Studio updated successfully!                                "
+  echo "======================================================================"
+  echo "Press Enter to exit and restart the application..."
+  read -r
+else
+  echo ""
+  echo "======================================================================"
+  echo "  Update failed or sudo permission denied.                            "
+  echo "======================================================================"
+  echo "Press Enter to close this window..."
+  read -r
+fi
+''';
+      await helperScript.writeAsString(scriptContent);
+      await Process.run('chmod', ['+x', helperScript.path]);
+
+      final terminals = [
+        'xfce4-terminal',
+        'gnome-terminal',
+        'konsole',
+        'x-terminal-emulator',
+        'mate-terminal',
+        'lxterminal',
+        'xterm',
+      ];
+
+      bool launched = false;
+      for (final term in terminals) {
+        final whichRes = await Process.run('which', [term]);
+        if (whichRes.exitCode == 0) {
+          final termPath = (whichRes.stdout as String).trim();
+          if (term == 'gnome-terminal') {
+            await Process.start(termPath, ['--title=Updating CCS EEG Studio', '--', '/bin/bash', helperScript.path], mode: ProcessStartMode.detached);
+          } else if (term == 'xfce4-terminal') {
+            await Process.start(termPath, ['--title=Updating CCS EEG Studio', '-e', '/bin/bash ${helperScript.path}'], mode: ProcessStartMode.detached);
+          } else {
+            await Process.start(termPath, ['-e', '/bin/bash ${helperScript.path}'], mode: ProcessStartMode.detached);
+          }
+          launched = true;
+          break;
+        }
+      }
+
+      if (launched) {
+        if (mounted) {
+          setState(() => _status = 'Installer terminal opened. Please enter your password to authorize sudo privileges.\n'
+              'Alternatively, run in terminal: sudo dnf install -y "${file.path}"');
+        }
+      } else {
+        final pkexecCheck = await Process.run('which', ['pkexec']);
+        if (pkexecCheck.exitCode == 0) {
+          Process.start('pkexec', ['/bin/bash', helperScript.path], mode: ProcessStartMode.detached);
+          if (mounted) {
+            setState(() => _status = 'Authorization prompt requested via pkexec.');
+          }
+        } else {
+          Process.run('xdg-open', [file.path]);
+          if (mounted) {
+            setState(() => _status = 'Package downloaded to: ${file.path}\nRun with sudo in terminal: sudo dnf install -y "${file.path}"');
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _status = 'Error launching installer: $e\nRun manually: sudo dnf install -y "${file.path}"');
+      }
+    }
   }
 
   Future<void> _installMacUpdate(File archive) async {

@@ -125,7 +125,7 @@ jobs:
 
       - name: Copy Rust engine into macOS .app bundle
         run: |
-          APP="build/macos/Build/Products/Release/ccs_eeg_app.app"
+          APP="build/macos/Build/Products/Release/CCS EEG Studio.app"
           cp bridge/target/release/ccs-eeg-engine "$APP/Contents/MacOS/ccs-eeg-engine"
           chmod +x "$APP/Contents/MacOS/ccs-eeg-engine"
           test -x "$APP/Contents/MacOS/ccs-eeg-engine"
@@ -133,13 +133,13 @@ jobs:
       - name: Ad-hoc sign macOS app bundle
         run: |
           codesign --force --deep --sign - \
-            build/macos/Build/Products/Release/ccs_eeg_app.app
+            "build/macos/Build/Products/Release/CCS EEG Studio.app"
 
       - name: Package macOS app as ZIP
         run: |
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
-            build/macos/Build/Products/Release/ccs_eeg_app.app \
+            "build/macos/Build/Products/Release/CCS EEG Studio.app" \
             dist/CCSEEGStudio-macos.zip
 
       - name: Upload macOS artifact
@@ -251,17 +251,22 @@ jobs:
             libgtk-3-dev liblzma-dev libblkid-dev \
             dpkg-dev rpm
 
-      # ── Rust: engine build ────────────────────────────────────────────────
-      - name: Install Rust toolchain
+      # ── Rust: engine build (static musl binary for universal GLIBC compatibility) ──
+      - name: Install Rust toolchain with musl target
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl build tools
+        run: sudo apt-get install -y musl-tools
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: bridge
 
-      - name: Build Rust engine (Linux release binary)
-        run: cargo build --release
+      - name: Build Rust engine (universal Linux static binary)
+        run: cargo build --release --target x86_64-unknown-linux-musl
         working-directory: bridge
 
       # ── Flutter: setup + tests ────────────────────────────────────────────
@@ -292,7 +297,8 @@ jobs:
       - name: Copy Rust engine into Linux bundle
         run: |
           BUNDLE="build/linux/x64/release/bundle"
-          cp bridge/target/release/ccs-eeg-engine "$BUNDLE/ccs-eeg-engine"
+          cp bridge/target/x86_64-unknown-linux-musl/release/ccs-eeg-engine "$BUNDLE/ccs-eeg-engine"
+          strip "$BUNDLE/ccs-eeg-engine"
           chmod +x "$BUNDLE/ccs-eeg-engine"
           test -x "$BUNDLE/ccs-eeg-engine"
 
@@ -320,8 +326,10 @@ jobs:
               dnf install -y /packages/CCSEEGStudio-linux-x86_64.rpm &&
               test -x /usr/bin/ccseegstudio &&
               test -f /usr/share/applications/ccseegstudio.desktop &&
+              test -f /usr/share/pixmaps/ccseegstudio.png &&
               ldd /usr/lib/ccseegstudio/ccs_eeg_app > /tmp/ldd.txt &&
-              ! grep -E "not found|version .* not found" /tmp/ldd.txt
+              ! grep -E "not found|version .* not found" /tmp/ldd.txt &&
+              /usr/lib/ccseegstudio/ccs-eeg-engine --help 2>&1 | grep -q "usage:"
             '
 
       - name: Upload Linux installer artifacts

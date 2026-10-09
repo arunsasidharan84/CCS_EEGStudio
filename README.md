@@ -17,6 +17,18 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/arunsasidharan84/CCS_EEGStudio?style=for-the-badge&color=2563eb&label=RELEASE"></a>
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/actions/workflows/build.yml"><img alt="Desktop build" src="https://img.shields.io/github/actions/workflow/status/arunsasidharan84/CCS_EEGStudio/build.yml?style=for-the-badge&label=BUILD"></a>
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/arunsasidharan84/CCS_EEGStudio/total?style=for-the-badge&color=16a34a&label=DOWNLOADS"></a>
+</p>
+
+<p align="center">
+  <b>Current version: 1.2.5</b> ·
+  <a href="CHANGELOG.md">Detailed changelog</a> ·
+  <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
+</p>
+
+<p align="center">
   <a href="#-quick-download"><b>📥 Download App</b></a> &nbsp;•&nbsp;
   <a href="#about"><b>About</b></a> &nbsp;•&nbsp;
   <a href="#-features"><b>Features</b></a> &nbsp;•&nbsp;
@@ -31,16 +43,45 @@
 
 Pre-built standalone desktop installers and application bundles are published through GitHub Releases:
 
-| Platform | Package Type | Direct Download Link |
-| :--- | :--- | :--- |
-| **macOS** | Universal app bundle (macOS 12+) | [CCSEEGStudio-macos.zip](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-macos.zip) |
-| **Windows** | 64-bit installer (Windows 10/11) | [CCSEEGStudio-Installer.exe](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-Installer.exe) |
-| **Linux (Debian / Ubuntu)** | amd64 DEB package | [CCSEEGStudio-linux-amd64.deb](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-amd64.deb) |
-| **Linux (RHEL / AlmaLinux)** | x86_64 RPM package | [CCSEEGStudio-linux-x86_64.rpm](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-x86_64.rpm) |
+| Platform | Package Type | Extracted App / Binary | Direct Download Link |
+| :--- | :--- | :--- | :--- |
+| **macOS** | Universal ZIP (macOS 12+) | **`CCS EEG Studio.app`** | [CCSEEGStudio-macos.zip](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-macos.zip) |
+| **Windows** | 64-bit installer (Windows 10/11) | `CCSEEGStudio-Installer.exe` | [CCSEEGStudio-Installer.exe](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-Installer.exe) |
+| **Linux (Debian / Ubuntu)** | amd64 DEB package | `ccseegstudio` | [CCSEEGStudio-linux-amd64.deb](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-amd64.deb) |
+| **Linux (RHEL / AlmaLinux)** | x86_64 RPM package | `ccseegstudio` | [CCSEEGStudio-linux-x86_64.rpm](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-x86_64.rpm) |
 
 > 📦 **All Releases & Checksums:** Every release includes [`SHA256SUMS.txt`](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/SHA256SUMS.txt) for cryptographic verification. View all packages on the **[GitHub Releases Page](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest)**.  
-> 🔄 **In-App Upgrades:** Once installed, choose **Updates** in the app's top bar to check, download, and apply the correct update package automatically.  
-> 🍏 **macOS Gatekeeper:** For first-time launch instructions, see [macOS Gatekeeper Setup](#macos-gatekeeper).
+> 🔄 **In-App Upgrades:** Once installed, choose **Updates** in the app's top bar to check, download, and apply the correct update package automatically.
+
+#### 🍏 First-Time Launch for macOS Users (Gatekeeper Setup)
+
+When you download and unzip **`CCSEEGStudio-macos.zip`**, macOS extracts **`CCS EEG Studio.app`** into your `~/Downloads` folder. Because development releases are ad-hoc signed, macOS Gatekeeper blocks opening them by default.
+
+To enable the app, run the following in **Terminal**:
+
+```sh
+# 1. Clear Gatekeeper quarantine on the downloaded app:
+xattr -rd com.apple.quarantine ~/Downloads/CCS\ EEG\ Studio.app
+
+# 2. Move to Applications folder:
+mv ~/Downloads/CCS\ EEG\ Studio.app /Applications/
+```
+
+> **Tip (Finder alternative):** In Finder, **Right-click (or Control-click)** `CCS EEG Studio.app` → select **Open** → click **Open** on the security confirmation prompt. You only need to do this once.
+
+#### 🐧 Multi-User Linux Server Setup (AlmaLinux / RHEL / Ubuntu / Debian)
+
+To install or update CCS EEG Studio across all current and future user accounts on an Enterprise Linux or Ubuntu/Debian multi-user server (with executable desktop shortcuts in `/serverdata/ccshome/*/Desktop`, `/etc/skel/Desktop/`, and the Applications menu):
+
+```bash
+# Automated multi-user installation:
+curl -fsSL https://raw.githubusercontent.com/arunsasidharan84/CCS_EEGStudio/main/scripts/install_linux.sh | sudo bash
+```
+
+Once installed, administrators or sudo users can update the server to the newest release anytime with a single command:
+```bash
+sudo update-ccs-eeg-studio
+```
 
 <p align="center">
   <img src="screenshots/main.png" width="920" alt="CCS EEG Studio Main Window">
@@ -297,7 +338,7 @@ bash scripts/package_linux_rpm.sh build/linux/x64/release/bundle dist/CCSEEGStud
 ### macOS Gatekeeper
 If macOS blocks an ad-hoc-signed build after extraction, run:
 ```sh
-xattr -rd com.apple.quarantine ~/Downloads/CCSEEGStudio.app
+xattr -rd com.apple.quarantine ~/Downloads/CCS\ EEG\ Studio.app
 ```
 
 ---
