@@ -4,6 +4,27 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.7]
+
+### Batch results and plotting
+
+- Added View Results to completed batch runs and the batch workspace, opening
+  the interactive plot comparison directly with the latest batch outputs.
+- Added Open Reports Folder for the generated figures and PDFs.
+- Prefer individual recording CSVs over the redundant Batch_features.csv.
+  Combined-only exports are split into named sessions before plotting.
+- Changing selected sessions updates the plot automatically and selects a
+  remaining baseline when the previous baseline is removed.
+- Deselecting all sessions clears the plot and prompts for a recording instead
+  of retaining an invalid baseline or stale figure.
+- The batch result viewer inherits the configured epoch, smoothing, and window
+  settings. Combined CSV previews export beside the source CSV.
+
+### Validation
+
+- Added regression tests for pooled/per-recording inputs, quoted filenames,
+  baseline removal, and deselecting/reselecting sessions in the viewer.
+
 ## [1.2.6]
 
 ### Batch analysis

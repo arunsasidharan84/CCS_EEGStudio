@@ -296,6 +296,7 @@ class _FeatureHomeState extends State<FeatureHome>
 
   /// Stage 4 output directory.
   String? _plotsDir;
+  List<String> _batchResultCsvs = [];
 
   /// Channel type assignment for the recording currently under analysis.
   ChannelTypeMap _channels = ChannelTypeMap.empty();
@@ -1013,7 +1014,10 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   List<String> get _featureFilesForTopoStats {
-    if (_batchFeatOutputs.isNotEmpty) return _batchFeatOutputs;
+    if (_batchResultCsvs.isNotEmpty)
+      return preferSessionFeatureCsvs(_batchResultCsvs);
+    if (_batchFeatOutputs.isNotEmpty)
+      return preferSessionFeatureCsvs(_batchFeatOutputs);
     if (_featuresCsv != null && File(_featuresCsv!).existsSync())
       return [_featuresCsv!];
     if (_activeRecording != null) {
@@ -1788,12 +1792,44 @@ class _FeatureHomeState extends State<FeatureHome>
     );
   }
 
+  Future<void> _openBatchResultsFolder() async {
+    final dir = _plotsDir;
+    if (dir == null || !Directory(dir).existsSync()) return;
+    try {
+      final executable = Platform.isMacOS
+          ? 'open'
+          : Platform.isWindows
+          ? 'explorer'
+          : 'xdg-open';
+      await Process.run(executable, [dir]);
+    } catch (e) {
+      _log('Could not open results folder: $e');
+    }
+  }
+
+  void _viewBatchResults() {
+    setState(() {
+      _batchMaximized = false;
+      _workspaceMaximized = false;
+      _waveformMaximized = false;
+      _sidebarCollapsed = false;
+      _selectedModule = _Module.plotsReport;
+      _logVisible = false;
+    });
+  }
+
   Widget _buildPlotsLayout() {
     // Interactive figure identical to PlotFeaturesTopoStats_20260801.py
     // (line plots + e-TFCE topomaps), with PNG/PDF/CSV export.
     return TopoStatsView(
       key: const ValueKey('plots-report'),
       featureFilePaths: _featureFilesForTopoStats,
+      initialSettings: TopoStatsSettings(
+        epochSize: _cfg.epochSeconds,
+        windowSize: _cfg.smoothingWindow,
+        segmentDurationMin: double.tryParse(_topoWindows.text.trim()) ?? 2.0,
+        baselineDurationMin: double.tryParse(_topoWindows.text.trim()) ?? 2.0,
+      ),
       runLabel: 'Run Plot Generation',
       title: 'Plots & Report',
     );
@@ -2549,6 +2585,20 @@ class _FeatureHomeState extends State<FeatureHome>
                     style: const TextStyle(color: _textMuted, fontSize: 11),
                   ),
                   const Spacer(),
+                  if (!_running && _batchResultCsvs.isNotEmpty) ...[
+                    OutlinedButton.icon(
+                      onPressed: _viewBatchResults,
+                      icon: const Icon(Icons.analytics_outlined, size: 16),
+                      label: const Text('View Results'),
+                    ),
+                    if (_plotsDir != null)
+                      TextButton.icon(
+                        onPressed: _openBatchResultsFolder,
+                        icon: const Icon(Icons.folder_open, size: 16),
+                        label: const Text('Open Reports Folder'),
+                      ),
+                    const SizedBox(width: 8),
+                  ],
                   if (_running)
                     TextButton.icon(
                       onPressed: _cancel,
@@ -3338,6 +3388,21 @@ class _FeatureHomeState extends State<FeatureHome>
         ),
       ),
       actions: [
+        if (_batchProgressFinished && _plotsDir != null)
+          TextButton.icon(
+            onPressed: _openBatchResultsFolder,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Open Reports Folder'),
+          ),
+        if (_batchProgressFinished && _batchResultCsvs.isNotEmpty)
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              _viewBatchResults();
+            },
+            icon: const Icon(Icons.analytics_outlined),
+            label: const Text('View Results'),
+          ),
         if (!_batchProgressFinished)
           TextButton.icon(
             onPressed: _cancel,
@@ -3616,6 +3681,8 @@ class _FeatureHomeState extends State<FeatureHome>
         _batchFeatOutputs
           ..clear()
           ..addAll(written);
+        _batchResultCsvs = preferSessionFeatureCsvs(written);
+        _plotsDir = null;
       });
       _log(
         '── EXTRACTION DONE — $succeeded/${kept.length} files, '
@@ -3682,6 +3749,8 @@ class _FeatureHomeState extends State<FeatureHome>
         _updateBatchFile(path, 'Running', progress: 0);
       }
       await _runPlotting(csvPaths: inputs, announce: false, outputDir: outDir);
+      if (mounted)
+        setState(() => _batchResultCsvs = preferSessionFeatureCsvs(inputs));
       for (final path in inputs) {
         _updateBatchFile(path, 'Done', progress: 1, completed: true);
       }

@@ -20,6 +20,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'mpl_colormaps.dart';
 import 'topo_interp.dart' show isStandard1020Channel;
 import 'topostats_engine.dart';
+import 'topostats_batch.dart' show prepareSessionFeatureCsvs;
 import 'topostats_figure.dart';
 import 'topostats_runner.dart';
 
@@ -39,6 +40,7 @@ class TopoStatsView extends StatefulWidget {
     required this.featureFilePaths,
     this.runLabel = 'Run Plot Generation',
     this.title = 'Plots & Report',
+    this.initialSettings = const TopoStatsSettings(),
   });
 
   /// Seed files. A single file is expanded to all sibling sessions of the
@@ -46,6 +48,7 @@ class TopoStatsView extends StatefulWidget {
   final List<String> featureFilePaths;
   final String runLabel;
   final String title;
+  final TopoStatsSettings initialSettings;
 
   @override
   State<TopoStatsView> createState() => _TopoStatsViewState();
@@ -54,6 +57,8 @@ class TopoStatsView extends StatefulWidget {
 class _TopoStatsViewState extends State<TopoStatsView> {
   TopoStatsSettings _s = const TopoStatsSettings();
   List<String> _files = [];
+  Directory? _sessionScratch;
+  String? _sourceDir;
   final Set<String> _disabled = {};
   List<String> _features = [];
 
@@ -93,6 +98,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   @override
   void initState() {
     super.initState();
+    _s = widget.initialSettings;
     _syncControllers();
     _setFiles(widget.featureFilePaths, autoRun: true);
   }
@@ -100,8 +106,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   @override
   void didUpdateWidget(TopoStatsView old) {
     super.didUpdateWidget(old);
-    if (old.featureFilePaths.join('|') != widget.featureFilePaths.join('|') &&
-        widget.featureFilePaths.isNotEmpty) {
+    if (old.featureFilePaths.join('|') != widget.featureFilePaths.join('|')) {
       _setFiles(widget.featureFilePaths, autoRun: true);
     }
   }
@@ -109,6 +114,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   @override
   void dispose() {
     _job?.cancel();
+    _sessionScratch?.deleteSync(recursive: true);
     for (final c in [
       _recId,
       _bTmin,
@@ -190,7 +196,11 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   }
 
   void _setFiles(List<String> seed, {bool autoRun = false}) {
-    var files = seed.where((p) => File(p).existsSync()).toList();
+    _sessionScratch ??= Directory.systemTemp.createTempSync(
+      'ccs_plot_sessions_',
+    );
+    _sourceDir = seed.isEmpty ? null : _dir(seed.first);
+    var files = prepareSessionFeatureCsvs(seed, _sessionScratch!.path);
     var recId = inferRecId(files);
     if (files.length == 1) {
       final sib = discoverSessionFiles(_dir(files.first), recId);
@@ -247,6 +257,22 @@ class _TopoStatsViewState extends State<TopoStatsView> {
     }
   }
 
+  void _toggleSession(String file, bool selected) {
+    setState(() {
+      if (selected) {
+        _disabled.remove(file);
+      } else {
+        _disabled.add(file);
+      }
+      _s = settingsForSessions(_s, _sessionNames);
+      _result = null;
+      _figure = null;
+      _hover = null;
+      _error = null;
+    });
+    if (_activeFiles.isNotEmpty) _run();
+  }
+
   Future<void> _pickFiles() async {
     final pick = await FilePicker.pickFiles(
       allowMultiple: true,
@@ -290,7 +316,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
       setState(() => _error = 'Select at least one *.features.csv file.');
       return;
     }
-    final s = _readSettings();
+    final s = settingsForSessions(_readSettings(), _sessionNames);
     setState(() => _s = s);
     final key = s.statsKey(files);
     final cached = _cache[key];
@@ -370,8 +396,8 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   // ───────────────────────────────────────────────────────────────────────
 
   String get _defaultOutDir {
-    if (_activeFiles.isEmpty) return Directory.current.path;
-    return '${_dir(_activeFiles.first)}${Platform.pathSeparator}Figures_TopoStats';
+    final dir = _sourceDir ?? Directory.current.path;
+    return '$dir${Platform.pathSeparator}Figures_TopoStats';
   }
 
   Future<String?> _savePath(String name, String ext) async {
@@ -702,6 +728,15 @@ class _TopoStatsViewState extends State<TopoStatsView> {
       padding: const EdgeInsets.only(bottom: 16),
       children: [
         _section('SESSIONS', icon: Icons.folder_copy_outlined, [
+          if (_files.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Select recordings to compare. Plots update automatically; '
+                'the baseline stays within your selection.',
+                style: TextStyle(color: _muted, fontSize: 11),
+              ),
+            ),
           if (_files.isEmpty)
             Container(
               padding: const EdgeInsets.all(8),
@@ -727,9 +762,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
               InkWell(
                 onTap: _running
                     ? null
-                    : () => setState(() {
-                        if (!_disabled.remove(f)) _disabled.add(f);
-                      }),
+                    : () => _toggleSession(f, _disabled.contains(f)),
                 child: Row(
                   children: [
                     SizedBox(
@@ -741,11 +774,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
                         activeColor: _amber,
                         onChanged: _running
                             ? null
-                            : (v) => setState(
-                                () => v == true
-                                    ? _disabled.remove(f)
-                                    : _disabled.add(f),
-                              ),
+                            : (v) => _toggleSession(f, v == true),
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -828,7 +857,10 @@ class _TopoStatsViewState extends State<TopoStatsView> {
               'Baseline session',
               baselineValue,
               {for (final n in names) n: n},
-              (v) => setState(() => _s = _s.copyWith(baselineSession: v)),
+              (v) {
+                setState(() => _s = _s.copyWith(baselineSession: v));
+                _run();
+              },
               tip: 'BASELINE_SESSION (substring match on the session name)',
             ),
           ),
@@ -1166,7 +1198,9 @@ class _TopoStatsViewState extends State<TopoStatsView> {
               _running
                   ? _status
                   : (_activeFiles.isEmpty
-                        ? 'Run feature extraction first, then generate plots.'
+                        ? (_files.isEmpty
+                              ? 'Run feature extraction first, then view results.'
+                              : 'Select a recording to view its results.')
                         : 'Press "${widget.runLabel}" to compute the figure.'),
               style: const TextStyle(color: _muted, fontSize: 13),
             ),

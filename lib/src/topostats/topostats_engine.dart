@@ -405,6 +405,18 @@ String pyFloat(double v) {
 //  File discovery / naming
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Keeps the baseline attached to a selected session after selection changes.
+TopoStatsSettings settingsForSessions(
+  TopoStatsSettings settings,
+  List<String> names,
+) {
+  if (names.isEmpty ||
+      names.any((name) => name.contains(settings.baselineSession))) {
+    return settings;
+  }
+  return settings.copyWith(baselineSession: names.first);
+}
+
 String _baseName(String p) => p.split(RegExp(r'[\\/]')).last;
 
 /// Guesses rec_ID from a set of `<idx>_<recId>_<segment>.features.csv`
@@ -478,7 +490,7 @@ List<String> readCsvHeader(String path) {
       if (b != 13) bytes.add(b);
       if (bytes.length > 1 << 20) break;
     }
-    return _splitCsvLine(
+    return splitFeatureCsvLine(
       String.fromCharCodes(bytes),
     ).map((s) => s.trim()).toList();
   } finally {
@@ -486,7 +498,7 @@ List<String> readCsvHeader(String path) {
   }
 }
 
-List<String> _splitCsvLine(String line) {
+List<String> splitFeatureCsvLine(String line) {
   if (!line.contains('"')) return line.split(',');
   final out = <String>[];
   final buf = StringBuffer();
@@ -569,7 +581,7 @@ ParsedSession parseFeatureCsv(
 
   final first = nextLine();
   if (first == null) throw FormatException('Empty CSV: $path');
-  final header = _splitCsvLine(
+  final header = splitFeatureCsvLine(
     String.fromCharCodes(bytes, first.$1, first.$2),
   ).map((h) => h.trim()).toList();
   final iChan = header.indexOf('Chan');
@@ -624,7 +636,7 @@ ParsedSession parseFeatureCsv(
       }
     }
     if (hasQuote) {
-      quoted = _splitCsvLine(String.fromCharCodes(bytes, a, b));
+      quoted = splitFeatureCsvLine(String.fromCharCodes(bytes, a, b));
       nFields = quoted.length;
     } else if (nFields <= maxCol) {
       starts[nFields] = fs;
@@ -683,14 +695,14 @@ List<String> detectChannels(String path, {int maxLines = 5000}) {
     final text = String.fromCharCodes(chunk);
     final lines = text.split('\n');
     if (lines.isEmpty) return kDefault32Channels;
-    final header = _splitCsvLine(
+    final header = splitFeatureCsvLine(
       lines.first.replaceAll('\r', ''),
     ).map((h) => h.trim()).toList();
     final iChan = header.indexOf('Chan');
     if (iChan < 0) return kDefault32Channels;
     final seen = <String>[];
     for (var i = 1; i < lines.length - 1 && i < maxLines; i++) {
-      final cols = _splitCsvLine(lines[i].replaceAll('\r', ''));
+      final cols = splitFeatureCsvLine(lines[i].replaceAll('\r', ''));
       if (cols.length <= iChan) continue;
       final c = cols[iChan].trim();
       if (c.isNotEmpty && !seen.contains(c)) seen.add(c);

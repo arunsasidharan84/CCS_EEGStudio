@@ -39,7 +39,7 @@ String _dir(String p) {
 /// Splits a pooled CSV by its `filename` column into per-recording
 /// `<filename>.features.csv` files under [tmpDir]. Returns [path] unchanged
 /// when it holds a single recording.
-List<String> _splitPooled(String path, String tmpDir) {
+List<String> splitPooledFeatureCsv(String path, String tmpDir) {
   final header = readCsvHeader(path);
   final iFile = header.indexOf('filename');
   if (iFile < 0) return [path];
@@ -48,7 +48,7 @@ List<String> _splitPooled(String path, String tmpDir) {
   for (var i = 1; i < lines.length; i++) {
     final l = lines[i];
     if (l.isEmpty) continue;
-    final cols = l.split(',');
+    final cols = splitFeatureCsvLine(l);
     if (cols.length <= iFile) continue;
     var key = cols[iFile].trim();
     if (key.isEmpty || key == 'NA') key = _base(path);
@@ -56,13 +56,19 @@ List<String> _splitPooled(String path, String tmpDir) {
         .putIfAbsent(key, () => StringBuffer()..writeln(lines.first))
         .writeln(l);
   }
-  if (byFile.length <= 1) return [path];
+  if (byFile.isEmpty ||
+      (byFile.length == 1 &&
+          _base(path).toLowerCase() != 'batch_features.csv')) {
+    return [path];
+  }
   Directory(tmpDir).createSync(recursive: true);
   final out = <String>[];
   byFile.forEach((key, buf) {
     final stem = key
         .replaceAll(
-          RegExp(r'\.(features\.csv|csv|set|edf|vhdr|fif|mat|ccseeg)$'),
+          RegExp(
+            r'\.(features\.csv|ccseeg\.json|csv|set|edf|vhdr|fif|mat|ccseeg)$',
+          ),
           '',
         )
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
@@ -71,6 +77,25 @@ List<String> _splitPooled(String path, String tmpDir) {
     out.add(p);
   });
   return out;
+}
+
+/// Prefer individual session exports over the redundant combined batch export.
+List<String> preferSessionFeatureCsvs(List<String> paths) {
+  final unique = paths.toSet().toList();
+  final sessions = unique
+      .where((path) => _base(path).toLowerCase() != 'batch_features.csv')
+      .toList();
+  return sessions.isNotEmpty ? sessions : unique;
+}
+
+/// Normalizes plotting inputs, including combined-only batch exports.
+List<String> prepareSessionFeatureCsvs(List<String> paths, String scratchDir) {
+  return preferSessionFeatureCsvs(paths)
+      .where((path) => File(path).existsSync())
+      .expand((path) => splitPooledFeatureCsv(path, scratchDir))
+      .toSet()
+      .toList()
+    ..sort();
 }
 
 /// Groups session CSVs by recording ID.
@@ -107,12 +132,10 @@ Future<List<TopoBatchOutput>> generateTopoStatsFigures({
   final outDir = '$outputDir${Platform.pathSeparator}Figures_TopoStats';
   Directory(outDir).createSync(recursive: true);
 
-  final expanded = <String>[];
-  for (final p in csvPaths.where((p) => File(p).existsSync())) {
-    expanded.addAll(
-      _splitPooled(p, '$outDir${Platform.pathSeparator}_sessions'),
-    );
-  }
+  final expanded = prepareSessionFeatureCsvs(
+    csvPaths,
+    '$outDir${Platform.pathSeparator}_sessions',
+  );
   final groups = groupByRecording(expanded);
   final saved = <TopoBatchOutput>[];
   var gi = 0;
