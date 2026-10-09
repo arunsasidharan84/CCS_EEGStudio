@@ -15,7 +15,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('shows a clean launcher without a duplicate workflow sidebar', (
+  testWidgets('starts in the recording workspace with workflow sidebar', (
     tester,
   ) async {
     await pumpApp(tester);
@@ -23,9 +23,10 @@ void main() {
     expect(find.text('CCS EEG'), findsOneWidget);
     expect(find.text('Studio'), findsOneWidget);
 
-    expect(find.text('WORKFLOW MODULES'), findsNothing);
+    expect(find.text('WORKFLOW MODULES'), findsOneWidget);
+    expect(find.text('Open Recording…'), findsOneWidget);
     expect(find.text('Continuous EEG'), findsWidgets);
-    expect(find.text('Choose where to begin'), findsOneWidget);
+    expect(find.text('Choose where to begin'), findsNothing);
     expect(find.text('Batch Workspace'), findsOneWidget);
     expect(find.text('Updates'), findsOneWidget);
   });

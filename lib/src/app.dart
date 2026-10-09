@@ -382,7 +382,7 @@ class _FeatureHomeState extends State<FeatureHome>
   void initState() {
     super.initState();
     _pipeline = List.of(_presets['continuous']!.modules);
-    _selectedModule = null;
+    _selectedModule = _Module.loadRaw;
     _preLow.addListener(_syncConfigFromControllers);
     _preHigh.addListener(_syncConfigFromControllers);
     _preNotch.addListener(_syncConfigFromControllers);
@@ -542,6 +542,7 @@ class _FeatureHomeState extends State<FeatureHome>
         _openedRecordings.removeWhere((item) => item.path == rec.path);
         _openedRecordings.add(rec);
         _raw = rec;
+        _selectedModule = _Module.loadRaw;
         _preprocessed = null;
         _source = null;
         _directInput = null;
@@ -560,6 +561,7 @@ class _FeatureHomeState extends State<FeatureHome>
   void _selectOpenedRecording(EegRecording recording) {
     setState(() {
       _raw = recording;
+      _selectedModule = _Module.loadRaw;
       _preprocessed = null;
       _source = null;
       _directInput = null;
@@ -1129,7 +1131,7 @@ class _FeatureHomeState extends State<FeatureHome>
                   setState(() {
                     _presetKey = v;
                     _pipeline = List.of(_presets[v]!.modules);
-                    _selectedModule = null;
+                    _selectedModule = _Module.loadRaw;
                   });
                 },
               ),

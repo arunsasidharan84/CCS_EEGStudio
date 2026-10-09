@@ -1,0 +1,31 @@
+[package]
+name = "ccs_algorithm"
+version = "0.1.0"
+edition = "2021"
+authors = ["Arun Sasidharan <arun@neuroyukti.com>", "CCS Algorithm Team"]
+description = "Canonical Rust & Python SDK for CCS EEG, PPG/ECG HRV, Morphology, and Multi-Scale Coupled Windowing"
+publish = false
+
+[lib]
+name = "ccs_algorithm"
+# rlib for unit tests & Rust consumers; cdylib + staticlib for Dart FFI (Flutter mobile/desktop) & Python (ctypes/PyO3)
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+rayon = "1.10"
+rustfft = "6.2"
+nalgebra = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+rand = "0.8"
+flate2 = "1.0"
+
+[dev-dependencies]
+approx = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"

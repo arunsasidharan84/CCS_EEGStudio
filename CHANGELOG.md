@@ -4,6 +4,26 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.6]
+
+### Batch analysis
+
+- Fixed an IRASA crash on one-second epochs when resampling produced fewer
+  samples than the requested Welch window. Short windows now retain the FFT
+  grid through zero-padding.
+- Included the patched algorithm source so all platform builds use the fix.
+
+### Interactive workspace
+
+- Open directly into the recording workspace with workflow modules and the
+  waveform viewer visible.
+- Show the waveform automatically after loading or switching raw recordings.
+
+### Validation
+
+- Verified feature extraction on all 11 recordings from the reported batch.
+- Passed UI regression tests and spectral reference tests.
+
 ## [1.2.5]
 
 ### Release reliability
