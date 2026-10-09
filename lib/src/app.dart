@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -258,6 +259,7 @@ class _FeatureHomeState extends State<FeatureHome>
   final _bin = TextEditingController(text: '60');
   final _epoch = TextEditingController(text: '2');
   final _gedaiEpoch = TextEditingController(text: '1');
+  final _gedaiThreshold = TextEditingController(text: 'auto');
   final _exclude = TextEditingController(text: 'OBD, HRDT, ARSQ');
   final _preDownsample = TextEditingController(text: '250');
   final _preLow = TextEditingController(text: '0.5');
@@ -390,6 +392,7 @@ class _FeatureHomeState extends State<FeatureHome>
     _preDownsample.addListener(_syncConfigFromControllers);
     _epoch.addListener(_syncConfigFromControllers);
     _gedaiEpoch.addListener(_syncConfigFromControllers);
+    _gedaiThreshold.addListener(_syncConfigFromControllers);
     _start.addListener(_syncConfigFromControllers);
     _end.addListener(_syncConfigFromControllers);
     _bin.addListener(_syncConfigFromControllers);
@@ -407,6 +410,7 @@ class _FeatureHomeState extends State<FeatureHome>
   void _syncConfigFromControllers() {
     final gedaiEpoch = double.tryParse(_gedaiEpoch.text);
     _cfg
+      ..gedaiThreshold = _gedaiThreshold.text.trim().toLowerCase()
       ..lowHz = double.tryParse(_preLow.text) ?? _cfg.lowHz
       ..highHz = double.tryParse(_preHigh.text) ?? _cfg.highHz
       ..notchHz = double.tryParse(_preNotch.text) ?? _cfg.notchHz
@@ -431,7 +435,14 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   String? get _gedaiEpochError {
-    if (!_cfg.gedai || _cfg.stimEpochs) return null;
+    if (!_cfg.gedai) return null;
+    final threshold = _gedaiThreshold.text.trim().toLowerCase();
+    final numeric = double.tryParse(threshold);
+    if (!['auto', 'auto-', 'auto+'].contains(threshold) &&
+        (numeric == null || !numeric.isFinite || numeric < 0 || numeric > 12)) {
+      return 'Use auto, auto-, auto+, or a numeric threshold from 0 to 12.';
+    }
+    if (_cfg.stimEpochs) return null;
     final value = double.tryParse(_gedaiEpoch.text);
     if (value == null || !value.isFinite || value <= 0) {
       return 'GEDAI epoch size must be greater than 0 seconds.';
@@ -447,6 +458,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _bin,
       _epoch,
       _gedaiEpoch,
+      _gedaiThreshold,
       _exclude,
       _preDownsample,
       _preLow,
@@ -903,6 +915,38 @@ class _FeatureHomeState extends State<FeatureHome>
     List<String> excludedChannels = const [],
   }) async {
     try {
+      var reportPrep = _cfg.toPreprocessingOptions(
+        nonEegChannels: excludedChannels,
+      );
+      final provenance = File('${rec.path}.preprocessing.json');
+      if (provenance.existsSync()) {
+        final saved =
+            jsonDecode(await provenance.readAsString()) as Map<String, dynamic>;
+        if (saved['preprocessing'] is Map<String, dynamic>) {
+          reportPrep = PreprocessingOptions.fromJson(
+            saved['preprocessing'] as Map<String, dynamic>,
+          );
+        }
+      }
+      if (raw == null) {
+        final metadata = File('${rec.path}.preprocessing.json');
+        String? source;
+        if (metadata.existsSync()) {
+          final saved =
+              jsonDecode(await metadata.readAsString()) as Map<String, dynamic>;
+          if (saved['timeline_preserved'] == true)
+            source = saved['source_path'] as String?;
+        } else {
+          for (final path in _batchPrepFiles) {
+            if ('${_stem(path)}${_cfg.cleanSuffix}' == _stem(rec.path)) {
+              source = path;
+              break;
+            }
+          }
+        }
+        if (source != null && File(source).existsSync())
+          raw = await _loader.load(source);
+      }
       final reportPath = csvPath.replaceAll(
         RegExp(r'\.csv$', caseSensitive: false),
         '_report.pdf',
@@ -912,7 +956,7 @@ class _FeatureHomeState extends State<FeatureHome>
         csvPath: csvPath,
         recording: rec,
         raw: raw,
-        prep: _cfg.toPreprocessingOptions(nonEegChannels: excludedChannels),
+        prep: reportPrep,
         options: options,
         epochSeconds: _cfg.epochSeconds,
         excludedChannels: excludedChannels,
@@ -2359,6 +2403,17 @@ class _FeatureHomeState extends State<FeatureHome>
             (v) => _cfg.badChannels = v,
           ),
           _check('GEDAI denoising', _cfg.gedai, (v) => _cfg.gedai = v),
+          if (_cfg.gedai)
+            Padding(
+              padding: const EdgeInsets.only(left: 24, bottom: 8),
+              child: _field(
+                _gedaiThreshold,
+                'GEDAI threshold',
+                helper:
+                    'auto: balanced; auto-: conservative; auto+: stronger. '
+                    'Numeric 0-12: lower removes less. Inspect rhythm preservation, especially with sparse montages.',
+              ),
+            ),
           if (_cfg.gedai)
             Padding(
               padding: const EdgeInsets.only(left: 24, bottom: 4),

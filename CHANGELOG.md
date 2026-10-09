@@ -4,6 +4,31 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.9]
+
+### GEDAI controls
+
+- Exposed GEDAI's automatic presets and numeric threshold in preprocessing,
+  shared between interactive and batch workflows, with input validation.
+- Kept the existing automatic default; lower numeric thresholds can be used
+  to review more conservative cleaning without changing all users' settings.
+
+### Feature reports
+
+- Added separate raw and cleaned waveform panels with the same time interval
+  and amplitude scale, divided into readable channel groups.
+- Reduced plot density and simplified the report summary.
+- Report the actual saved epoch duration rather than the extraction UI value.
+- Persist raw-source and preprocessing provenance so batch reports can recover
+  the raw recording and describe the settings actually used.
+- Avoid raw comparisons when stimulus epochs or differing durations make the
+  timelines incompatible.
+
+### Validation
+
+- Verified the revised report visually on the supplied recording and passed
+  threshold configuration and UI regression tests.
+
 ## [1.2.8]
 
 ### Batch results and plotting

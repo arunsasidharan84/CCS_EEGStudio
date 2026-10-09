@@ -137,6 +137,26 @@ class PreprocessingOptions {
     this.stimEpochs,
   });
 
+  factory PreprocessingOptions.fromJson(Map<String, dynamic> json) =>
+      PreprocessingOptions(
+        downsample: json['downsample'] as bool? ?? true,
+        downsampleFreq: (json['downsample_freq'] as num?)?.toDouble() ?? 250,
+        filter: json['filter'] as bool? ?? true,
+        lowHz: (json['low_hz'] as num?)?.toDouble() ?? 0.5,
+        highHz: (json['high_hz'] as num?)?.toDouble() ?? 40,
+        notchHz: (json['notch_hz'] as num?)?.toDouble() ?? 50,
+        badchannel: json['badchannel'] as bool? ?? true,
+        gedai: json['gedai'] as bool? ?? true,
+        interpolate: json['interpolate'] as bool? ?? true,
+        gedaiEpochSeconds:
+            (json['gedai_epoch_seconds'] as num?)?.toDouble() ?? 1,
+        gedaiThreshold: json['gedai_threshold'] as String? ?? 'auto',
+        sourceLocalization: json['source_localization'] as bool? ?? false,
+        epochBeforeGedai: json['epoch_before_gedai'] as bool? ?? false,
+        nonEegChannels:
+            (json['non_eeg_channels'] as List?)?.cast<String>() ?? const [],
+      );
+
   /// Stimulus-locked epoching (ERP): cut epochs around these markers after
   /// filtering and before bad-channel detection / GEDAI / interpolation.
   final StimEpochSpec? stimEpochs;
@@ -278,6 +298,7 @@ class AnalysisConfig {
   bool interpolate = true;
   bool epochBeforeGedai = true;
   double gedaiEpochSeconds = 1;
+  String gedaiThreshold = 'auto';
 
   // ── Stimulus-locked epochs (ERP) ────────────────────────────────────────
   bool stimEpochs = false;
@@ -387,7 +408,7 @@ class AnalysisConfig {
         gedai: false,
         interpolate: false,
         gedaiEpochSeconds: gedaiEpochSeconds,
-        gedaiThreshold: 'auto',
+        gedaiThreshold: gedaiThreshold,
         sourceLocalization: true,
         epochBeforeGedai: false,
         nonEegChannels: nonEegChannels,
@@ -404,7 +425,7 @@ class AnalysisConfig {
       gedai: gedai,
       interpolate: interpolate,
       gedaiEpochSeconds: gedaiEpochSeconds,
-      gedaiThreshold: 'auto',
+      gedaiThreshold: gedaiThreshold,
       sourceLocalization: false,
       epochBeforeGedai: epochBeforeGedai,
       nonEegChannels: nonEegChannels,

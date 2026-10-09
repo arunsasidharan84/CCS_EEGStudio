@@ -179,21 +179,54 @@ Future<Uint8List> _render(
   return bd!.buffer.asUint8List();
 }
 
+/// Robust raw-derived scale shared by both signal panels.
+double signalComparisonSpan(
+  EegRecording reference,
+  List<String> channels,
+  double startSeconds,
+) {
+  final spans = <double>[];
+  for (final label in channels) {
+    final index = reference.labels.indexOf(label);
+    if (index < 0) continue;
+    final values = reference.preview[index];
+    final start = (startSeconds * reference.sampleRate).round().clamp(
+      0,
+      values.length,
+    );
+    final end = math.min(
+      values.length,
+      start + (10 * reference.sampleRate).round(),
+    );
+    if (end <= start) continue;
+    final segment = values.sublist(start, end).map((v) => v.toDouble()).toList()
+      ..sort();
+    spans.add(_quantile(segment, 0.95) - _quantile(segment, 0.05));
+  }
+  spans.sort();
+  return math.max(
+    _quantile(spans, 0.5).isFinite ? _quantile(spans, 0.5) : 1.0,
+    1e-9,
+  );
+}
+
 /// 10-s multichannel snapshot, one labelled row per channel.
 Future<Uint8List?> _signalImage(
   EegRecording clean,
   EegRecording? raw,
   List<String> channels,
   double wIn,
-  double hIn,
-) async {
+  double hIn, {
+  double? sharedSpan,
+  double startSeconds = 30,
+}) async {
   if (clean.preview.isEmpty || clean.sampleRate <= 0) return null;
   final fs = clean.sampleRate;
   final n = clean.preview.first.length;
   if (n < fs) return null;
   const segSec = 10.0;
   final segN = math.min(n, (segSec * fs).round());
-  final start = ((n - segN) / 2).floor();
+  final start = (startSeconds * fs).round().clamp(0, n - segN);
   final idx = <int>[];
   for (final ch in channels) {
     final i = clean.labels.indexOf(ch);
@@ -216,7 +249,7 @@ Future<Uint8List?> _signalImage(
     spans.add(_quantile(seg, 0.95) - _quantile(seg, 0.05));
   }
   spans.sort();
-  final span = math.max(_quantile(spans, 0.5), 1e-9);
+  final span = math.max(sharedSpan ?? _quantile(spans, 0.5), 1e-9);
   // Scale bar: a round number close to span/2.
   final bar = _niceNumber(span / 2);
   final rawIdx = <int, int>{};
@@ -278,6 +311,10 @@ Future<Uint8List?> _signalImage(
     for (var r = 0; r < idx.length; r++) {
       final i = idx[r];
       final cy = top + (r + 0.5) * rowH;
+      c.save();
+      c.clipRect(
+        Rect.fromLTRB(left, top + r * rowH, right, top + (r + 1) * rowH),
+      );
       void trace(Float32List d, int from, double rate, Paint p) {
         final path = Path();
         final segLen = (segSec * rate).round();
@@ -324,6 +361,7 @@ Future<Uint8List?> _signalImage(
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.55 * pt,
       );
+      c.restore();
     }
     c.restore();
     // scale bar
@@ -369,7 +407,7 @@ Future<Uint8List?> _topoImage(
   if (keep.length < 4 || feats.isEmpty) return null;
   final chs = [for (final c in keep) channels[c]];
   final interp = TopoInterpolator.forChannels(chs);
-  const cols = 4;
+  const cols = 3;
   final rows = (feats.length / cols).ceil();
   final cellW = wIn / cols;
   final cellH = cellW * 0.98;
@@ -443,10 +481,10 @@ Future<Uint8List?> _topoImage(
 /// Small multiples: mean across channels over time with IQR band.
 Future<Uint8List?> _timeImage(List<_FeatureSummary> feats, double wIn) async {
   if (feats.isEmpty) return null;
-  const cols = 3;
+  const cols = 2;
   final rows = (feats.length / cols).ceil();
   final cellW = wIn / cols;
-  const cellH = 1.3;
+  const cellH = 1.6;
   return _render(wIn, rows * cellH, 200, (c, ppi) {
     final pt = ppi / 72;
     for (var k = 0; k < feats.length; k++) {
@@ -648,6 +686,13 @@ Future<void> writeFeatureReport({
   double epochSeconds = 2.0,
   List<String> excludedChannels = const [],
 }) async {
+  // The engine respects saved epoch boundaries even when the extraction UI
+  // requests a different duration. Report the duration actually used.
+  if (recording.isEpoched) epochSeconds = recording.epochDurationSeconds;
+  if (raw != null &&
+      (recording.epochTmin != null ||
+          (raw.durationSeconds - recording.durationSeconds).abs() > 2))
+    raw = null;
   final channels = detectChannels(csvPath);
   final allCols = numericFeatureColumns(
     csvPath,
@@ -679,29 +724,54 @@ Future<void> writeFeatureReport({
 
   const pageW = 595.28 - 72; // A4 minus margins (pt)
   final topos = <Uint8List>[];
-  for (var i = 0; i < key.length; i += 20) {
+  for (var i = 0; i < key.length; i += 9) {
     final img = await _topoImage(
-      key.sublist(i, math.min(i + 20, key.length)),
+      key.sublist(i, math.min(i + 9, key.length)),
       channels,
       pageW / 72,
     );
     if (img != null) topos.add(img);
   }
   final times = <Uint8List>[];
-  for (var i = 0; i < key.length; i += 21) {
+  for (var i = 0; i < key.length; i += 8) {
     final img = await _timeImage(
-      key.sublist(i, math.min(i + 21, key.length)),
+      key.sublist(i, math.min(i + 8, key.length)),
       pageW / 72,
     );
     if (img != null) times.add(img);
   }
-  final signal = await _signalImage(
-    recording,
-    raw,
-    channels,
-    (842 - 72) / 72,
-    (595.28 - 110) / 72,
+  final signalPages = <(Uint8List?, Uint8List?, List<String>)>[];
+  const signalWidth = (842 - 84) / 72;
+  final compare = raw != null;
+  final snapshotStart = math.max(
+    0.0,
+    math.min(30.0, recording.durationSeconds - 10),
   );
+  for (var i = 0; i < channels.length; i += 7) {
+    final group = channels.sublist(i, math.min(i + 7, channels.length));
+    final span = signalComparisonSpan(raw ?? recording, group, snapshotStart);
+    final cleanImage = await _signalImage(
+      recording,
+      null,
+      group,
+      compare ? signalWidth / 2 : signalWidth,
+      (595.28 - 140) / 72,
+      sharedSpan: span,
+      startSeconds: snapshotStart,
+    );
+    final rawImage = raw == null
+        ? null
+        : await _signalImage(
+            raw,
+            null,
+            group,
+            signalWidth / 2,
+            (595.28 - 140) / 72,
+            sharedSpan: span,
+            startSeconds: snapshotStart,
+          );
+    signalPages.add((rawImage, cleanImage, group));
+  }
 
   final theme = await _theme();
   final doc = pw.Document(
@@ -788,7 +858,7 @@ Future<void> writeFeatureReport({
         p.sourceLocalization ? 'eLORETA' : '',
       ),
     ],
-    ('Average reference', options?.removeNonEeg ?? true, 'EEG channels only'),
+    ('Feature extraction reference', options?.removeNonEeg ?? true, 'common average, EEG channels only'),
   ];
 
   doc.addPage(
@@ -919,8 +989,7 @@ Future<void> writeFeatureReport({
             if (byFamily[fam] != null)
               (
                 _familyTitles[fam]!,
-                '${byFamily[fam]!.length}: '
-                    '${byFamily[fam]!.map((s) => _prettyFeature(s.name)).join(', ')}',
+                '${byFamily[fam]!.length} features - detailed statistics follow',
               ),
         ]),
         pw.SizedBox(height: 16),
@@ -930,7 +999,8 @@ Future<void> writeFeatureReport({
     ),
   );
 
-  if (signal != null) {
+  for (final (rawImage, cleanImage, group) in signalPages) {
+    if (cleanImage == null) continue;
     doc.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4.landscape.copyWith(
@@ -943,22 +1013,68 @@ Future<void> writeFeatureReport({
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             header(ctx),
-            pw.Text(
-              'Signal snapshot',
-              style: pw.TextStyle(
-                fontSize: 14,
-                color: _ink,
-                fontWeight: pw.FontWeight.bold,
-              ),
+            _h1(
+              rawImage == null
+                  ? 'Signal snapshot'
+                  : 'Raw and cleaned signal comparison',
             ),
             _note(
-              raw != null
-                  ? '10 s from the middle of the recording. Blue: cleaned signal; grey: raw input (same scale).'
-                  : '10 s from the middle of the recording (cleaned signal). All channels share the red scale bar.',
+              '${snapshotStart.toStringAsFixed(0)}-${(snapshotStart + 10).toStringAsFixed(0)} s '
+              '| ${group.join(', ')} | Shared amplitude scale; traces are centred and clipped within each row.',
             ),
-            pw.SizedBox(height: 6),
+            if (rawImage != null)
+              _note(
+                'Raw input includes artifacts and may use a different reference. '
+                'This is a visual comparison of the full pipeline, not GEDAI alone.',
+              ),
+            pw.SizedBox(height: 8),
+            pw.Row(
+              children: [
+                if (rawImage != null) ...[
+                  pw.Expanded(
+                    child: pw.Text(
+                      'RAW INPUT',
+                      style: pw.TextStyle(
+                        fontSize: 10,
+                        color: _muted,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  pw.SizedBox(width: 12),
+                ],
+                pw.Expanded(
+                  child: pw.Text(
+                    'CLEANED OUTPUT',
+                    style: pw.TextStyle(
+                      fontSize: 10,
+                      color: _accent,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             pw.Expanded(
-              child: pw.Image(pw.MemoryImage(signal), fit: pw.BoxFit.contain),
+              child: pw.Row(
+                children: [
+                  if (rawImage != null) ...[
+                    pw.Expanded(
+                      child: pw.Image(
+                        pw.MemoryImage(rawImage),
+                        fit: pw.BoxFit.contain,
+                      ),
+                    ),
+                    pw.SizedBox(width: 12),
+                  ],
+                  pw.Expanded(
+                    child: pw.Image(
+                      pw.MemoryImage(cleanImage),
+                      fit: pw.BoxFit.contain,
+                    ),
+                  ),
+                ],
+              ),
             ),
             footer(ctx),
           ],

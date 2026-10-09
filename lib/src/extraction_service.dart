@@ -380,6 +380,17 @@ class ExtractionService {
           'Preprocessed ${summary['channels']} channels. Bad channels: ${bad.isEmpty ? 'none' : bad}',
         );
       }
+      await File('$outputPath.preprocessing.json').writeAsString(
+        jsonEncode({
+          'source_path': recording.path,
+          'preprocessing': options.toJson(),
+          'summary': stdout.trim().isEmpty ? null : jsonDecode(stdout),
+          'timeline_preserved':
+              stim == null &&
+              selection.acceptedIntervals.isEmpty &&
+              selection.rejectedIntervals.isEmpty,
+        }),
+      );
       return await RecordingLoader().load(outputPath);
     } finally {
       await temp.delete(recursive: true);
