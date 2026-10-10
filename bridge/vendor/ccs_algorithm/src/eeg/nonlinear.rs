@@ -73,9 +73,10 @@ pub fn svd_entropy(signal: &[f64]) -> f64 {
         / 3_f64.log2()
 }
 
-pub fn sample_entropy(signal: &[f64]) -> f64 {
+pub fn sample_entropy(signal: &[f64]) -> f64 {sample_entropy_with_tolerance(signal,0.2)}
+pub fn sample_entropy_with_tolerance(signal:&[f64],multiplier:f64)->f64 {
     let order = 2;
-    let tolerance = 0.2 * population_std(signal);
+    let tolerance = multiplier * population_std(signal);
     let size = signal.len();
     let mut numerator = 0_u64;
     let mut denominator = 0_u64;
@@ -138,11 +139,13 @@ pub fn katz_fd(signal: &[f64]) -> f64 {
     (length / average).log10() / (diameter / average).log10()
 }
 
-pub fn higuchi_fd(signal: &[f64]) -> f64 {
+pub fn higuchi_fd(signal:&[f64])->f64 {higuchi_fd_kmax(signal,10)}
+pub fn higuchi_fd_kmax(signal: &[f64], kmax:usize) -> f64 {
     let n = signal.len();
+    if n<4 {return f64::NAN;}
     let mut x = Vec::with_capacity(10);
     let mut y = Vec::with_capacity(10);
-    for k in 1..=10 {
+    for k in 1..=kmax.min(n/2) {
         let mut lengths = Vec::with_capacity(k);
         for m in 0..k {
             let n_max = (n - m - 1) / k;
@@ -260,15 +263,16 @@ pub fn lziv_complexity(signal: &[f64]) -> f64 {
     normalized_lz(&sequence)
 }
 
-pub fn all(signal: &[f64]) -> BTreeMap<&'static str, f64> {
+pub fn all(signal:&[f64])->BTreeMap<&'static str,f64> {all_configured(signal,0.2,10)}
+pub fn all_configured(signal: &[f64], tolerance:f64,kmax:usize) -> BTreeMap<&'static str, f64> {
     BTreeMap::from([
         ("perm_entropy_nonlinear", permutation_entropy(signal)),
         ("svd_entropy_nonlinear", svd_entropy(signal)),
-        ("sample_entropy_nonlinear", sample_entropy(signal)),
+        ("sample_entropy_nonlinear", sample_entropy_with_tolerance(signal,tolerance)),
         ("dfa_nonlinear", detrended_fluctuation(signal)),
         ("petrosian_nonlinear", petrosian_fd(signal)),
         ("katz_nonlinear", katz_fd(signal)),
-        ("higuchi_nonlinear", higuchi_fd(signal)),
+        ("higuchi_nonlinear", higuchi_fd_kmax(signal,kmax)),
         ("lziv_nonlinear", lziv_complexity(signal)),
     ])
 }

@@ -1,6 +1,7 @@
 use nalgebra::DMatrix;
 
-fn calc_g(x: f64) -> f64 {
+fn calc_g(x:f64)->f64 {calc_g_order(x,4)}
+fn calc_g_order(x: f64, stiffness:i32) -> f64 {
     let mut g = 0.0;
     let mut p_n_minus_1 = x; // P_1
     let mut p_n_minus_2 = 1.0; // P_0
@@ -13,7 +14,7 @@ fn calc_g(x: f64) -> f64 {
             ((2.0 * n_f64 - 1.0) * x * p_n_minus_1 - (n_f64 - 1.0) * p_n_minus_2) / n_f64
         };
 
-        let term = (2.0 * n_f64 + 1.0) / (n_f64.powi(4) * (n_f64 + 1.0).powi(4));
+        let term = (2.0 * n_f64 + 1.0) / (n_f64.powi(stiffness) * (n_f64 + 1.0).powi(stiffness));
         g += term * p_n;
 
         if n > 1 {
@@ -24,7 +25,8 @@ fn calc_g(x: f64) -> f64 {
     g / (4.0 * std::f64::consts::PI)
 }
 
-pub fn make_interpolation_matrix(pos_from: &DMatrix<f64>, pos_to: &DMatrix<f64>) -> DMatrix<f64> {
+pub fn make_interpolation_matrix(pos_from:&DMatrix<f64>,pos_to:&DMatrix<f64>)->DMatrix<f64> {make_interpolation_matrix_configured(pos_from,pos_to,4,1e-5)}
+pub fn make_interpolation_matrix_configured(pos_from: &DMatrix<f64>, pos_to: &DMatrix<f64>,stiffness:i32,regularization:f64) -> DMatrix<f64> {
     let n = pos_from.nrows();
     let m = pos_to.nrows();
 
@@ -42,12 +44,12 @@ pub fn make_interpolation_matrix(pos_from: &DMatrix<f64>, pos_to: &DMatrix<f64>)
     let cos_dist = &norm_from * &norm_from.transpose();
     let cos_dist_to = &norm_from * &norm_to.transpose();
 
-    let mut c = DMatrix::from_fn(n, n, |r, c_idx| calc_g(cos_dist[(r, c_idx)]));
-    let c_to = DMatrix::from_fn(n, m, |r, c_idx| calc_g(cos_dist_to[(r, c_idx)]));
+    let mut c = DMatrix::from_fn(n, n, |r, c_idx| calc_g_order(cos_dist[(r, c_idx)],stiffness));
+    let c_to = DMatrix::from_fn(n, m, |r, c_idx| calc_g_order(cos_dist_to[(r, c_idx)],stiffness));
 
     // Add lambda
     for i in 0..n {
-        c[(i, i)] += 1e-5;
+        c[(i, i)] += regularization;
     }
 
     // Solve system

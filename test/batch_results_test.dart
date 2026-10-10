@@ -82,6 +82,27 @@ void main() {
     expect(settingsForSessions(repaired, []).baselineSession, names.last);
   });
 
+  test('plot order and colors are display-only changes', () {
+    final names = sessions
+        .map((p) => cleanSegmentName(p.split('/').last, inferRecId(sessions)))
+        .toList();
+    final settings = TopoStatsSettings(
+      recId: inferRecId(sessions),
+      baselineSession: names.first,
+      channels: const ['F3', 'Fz', 'F4'],
+      nPermutations: 2,
+    );
+    final result = computeTopoStats(files: sessions, settings: settings);
+    final reordered = result.withSessionOrder(sessions.reversed.toList());
+    expect(reordered.baselineName, result.baselineName);
+    expect(identical(reordered.sessions.last, result.sessions.first), isTrue);
+    final colored = reordered.withDisplay(
+      settings.copyWith(sessionColors: {sessions.first: 0xFF009E73}),
+    );
+    expect(colored.settings.sessionColors[sessions.first], 0xFF009E73);
+    expect(identical(colored.sessions.last, result.sessions.first), isTrue);
+  });
+
   testWidgets(
     'viewer excludes pooled export and repairs baseline on deselection',
     (tester) async {

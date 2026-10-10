@@ -693,6 +693,7 @@ Future<void> writeFeatureReport({
       (recording.epochTmin != null ||
           (raw.durationSeconds - recording.durationSeconds).abs() > 2))
     raw = null;
+  if (raw != null && !recording.labels.any(raw.labels.contains)) raw = null;
   final channels = detectChannels(csvPath);
   final allCols = numericFeatureColumns(
     csvPath,
@@ -707,6 +708,11 @@ Future<void> writeFeatureReport({
     if (ep == null || m == null || ep.isEmpty) continue;
     nEpochs = math.max(nEpochs, ep.length);
     summaries[f] = _summarise(f, ep, m, nCh, epochSeconds, 25);
+    if (parsed.epochEndSeconds.isNotEmpty)
+      summaries[f]!.tMin = Float64List.fromList([
+        for (final epoch in ep)
+          (parsed.epochEndSeconds[epoch] ?? epoch * epochSeconds) / 60.0,
+      ]);
   }
   final byFamily = <String, List<_FeatureSummary>>{};
   for (final s in summaries.values) {
@@ -819,7 +825,8 @@ Future<void> writeFeatureReport({
 
   final eegCh = nCh;
   final dur = recording.sampleRate > 0
-      ? recording.sampleCount / recording.sampleRate
+      ? recording.sourceDurationSeconds ??
+            recording.sampleCount / recording.sampleRate
       : 0.0;
   final p = prep;
   final pipeline = <(String, bool, String)>[
@@ -858,7 +865,11 @@ Future<void> writeFeatureReport({
         p.sourceLocalization ? 'eLORETA' : '',
       ),
     ],
-    ('Feature extraction reference', options?.removeNonEeg ?? true, 'common average, EEG channels only'),
+    (
+      'Feature extraction reference',
+      options?.removeNonEeg ?? true,
+      'common average, EEG channels only',
+    ),
   ];
 
   doc.addPage(

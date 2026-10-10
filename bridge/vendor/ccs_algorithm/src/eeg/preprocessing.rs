@@ -21,6 +21,12 @@ pub struct PreprocessOptions {
     pub notch_hz: f64,
     #[serde(default = "default_true")]
     pub badchannel: bool,
+    #[serde(default="default_bad_variance_ratio")]
+    pub bad_variance_ratio:f64,
+    #[serde(default="default_spline_stiffness")]
+    pub spline_stiffness:i32,
+    #[serde(default="default_spline_regularization")]
+    pub spline_regularization:f64,
     #[serde(default = "default_true")]
     pub gedai: bool,
     #[serde(default = "default_true")]
@@ -31,6 +37,24 @@ pub struct PreprocessOptions {
     pub gedai_threshold: String,
     #[serde(default)]
     pub source_localization: bool,
+    #[serde(default)]
+    pub reference_mode: String,
+    #[serde(default)]
+    pub reference_channels: Vec<String>,
+    #[serde(default)]
+    pub fir_taps: usize,
+    #[serde(default="default_filter_type")]
+    pub filter_type: String,
+    #[serde(default="default_iir_order")]
+    pub iir_order: usize,
+    #[serde(default = "default_notch_width")]
+    pub notch_width_hz: f64,
+    #[serde(default = "default_notch_transition")]
+    pub notch_transition_hz: f64,
+    #[serde(default = "default_source_snr")]
+    pub source_snr: f64,
+    #[serde(default)]
+    pub source_regions: Vec<String>,
     #[serde(default)]
     pub epoch_before_gedai: bool,
     #[serde(default)]
@@ -179,6 +203,11 @@ pub fn run(
     output: &str,
     options: &PreprocessOptions,
 ) -> Result<PreprocessSummary, String> {
+    if !["fir","iir"].contains(&options.filter_type.as_str()) { return Err("Filter type must be fir or iir".into()); }
+    if options.iir_order < 2 || options.iir_order > 12 || options.iir_order % 2 != 0 { return Err("IIR order must be even, from 2 to 12".into()); }
+    if !options.source_snr.is_finite() || options.source_snr<=0.0 { return Err("Source SNR must be positive".into()); }
+    if !options.notch_width_hz.is_finite() || options.notch_width_hz<=0.0 || !options.notch_transition_hz.is_finite() || options.notch_transition_hz<=0.0 { return Err("Notch widths must be positive".into()); }
+    if !options.bad_variance_ratio.is_finite() || options.bad_variance_ratio<2.0 || options.spline_stiffness<2 || options.spline_stiffness>8 || !options.spline_regularization.is_finite() || options.spline_regularization<=0.0 {return Err("Invalid bad-channel or interpolation parameters".into());}
     let mut warnings = Vec::new();
     normalize_channel_set(rec, &options.non_eeg_channels);
 
@@ -190,7 +219,7 @@ pub fn run(
         .map(|ch| ch.iter().map(|v| *v as f64).collect())
         .collect();
 
-    if (options.downsample_freq - rec.rate).abs() > 0.5 && options.downsample_freq > 0.0 {
+    if options.downsample && (options.downsample_freq - rec.rate).abs() > 0.5 && options.downsample_freq > 0.0 {
         eprintln!(
             "PROGRESS 30 Downsampling from {} Hz to {} Hz...",
             rec.rate, options.downsample_freq
@@ -221,7 +250,7 @@ pub fn run(
         rec.rate = options.downsample_freq;
     }
     if options.filter {
-        eprintln!("PROGRESS 40 Applying FIR bandpass/notch filters...");
+        eprintln!("PROGRESS 40 Applying {} bandpass / FIR notch filters...",options.filter_type);
         let rate = rec.rate;
         let low = options.low_hz;
         let high = options.high_hz;
@@ -231,17 +260,17 @@ pub fn run(
             if let Some(pts) = pts_per_epoch {
                 if pts > 0 && ch.len() >= pts {
                     for chunk in ch.chunks_mut(pts) {
-                        fir_bandpass(chunk, rate, low, high);
+                        apply_bandpass(chunk, rate, low, high, options);
                         if notch > 0.0 {
-                            fir_notch(chunk, rate, notch);
+                            fir_notch_custom(chunk, rate, notch, options.notch_width_hz, options.notch_transition_hz);
                         }
                     }
                     return;
                 }
             }
-            fir_bandpass(ch, rate, low, high);
+            apply_bandpass(ch, rate, low, high, options);
             if notch > 0.0 {
-                fir_notch(ch, rate, notch);
+                fir_notch_custom(ch, rate, notch, options.notch_width_hz, options.notch_transition_hz);
             }
         });
     }
@@ -278,7 +307,7 @@ pub fn run(
     }
 
     let bad_channels = if options.badchannel {
-        detect_bad_channels(rec)
+        detect_bad_channels_configured(rec,options.bad_variance_ratio)
     } else {
         Vec::new()
     };
@@ -356,16 +385,23 @@ pub fn run(
         }
     }
     if options.interpolate && !bad_channels.is_empty() {
-        interpolate_bad_channels(&mut f64_channels, &rec.labels, &bad_channels);
+        interpolate_bad_channels(&mut f64_channels, &rec.labels, &bad_channels,options.spline_stiffness,options.spline_regularization);
     }
 
+    apply_output_reference(&mut f64_channels, &rec.labels, &options.reference_mode, &options.reference_channels)?;
     let mut source_localized = false;
     if options.source_localization {
         eprintln!("PROGRESS 85 Converting to source space (68 FreeSurfer ROIs via eLORETA)...");
-        match crate::eeg::source_loc::convert_to_source_space(&f64_channels, &rec.labels, 3.0) {
+        match crate::eeg::source_loc::convert_to_source_space(&f64_channels, &rec.labels, options.source_snr) {
             Ok((roi_data, roi_labels)) => {
-                f64_channels = roi_data;
-                rec.labels = roi_labels;
+                if options.source_regions.is_empty() {
+                    f64_channels = roi_data;
+                    rec.labels = roi_labels;
+                } else {
+                    let indices: Vec<usize> = options.source_regions.iter().map(|name| roi_labels.iter().position(|label| label.eq_ignore_ascii_case(name)).ok_or_else(|| format!("Unknown source region: {name}"))).collect::<Result<_,_>>()?;
+                    f64_channels = indices.iter().map(|i| roi_data[*i].clone()).collect();
+                    rec.labels = indices.iter().map(|i| roi_labels[*i].clone()).collect();
+                }
                 source_localized = true;
             }
             Err(e) => warnings.push(format!("Source localization failed: {e}")),
@@ -481,7 +517,40 @@ fn resample_polyphase(rec: &mut Recording, target: f64) -> Result<(), String> {
     Ok(())
 }
 
+fn apply_bandpass(x:&mut [f64],rate:f64,low:f64,high:f64,options:&PreprocessOptions) {
+    if options.filter_type=="fir" { fir_bandpass_custom(x,rate,low,high,options.fir_taps); return; }
+    for highpass in [true,false] {
+      let cutoff=if highpass {low}else{high};
+      if cutoff<=0.0 || cutoff>=rate/2.0 {continue;}
+      for section in 0..options.iir_order/2 {
+        let q=1.0/(2.0*((2*section+1) as f64*PI/(2*options.iir_order) as f64).cos());
+        let omega=2.0*PI*cutoff/rate; let cosine=omega.cos(); let alpha=omega.sin()/(2.0*q); let a0=1.0+alpha;
+        let b0=if highpass {(1.0+cosine)/2.0}else{(1.0-cosine)/2.0};
+        let b1=if highpass {-(1.0+cosine)}else{1.0-cosine};
+        biquad_zero_phase(x,[b0/a0,b1/a0,b0/a0],[-2.0*cosine/a0,(1.0-alpha)/a0]);
+      }
+    }
+}
+fn biquad_zero_phase(x:&mut [f64],b:[f64;3],a:[f64;2]) {
+    if x.len()<3 {return;}
+    let pad=12.min(x.len()-1);
+    let mut values=Vec::with_capacity(x.len()+2*pad);
+    for i in (1..=pad).rev(){values.push(2.0*x[0]-x[i]);}
+    values.extend_from_slice(x);
+    for i in 1..=pad {values.push(2.0*x[x.len()-1]-x[x.len()-1-i]);}
+    for _ in 0..2 {
+      let initial=values[0]; let gain=(b[0]+b[1]+b[2])/(1.0+a[0]+a[1]);
+      let mut z1=(gain-b[0])*initial; let mut z2=(b[2]-a[1]*gain)*initial;
+      for v in &mut values {let input=*v; let output=b[0]*input+z1; z1=b[1]*input-a[0]*output+z2; z2=b[2]*input-a[1]*output; *v=output;}
+      values.reverse();
+    }
+    x.copy_from_slice(&values[pad..pad+x.len()]);
+}
+
 fn fir_bandpass(x: &mut [f64], rate: f64, low: f64, high: f64) {
+    fir_bandpass_custom(x,rate,low,high,0)
+}
+fn fir_bandpass_custom(x: &mut [f64], rate: f64, low: f64, high: f64, taps: usize) {
     if x.is_empty() {
         return;
     }
@@ -503,7 +572,7 @@ fn fir_bandpass(x: &mut [f64], rate: f64, low: f64, high: f64) {
         h_trans
     };
     trans = trans.max(2.0);
-    let len = mne_filter_len(rate, trans);
+    let len = if taps == 0 { mne_filter_len(rate, trans) } else { taps.max(3) | 1 };
 
     let kernel = match (low > 0.0, high > 0.0 && high < rate / 2.0) {
         (true, true) => fir_bandpass_kernel(rate, low_cutoff, high_cutoff, len),
@@ -515,11 +584,14 @@ fn fir_bandpass(x: &mut [f64], rate: f64, low: f64, high: f64) {
 }
 
 fn fir_notch(x: &mut [f64], rate: f64, freq: f64) {
+    fir_notch_custom(x,rate,freq,1.0,2.0)
+}
+fn fir_notch_custom(x: &mut [f64], rate: f64, freq: f64, width: f64, trans: f64) {
     if x.is_empty() || freq <= 0.0 || freq >= rate / 2.0 {
         return;
     }
-    let width = 1.0;
-    let trans = 2.0;
+    let width = width.max(0.1);
+    let trans = trans.max(0.1);
 
     // For bandstop, MNE sets transition band 0.5 Hz by default
     let low_cutoff = (freq - width / 2.0) - trans / 2.0;
@@ -625,13 +697,15 @@ fn reflect_index(index: isize, len: usize) -> usize {
     }
 }
 
-fn detect_bad_channels(rec: &Recording) -> Vec<String> {
+#[cfg(test)]
+fn detect_bad_channels(rec:&Recording)->Vec<String>{detect_bad_channels_configured(rec,25.0)}
+fn detect_bad_channels_configured(rec: &Recording, variance_ratio:f64) -> Vec<String> {
     let mut bad_chs: Vec<String> = Vec::new();
 
     let vars: Vec<f64> = rec.channels.iter().map(|ch| variance_f32(ch)).collect();
     let med = median(vars.clone());
     for (i, var) in vars.iter().enumerate() {
-        if *var < 1e-18 || *var > med * 25.0 {
+        if *var < 1e-18 || *var > med * variance_ratio {
             let label = rec.labels[i].clone();
             if !bad_chs.contains(&label) {
                 bad_chs.push(label);
@@ -663,7 +737,7 @@ fn pearson_f32_f64(left: &[f32], right: &[f64]) -> f64 {
     numerator / (left_var * right_var).sqrt().max(f64::MIN_POSITIVE)
 }
 
-fn interpolate_bad_channels(channels: &mut [Vec<f64>], labels: &[String], bad: &[String]) {
+fn interpolate_bad_channels(channels: &mut [Vec<f64>], labels: &[String], bad: &[String],stiffness:i32,regularization:f64) {
     let bad_idx: Vec<usize> = labels
         .iter()
         .enumerate()
@@ -717,7 +791,7 @@ fn interpolate_bad_channels(channels: &mut [Vec<f64>], labels: &[String], bad: &
     let pos_bad = DMatrix::from_fn(actual_bad_idx.len(), 3, |r, c| bad_coords[r][c]);
 
     // Compute spherical spline interpolation matrix
-    let w = crate::eeg::ransac::make_interpolation_matrix(&pos_good, &pos_bad);
+    let w = crate::eeg::ransac::make_interpolation_matrix_configured(&pos_good, &pos_bad,stiffness,regularization);
 
     let len = channels[0].len();
     for (b_local, &b_global) in actual_bad_idx.iter().enumerate() {
@@ -928,10 +1002,11 @@ fn clean_eeg(
         .map(|v| v.abs().ln() + 100.0)
         .collect();
     log_vals.sort_by(|a, b| a.total_cmp(b));
-    let idx = ((log_vals.len() as f64) * 0.95).floor() as usize;
-    let t1 = (105.0 - threshold) / 100.0;
-    let threshold_val = t1 * log_vals[idx.min(log_vals.len() - 1)];
-    let threshold_exp = (threshold_val - 100.0).exp();
+    let threshold_exp = if log_vals.is_empty() {f64::INFINITY} else {
+        let idx = ((log_vals.len() as f64) * 0.95).floor() as usize;
+        let t1 = (105.0-threshold)/100.0;
+        (t1*log_vals[idx.min(log_vals.len()-1)]-100.0).exp()
+    };
     let weights = cosine_weights(epoch_len);
     let mut clean = vec![vec![0.0; epochs.len() * epoch_len]; n];
     let mut artifacts = vec![vec![0.0; epochs.len() * epoch_len]; n];
@@ -1280,6 +1355,30 @@ fn median(mut x: Vec<f64>) -> f64 {
 
 fn mean(x: &[f64]) -> f64 {
     x.iter().sum::<f64>() / x.len().max(1) as f64
+}
+
+fn default_bad_variance_ratio()->f64 {25.0}
+fn default_spline_stiffness()->i32 {4}
+fn default_spline_regularization()->f64 {1e-5}
+fn default_filter_type()->String {"fir".into()}
+fn default_iir_order()->usize {4}
+fn default_notch_width() -> f64 { 1.0 }
+fn default_notch_transition() -> f64 { 2.0 }
+fn default_source_snr() -> f64 { 3.0 }
+
+pub fn apply_output_reference(data: &mut [Vec<f64>], labels: &[String], mode: &str, channels: &[String]) -> Result<(),String> {
+    if mode.is_empty() || mode == "none" { return Ok(()); }
+    let indices: Vec<usize> = match mode {
+      "average" => (0..data.len()).collect(),
+      "channels" => channels.iter().map(|name| labels.iter().position(|label| label.eq_ignore_ascii_case(name)).ok_or_else(|| format!("Reference channel {name} is not available among EEG channels"))).collect::<Result<_,_>>()?,
+      _ => return Err(format!("Unsupported reference mode: {mode}")),
+    };
+    if indices.is_empty() { return Err("Choose at least one reference channel".into()); }
+    for sample in 0..data[0].len() {
+      let reference = indices.iter().map(|i| data[*i][sample]).sum::<f64>() / indices.len() as f64;
+      for channel in data.iter_mut() { channel[sample] -= reference; }
+    }
+    Ok(())
 }
 
 fn default_true() -> bool {

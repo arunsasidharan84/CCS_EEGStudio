@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import '../filtered_file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -257,6 +258,60 @@ class _TopoStatsViewState extends State<TopoStatsView> {
     }
   }
 
+  void _moveSession(String file, int delta) {
+    final from = _files.indexOf(file), to = _files.indexOf(file) + delta;
+    if (to < 0 || to >= _files.length || _running) return;
+    setState(() {
+      _files.removeAt(from);
+      _files.insert(to, file);
+    });
+    final result = _result;
+    if (result != null) {
+      final reordered = result.withSessionOrder(_activeFiles).withDisplay(_s);
+      _cache[_s.statsKey(_activeFiles)] = reordered;
+      _show(reordered);
+    }
+  }
+
+  Future<void> _chooseSessionColor(String file) async {
+    final controller = TextEditingController(
+      text:
+          '#${(_s.sessionColors[file] ?? 0xFFD62728).toRadixString(16).substring(2).toUpperCase()}',
+    );
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Line color'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Hex color (#RRGGBB)'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final text = controller.text.replaceFirst('#', '');
+              if (RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(text))
+                Navigator.pop(context, 0xFF000000 | int.parse(text, radix: 16));
+            },
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (selected == null || !mounted) return;
+    setState(
+      () => _s = _s.copyWith(
+        sessionColors: {..._s.sessionColors, file: selected},
+      ),
+    );
+    _redisplay();
+  }
+
   void _toggleSession(String file, bool selected) {
     setState(() {
       if (selected) {
@@ -274,7 +329,8 @@ class _TopoStatsViewState extends State<TopoStatsView> {
   }
 
   Future<void> _pickFiles() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -790,6 +846,28 @@ class _TopoStatsViewState extends State<TopoStatsView> {
                           ),
                         ),
                       ),
+                    ),
+                    IconButton(
+                      tooltip: 'Move earlier',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.arrow_upward, size: 14),
+                      onPressed: _running ? null : () => _moveSession(f, -1),
+                    ),
+                    IconButton(
+                      tooltip: 'Move later',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.arrow_downward, size: 14),
+                      onPressed: _running ? null : () => _moveSession(f, 1),
+                    ),
+                    IconButton(
+                      tooltip: 'Line color',
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        Icons.circle,
+                        size: 14,
+                        color: Color(_s.sessionColors[f] ?? 0xFFD62728),
+                      ),
+                      onPressed: _running ? null : () => _chooseSessionColor(f),
                     ),
                   ],
                 ),

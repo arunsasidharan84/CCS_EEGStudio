@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.5</b> ·
+  <b>Current version: 1.2.10</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -45,7 +45,7 @@ Pre-built standalone desktop installers and application bundles are published th
 
 | Platform | Package Type | Extracted App / Binary | Direct Download Link |
 | :--- | :--- | :--- | :--- |
-| **macOS** | Universal ZIP (macOS 12+) | **`CCS EEG Studio.app`** | [CCSEEGStudio-macos.zip](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-macos.zip) |
+| **macOS** | Apple Silicon ZIP (macOS 12+) | **`CCS EEG Studio.app`** | [CCSEEGStudio-macos.zip](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-macos.zip) |
 | **Windows** | 64-bit installer (Windows 10/11) | `CCSEEGStudio-Installer.exe` | [CCSEEGStudio-Installer.exe](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-Installer.exe) |
 | **Linux (Debian / Ubuntu)** | amd64 DEB package | `ccseegstudio` | [CCSEEGStudio-linux-amd64.deb](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-amd64.deb) |
 | **Linux (RHEL / AlmaLinux)** | x86_64 RPM package | `ccseegstudio` | [CCSEEGStudio-linux-x86_64.rpm](https://github.com/arunsasidharan84/CCS_EEGStudio/releases/latest/download/CCSEEGStudio-linux-x86_64.rpm) |
@@ -142,6 +142,43 @@ Both modes bind to the **same** analysis configuration object. Every option (pre
 3. **Feature Extraction** — epoching, multi-domain feature families, CSV outputs.
 4. **Plots & Reports** — topoplots, time-series plots, group overlays, publication-grade PDF report.
 
+### Recording preparation and advanced settings
+
+Use **Crop / subepoch and save** before analysis to select marker or time bounds,
+then optionally create sliding windows with overlap. Already epoched recordings
+support within-trial crops or complete-trial selection; subwindows never cross
+parent boundaries. Save the prepared recording for later reuse. Settings icons
+expose output/feature references, filter design, interpolation, source SNR/regions,
+Welch estimation, custom frequency bands, nonlinear parameters, and GC lags.
+File selectors support `*`, `?`, and semicolon-separated filename patterns.
+
+Plots support manual session ordering and line colors. Reopening saved cleaned
+recordings recovers preprocessing/source history and adjacent analysis outputs.
+See [workflow details and analysis conventions](docs/workflow_improvements.md).
+
+### Metadata and group statistics
+
+Open **Group Statistics** from the batch workspace or Full Pipeline. Join feature
+CSVs to metadata CSV/XLSX and select subject ID, group, optional within-subject
+factor, covariates, and outcomes. The SleepStudio-derived workbench provides LMM
+with subject random intercepts and GLM with robust/clustered covariance,
+model-adjusted contrasts, and multiple-comparison correction. Epochs are aggregated
+per recording/channel/condition before modeling; multiple subjects are required.
+
+This optional feature needs a local Python environment:
+
+```sh
+python3 -m venv .venv-group-stats
+.venv-group-stats/bin/python -m pip install -r assets/requirements-group-stats.txt
+# Launch the app from a shell with this interpreter configured:
+export CCS_EEG_PYTHON="$PWD/.venv-group-stats/bin/python"
+```
+
+On Windows, use the environment's `Scripts/python.exe` and set `CCS_EEG_PYTHON`
+accordingly. The requirements file includes optional XLSX and Word/PDF dependencies.
+No external LLM service is used. Failed mixed models are reported without a silent
+OLS fallback. See [1.2.10 release notes](CHANGELOG.md#1210) for compatibility details.
+
 ### Channel Types
 Non-EEG channels are **auto-detected from their labels** on load — ECG, EOG, EMG, GSR, respiration, PPG, motion/accelerometer, references and trigger channels are each recognized as their own kind. The **Channel Types** panel in Single Recording mode lists every channel with its detected kind and lets you override any of them; whatever you set is exactly what reaches the engine.
 
@@ -189,7 +226,7 @@ Eight epoch-wise nonlinear complexity and entropy metrics per channel:
 
 ### Connectivity Analysis
 Nine connectivity measures computed via Morlet wavelet cross-spectra matching `mne-connectivity 0.8`:
-- **MIC** (Maximized Imaginary Coherence), **MIM** (Multivariate Interaction Measure), **GC** (Granger Causality 25-lag VAR), **GC-TR** (Time-reversed GC), **Coherence**, **PLV**, **ciPLV**, **PLI**, **wPLI**.
+- **MIC** (Maximized Imaginary Coherence), **MIM** (Multivariate Interaction Measure), **GC** (Granger Causality 25-lag VAR), **GC-TR** (Time-reversed GC), **GC − GC-TR contrast**, **Coherence**, **PLV**, **ciPLV**, **PLI**, **wPLI**.
 
 ### Outputs & Plot Layout
 - **Per-file CSV export**: `<recording>.features.csv` for every input, with one row per (epoch, channel, bin) and all enabled feature columns.
@@ -225,7 +262,7 @@ CCS EEG Studio uses a decoupled Flutter + Rust architecture:
    - Linear algebra for GEDAI and source localization via **nalgebra**.
    - Native implementations of FOOOF, IRASA, and nonlinear metrics.
 3. **Dart Analysis Layer**: ERP statistics, permutation clustering, topographic interpolation, and PDF reporting in background isolates.
-4. **Zero External Runtimes**: Self-contained executable without Python, MATLAB, or R dependencies.
+4. **Core analysis**: EEG preprocessing, extraction, ERP, microstates, and plotting run without Python, MATLAB, or R. The optional group-statistics workbench uses a local Python environment.
 
 ```
 CCS_EEGStudio/

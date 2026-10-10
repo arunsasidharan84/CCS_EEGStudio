@@ -10,12 +10,14 @@ class LoadedEeg {
     required this.channelLabels,
     required this.channelSamples,
     required this.sourceDescription,
+    this.markers = const [],
   });
 
   final double sampleRateHz;
   final List<String> channelLabels;
   final List<List<double>> channelSamples;
   final String sourceDescription;
+  final List<EegMarker> markers;
 }
 
 class EegMarker {
@@ -70,8 +72,14 @@ class EegRecording {
     this.epochLabels,
     this.markers = const [],
     this.epochTmin,
+    this.completedStages = const [],
+    this.epochStartSeconds = const [],
+    this.sourceDurationSeconds,
   });
 
+  final List<String> completedStages;
+  final List<double> epochStartSeconds;
+  final double? sourceDurationSeconds;
   final String path;
   final String? dataPath;
   final double sampleRate;
@@ -89,7 +97,7 @@ class EegRecording {
   final double? epochTmin;
 
   double get durationSeconds => sampleCount / sampleRate;
-  bool get isEpoched => epochCount > 1 && (pointsPerEpoch ?? 0) > 0;
+  bool get isEpoched => epochCount >= 1 && (pointsPerEpoch ?? 0) > 0;
   double get epochDurationSeconds =>
       isEpoched ? (pointsPerEpoch! / sampleRate) : durationSeconds;
 }
@@ -132,30 +140,53 @@ class PreprocessingOptions {
     required this.gedaiEpochSeconds,
     required this.gedaiThreshold,
     this.sourceLocalization = false,
+    this.referenceMode = 'none',
+    this.referenceChannels = const [],
+    this.firTaps = 0,
+    this.badVarianceRatio = 25,
+    this.splineStiffness = 4,
+    this.splineRegularization = 1e-5,
+    this.filterType = 'fir',
+    this.iirOrder = 4,
+    this.notchWidthHz = 1,
+    this.notchTransitionHz = 2,
+    this.sourceSnr = 3,
+    this.sourceRegions = const [],
     this.epochBeforeGedai = false,
     this.nonEegChannels = const [],
     this.stimEpochs,
   });
 
-  factory PreprocessingOptions.fromJson(Map<String, dynamic> json) =>
-      PreprocessingOptions(
-        downsample: json['downsample'] as bool? ?? true,
-        downsampleFreq: (json['downsample_freq'] as num?)?.toDouble() ?? 250,
-        filter: json['filter'] as bool? ?? true,
-        lowHz: (json['low_hz'] as num?)?.toDouble() ?? 0.5,
-        highHz: (json['high_hz'] as num?)?.toDouble() ?? 40,
-        notchHz: (json['notch_hz'] as num?)?.toDouble() ?? 50,
-        badchannel: json['badchannel'] as bool? ?? true,
-        gedai: json['gedai'] as bool? ?? true,
-        interpolate: json['interpolate'] as bool? ?? true,
-        gedaiEpochSeconds:
-            (json['gedai_epoch_seconds'] as num?)?.toDouble() ?? 1,
-        gedaiThreshold: json['gedai_threshold'] as String? ?? 'auto',
-        sourceLocalization: json['source_localization'] as bool? ?? false,
-        epochBeforeGedai: json['epoch_before_gedai'] as bool? ?? false,
-        nonEegChannels:
-            (json['non_eeg_channels'] as List?)?.cast<String>() ?? const [],
-      );
+  factory PreprocessingOptions.fromJson(
+    Map<String, dynamic> json,
+  ) => PreprocessingOptions(
+    downsample: json['downsample'] as bool? ?? true,
+    downsampleFreq: (json['downsample_freq'] as num?)?.toDouble() ?? 250,
+    filter: json['filter'] as bool? ?? true,
+    lowHz: (json['low_hz'] as num?)?.toDouble() ?? 0.5,
+    highHz: (json['high_hz'] as num?)?.toDouble() ?? 40,
+    notchHz: (json['notch_hz'] as num?)?.toDouble() ?? 50,
+    badchannel: json['badchannel'] as bool? ?? true,
+    gedai: json['gedai'] as bool? ?? true,
+    interpolate: json['interpolate'] as bool? ?? true,
+    gedaiEpochSeconds: (json['gedai_epoch_seconds'] as num?)?.toDouble() ?? 1,
+    gedaiThreshold: json['gedai_threshold'] as String? ?? 'auto',
+    referenceMode: json['reference_mode'] as String? ?? 'none',
+    referenceChannels:
+        (json['reference_channels'] as List?)?.cast<String>() ?? const [],
+    firTaps: (json['fir_taps'] as num?)?.toInt() ?? 0,
+    filterType: json['filter_type'] as String? ?? 'fir',
+    iirOrder: (json['iir_order'] as num?)?.toInt() ?? 4,
+    notchWidthHz: (json['notch_width_hz'] as num?)?.toDouble() ?? 1,
+    notchTransitionHz: (json['notch_transition_hz'] as num?)?.toDouble() ?? 2,
+    sourceSnr: (json['source_snr'] as num?)?.toDouble() ?? 3,
+    sourceRegions:
+        (json['source_regions'] as List?)?.cast<String>() ?? const [],
+    sourceLocalization: json['source_localization'] as bool? ?? false,
+    epochBeforeGedai: json['epoch_before_gedai'] as bool? ?? false,
+    nonEegChannels:
+        (json['non_eeg_channels'] as List?)?.cast<String>() ?? const [],
+  );
 
   /// Stimulus-locked epoching (ERP): cut epochs around these markers after
   /// filtering and before bad-channel detection / GEDAI / interpolation.
@@ -173,6 +204,15 @@ class PreprocessingOptions {
   final double gedaiEpochSeconds;
   final String gedaiThreshold;
   final bool sourceLocalization;
+  final String referenceMode;
+  final List<String> referenceChannels;
+  final int firTaps;
+  final double badVarianceRatio, splineRegularization;
+  final int splineStiffness;
+  final String filterType;
+  final int iirOrder;
+  final double notchWidthHz, notchTransitionHz, sourceSnr;
+  final List<String> sourceRegions;
   final bool epochBeforeGedai;
 
   /// Channels the user has marked as non-EEG.  These are excluded from bad
@@ -192,6 +232,18 @@ class PreprocessingOptions {
     'gedai_epoch_seconds': gedaiEpochSeconds,
     'gedai_threshold': gedaiThreshold,
     'source_localization': sourceLocalization,
+    'reference_mode': referenceMode,
+    'reference_channels': referenceChannels,
+    'fir_taps': firTaps,
+    'bad_variance_ratio': badVarianceRatio,
+    'spline_stiffness': splineStiffness,
+    'spline_regularization': splineRegularization,
+    'filter_type': filterType,
+    'iir_order': iirOrder,
+    'notch_width_hz': notchWidthHz,
+    'notch_transition_hz': notchTransitionHz,
+    'source_snr': sourceSnr,
+    'source_regions': sourceRegions,
     'epoch_before_gedai': epochBeforeGedai,
     'non_eeg_channels': nonEegChannels,
     if (stimEpochs != null) 'stim_epochs_spec': stimEpochs!.toJson(),
@@ -214,6 +266,13 @@ class ExtractionOptions {
     required this.mim,
     required this.gc,
     required this.gcTr,
+    this.gcContrast = false,
+    this.psdWindowSeconds = 1,
+    this.psdAverage = 'median',
+    this.psdBands = const [],
+    this.advancedParameters = const {},
+    this.referenceMode = 'average',
+    this.referenceChannels = const [],
     required this.coh,
     required this.plv,
     required this.ciplv,
@@ -238,6 +297,13 @@ class ExtractionOptions {
   final bool mim;
   final bool gc;
   final bool gcTr;
+  final bool gcContrast;
+  final double psdWindowSeconds;
+  final String psdAverage;
+  final List<Map<String, dynamic>> psdBands;
+  final Map<String, dynamic> advancedParameters;
+  final String referenceMode;
+  final List<String> referenceChannels;
   final bool coh;
   final bool plv;
   final bool ciplv;
@@ -257,6 +323,12 @@ class ExtractionOptions {
     'end_seconds': endSeconds,
     'bin_seconds': binSeconds,
     'psd': psd,
+    'psd_window_seconds': psdWindowSeconds,
+    'psd_average': psdAverage,
+    'psd_bands': psdBands,
+    'advanced_parameters': advancedParameters,
+    'reference_mode': referenceMode,
+    'reference_channels': referenceChannels,
     'fooof': fooof,
     'irasa': irasa,
     'nonlinear': nonlinear,
@@ -266,6 +338,7 @@ class ExtractionOptions {
     'mim': mim,
     'gc': gc,
     'gc_tr': gcTr,
+    'gc_contrast': gcContrast,
     'coh': coh,
     'plv': plv,
     'ciplv': ciplv,
@@ -299,6 +372,15 @@ class AnalysisConfig {
   bool epochBeforeGedai = true;
   double gedaiEpochSeconds = 1;
   String gedaiThreshold = 'auto';
+  String referenceMode = 'none';
+  List<String> referenceChannels = [];
+  int firTaps = 0;
+  double badVarianceRatio = 25, splineRegularization = 1e-5;
+  int splineStiffness = 4;
+  String filterType = 'fir';
+  int iirOrder = 4;
+  double notchWidthHz = 1, notchTransitionHz = 2, sourceSnr = 3;
+  List<String> sourceRegions = [];
 
   // ── Stimulus-locked epochs (ERP) ────────────────────────────────────────
   bool stimEpochs = false;
@@ -341,6 +423,12 @@ class AnalysisConfig {
 
   // ── Feature families ─────────────────────────────────────────────────────
   bool psd = true;
+  double psdWindowSeconds = 1;
+  String psdAverage = 'median';
+  List<Map<String, dynamic>> psdBands = [];
+  Map<String, dynamic> featureParameters = {};
+  String featureReferenceMode = 'average';
+  List<String> featureReferenceChannels = [];
   bool fooof = true;
   bool irasa = true;
   bool nonlinear = true;
@@ -351,6 +439,7 @@ class AnalysisConfig {
   bool mim = false;
   bool gc = false;
   bool gcTr = false;
+  bool gcContrast = false;
 
   // Bivariate connectivity
   bool coh = true;
@@ -360,7 +449,16 @@ class AnalysisConfig {
   bool wpli = false;
 
   bool get anyConnectivity =>
-      mic || mim || gc || gcTr || coh || plv || ciplv || pli || wpli;
+      mic ||
+      mim ||
+      gc ||
+      gcTr ||
+      gcContrast ||
+      coh ||
+      plv ||
+      ciplv ||
+      pli ||
+      wpli;
 
   bool get anyFeature =>
       psd || fooof || irasa || nonlinear || acw || anyConnectivity;
@@ -409,6 +507,18 @@ class AnalysisConfig {
         interpolate: false,
         gedaiEpochSeconds: gedaiEpochSeconds,
         gedaiThreshold: gedaiThreshold,
+        referenceMode: referenceMode,
+        referenceChannels: referenceChannels,
+        firTaps: firTaps,
+        badVarianceRatio: badVarianceRatio,
+        splineStiffness: splineStiffness,
+        splineRegularization: splineRegularization,
+        filterType: filterType,
+        iirOrder: iirOrder,
+        notchWidthHz: notchWidthHz,
+        notchTransitionHz: notchTransitionHz,
+        sourceSnr: sourceSnr,
+        sourceRegions: sourceRegions,
         sourceLocalization: true,
         epochBeforeGedai: false,
         nonEegChannels: nonEegChannels,
@@ -426,6 +536,18 @@ class AnalysisConfig {
       interpolate: interpolate,
       gedaiEpochSeconds: gedaiEpochSeconds,
       gedaiThreshold: gedaiThreshold,
+      referenceMode: referenceMode,
+      referenceChannels: referenceChannels,
+      firTaps: firTaps,
+      badVarianceRatio: badVarianceRatio,
+      splineStiffness: splineStiffness,
+      splineRegularization: splineRegularization,
+      filterType: filterType,
+      iirOrder: iirOrder,
+      notchWidthHz: notchWidthHz,
+      notchTransitionHz: notchTransitionHz,
+      sourceSnr: sourceSnr,
+      sourceRegions: sourceRegions,
       sourceLocalization: false,
       epochBeforeGedai: epochBeforeGedai,
       nonEegChannels: nonEegChannels,
@@ -451,6 +573,13 @@ class AnalysisConfig {
     mim: mim,
     gc: gc,
     gcTr: gcTr,
+    gcContrast: gcContrast,
+    psdWindowSeconds: psdWindowSeconds,
+    psdAverage: psdAverage,
+    psdBands: psdBands,
+    advancedParameters: featureParameters,
+    referenceMode: featureReferenceMode,
+    referenceChannels: featureReferenceChannels,
     coh: coh,
     plv: plv,
     ciplv: ciplv,

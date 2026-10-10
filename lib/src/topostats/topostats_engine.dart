@@ -71,6 +71,8 @@ const Set<String> kTopoMetaColumns = {
   'bin_start_s',
   'bin_end_s',
   'mode',
+  'epoch_start_s',
+  'epoch_end_s',
 };
 
 /// User settings -- names and defaults follow the script's USER SETTINGS.
@@ -102,6 +104,7 @@ class TopoStatsSettings {
     this.topoVabs,
     this.topoValue = TopoValue.tfce,
     this.dpi = 200,
+    this.sessionColors = const {},
   });
 
   final String recId;
@@ -130,6 +133,7 @@ class TopoStatsSettings {
   final double? topoVabs;
   final TopoValue topoValue;
   final int dpi;
+  final Map<String, int> sessionColors;
 
   TopoStatsSettings copyWith({
     String? recId,
@@ -156,6 +160,7 @@ class TopoStatsSettings {
     Object? topoVabs = _keep,
     TopoValue? topoValue,
     int? dpi,
+    Map<String, int>? sessionColors,
   }) {
     return TopoStatsSettings(
       recId: recId ?? this.recId,
@@ -188,6 +193,7 @@ class TopoStatsSettings {
           : topoVabs as double?,
       topoValue: topoValue ?? this.topoValue,
       dpi: dpi ?? this.dpi,
+      sessionColors: sessionColors ?? this.sessionColors,
     );
   }
 
@@ -326,6 +332,30 @@ class TopoStatsResult {
 
   String get baselineName => sessions[baselineIndex].name;
 
+  /// Reorder existing results without drawing a new permutation sample.
+  TopoStatsResult withSessionOrder(List<String> files) {
+    final byPath = {for (final session in sessions) session.path: session};
+    if (files.length != sessions.length ||
+        files.toSet().length != files.length ||
+        files.any((path) => !byPath.containsKey(path)))
+      throw ArgumentError(
+        'Session order must contain exactly the computed sessions',
+      );
+    final reordered = [for (final file in files) byPath[file]!];
+    final baselinePath = sessions[baselineIndex].path;
+    return TopoStatsResult(
+      settings: settings,
+      sessions: reordered,
+      baselineIndex: files.indexOf(baselinePath),
+      baselineTmin: baselineTmin,
+      baselineTmax: baselineTmax,
+      yMin: yMin,
+      yMax: yMax,
+      vmax: vmax,
+      log: log,
+    );
+  }
+
   /// Same statistics, different display settings (colour source, colormap,
   /// fixed limit, topomap size, dpi). Recomputes the colour limit.
   TopoStatsResult withDisplay(TopoStatsSettings display) {
@@ -335,6 +365,7 @@ class TopoStatsResult {
       topoVabs: display.topoVabs,
       targetTopoWidthIn: display.targetTopoWidthIn,
       dpi: display.dpi,
+      sessionColors: display.sessionColors,
     );
     return TopoStatsResult(
       settings: s,
@@ -544,7 +575,13 @@ double _toNumeric(String s) {
 /// One session parsed for a set of features: epochs sorted, per feature a
 /// (nEpochs x nCh) matrix aligned to [channels].
 class ParsedSession {
-  ParsedSession(this.path, this.epochs, this.values);
+  ParsedSession(
+    this.path,
+    this.epochs,
+    this.values, [
+    this.epochEndSeconds = const {},
+  ]);
+  final Map<int, double> epochEndSeconds;
   final String path;
 
   /// feature -> sorted epoch numbers (after dropping all-NaN epochs).
@@ -586,6 +623,8 @@ ParsedSession parseFeatureCsv(
   ).map((h) => h.trim()).toList();
   final iChan = header.indexOf('Chan');
   final iEpoch = header.indexOf('Epoch');
+  final iTime = header.indexOf('epoch_end_s');
+  final epochEndSeconds = <int, double>{};
   if (iChan < 0 || iEpoch < 0) {
     throw FormatException('CSV missing Chan/Epoch columns: $path');
   }
@@ -598,7 +637,7 @@ ParsedSession parseFeatureCsv(
   final nCh = channels.length;
   final featNames = featIdx.keys.toList();
   final featCols = [for (final f in featNames) featIdx[f]!];
-  var maxCol = math.max(iChan, iEpoch);
+  var maxCol = math.max(math.max(iChan, iEpoch), iTime);
   for (final c in featCols) {
     maxCol = math.max(maxCol, c);
   }
@@ -653,6 +692,10 @@ ParsedSession parseFeatureCsv(
     final ev = double.tryParse(field(iEpoch).trim());
     if (ev == null) continue;
     final epoch = ev.round();
+    if (iTime >= 0 && iTime < nFields) {
+      final time = double.tryParse(field(iTime));
+      if (time != null && time.isFinite) epochEndSeconds[epoch] = time;
+    }
     for (var fi = 0; fi < featNames.length; fi++) {
       final col = featCols[fi];
       if (col >= nFields) continue;
@@ -681,7 +724,7 @@ ParsedSession parseFeatureCsv(
     epochsOut[featNames[fi]] = ep;
     valuesOut[featNames[fi]] = m;
   }
-  return ParsedSession(path, epochsOut, valuesOut);
+  return ParsedSession(path, epochsOut, valuesOut, epochEndSeconds);
 }
 
 /// Channel labels used in a features CSV. Returns the script's 32-channel
@@ -828,7 +871,7 @@ TopoStatsResult computeTopoStats({
     final n = ep.length;
     final t = Float64List(n);
     for (var r = 0; r < n; r++) {
-      t[r] = ep[r] * s.epochSize / 60.0;
+      t[r] = (p.epochEndSeconds[ep[r]] ?? ep[r] * s.epochSize) / 60.0;
     }
     final mean = Float64List(n);
     final band = Float64List(n);

@@ -19,6 +19,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import '../filtered_file_picker.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -665,7 +666,8 @@ class _ErpAnalysisViewState extends State<ErpAnalysisView>
                       onPressed: _running
                           ? null
                           : () async {
-                              final r = await FilePicker.pickFiles(
+                              final r = await pickFilteredFiles(
+                                context,
                                 allowMultiple: true,
                                 type: FileType.custom,
                                 allowedExtensions: ['json'],

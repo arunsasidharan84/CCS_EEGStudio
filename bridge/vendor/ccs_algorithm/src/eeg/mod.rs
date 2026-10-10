@@ -6,9 +6,40 @@ pub fn default_true() -> bool {
     true
 }
 
+fn default_reference_mode()->String {"average".into()}
+fn default_psd_window() -> f64 { 1.0 }
+fn default_psd_average() -> String { "median".into() }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PsdBand { pub label:String, pub low:f64, pub high:f64 }
+#[derive(Debug,Serialize,Deserialize,Clone)]
+#[serde(default)]
+pub struct AdvancedParameters {
+    pub fooof_max_peaks:usize,
+    pub fooof_peak_threshold:f64,
+    pub irasa_factors:Vec<f64>,
+    pub sample_entropy_tolerance:f64,
+    pub higuchi_kmax:usize,
+    pub acw_fraction:f64,
+    pub gc_lags:usize,
+}
+impl Default for AdvancedParameters {
+    fn default()->Self {Self {fooof_max_peaks:20,fooof_peak_threshold:2.0,irasa_factors:Vec::new(),sample_entropy_tolerance:0.2,higuchi_kmax:10,acw_fraction:0.5,gc_lags:25}}
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Options {
     pub mode: String,
+    #[serde(default)]
+    pub advanced_parameters:AdvancedParameters,
+    #[serde(default="default_psd_window")]
+    pub psd_window_seconds: f64,
+    #[serde(default="default_psd_average")]
+    pub psd_average: String,
+    #[serde(default)]
+    pub psd_bands: Vec<PsdBand>,
+    #[serde(default="default_reference_mode")]
+    pub reference_mode:String,
+    #[serde(default)]
+    pub reference_channels:Vec<String>,
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub bin_seconds: f64,
@@ -26,6 +57,8 @@ pub struct Options {
     pub gc: bool,
     #[serde(default)]
     pub gc_tr: bool,
+    #[serde(default)]
+    pub gc_contrast: bool,
     #[serde(default)]
     pub coh: bool,
     #[serde(default)]
@@ -49,6 +82,12 @@ impl Options {
     pub fn connectivity_test() -> Self {
         Self {
             mode: "full".into(),
+            advanced_parameters:AdvancedParameters::default(),
+            psd_window_seconds: 1.0,
+            psd_average: "median".into(),
+            psd_bands: Vec::new(),
+            reference_mode:"average".into(),
+            reference_channels:Vec::new(),
             start_seconds: 0.0,
             end_seconds: 1.0,
             bin_seconds: 1.0,
@@ -62,6 +101,7 @@ impl Options {
             mim: true,
             gc: true,
             gc_tr: true,
+            gc_contrast: false,
             coh: true,
             plv: true,
             ciplv: true,

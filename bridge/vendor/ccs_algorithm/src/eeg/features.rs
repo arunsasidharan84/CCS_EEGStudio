@@ -62,6 +62,9 @@ pub fn welch_median(signal: &[f64], sfreq: f64) -> (Vec<f64>, Vec<f64>) {
 }
 
 pub fn welch_median_nperseg(signal: &[f64], sfreq: f64, nperseg: usize) -> (Vec<f64>, Vec<f64>) {
+    welch_psd_nperseg(signal,sfreq,nperseg,false)
+}
+pub fn welch_psd_nperseg(signal: &[f64], sfreq: f64, nperseg: usize, mean_average: bool) -> (Vec<f64>,Vec<f64>) {
     if signal.is_empty() || nperseg == 0 || !sfreq.is_finite() || sfreq <= 0.0 {
         return (Vec::new(), Vec::new());
     }
@@ -95,7 +98,7 @@ pub fn welch_median_nperseg(signal: &[f64], sfreq: f64, nperseg: usize) -> (Vec<
             let scale = 1.0 / (sfreq * window_energy);
             for (index, value) in power.iter_mut().enumerate() {
                 *value *= scale;
-                if index != 0 && index != nperseg / 2 {
+                if index != 0 && (nperseg % 2 != 0 || index != nperseg / 2) {
                     *value *= 2.0;
                 }
             }
@@ -107,7 +110,7 @@ pub fn welch_median_nperseg(signal: &[f64], sfreq: f64, nperseg: usize) -> (Vec<
     let bias = median_bias(spectra.len());
     for bin in 0..bins {
         let mut values: Vec<f64> = spectra.iter().map(|spectrum| spectrum[bin]).collect();
-        psd[bin] = median(&mut values) / bias;
+        psd[bin] = if mean_average { values.iter().sum::<f64>() / values.len() as f64 } else { median(&mut values) / bias };
     }
     let frequencies = (0..bins)
         .map(|index| index as f64 * sfreq / nperseg as f64)
@@ -116,18 +119,27 @@ pub fn welch_median_nperseg(signal: &[f64], sfreq: f64, nperseg: usize) -> (Vec<
 }
 
 pub fn bandpowers(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
-    let (frequencies, psd) = welch_median(signal, sfreq);
+    bandpowers_with_options(signal,sfreq,1.0,false,&BANDS)
+}
+pub fn bandpowers_with_options(signal: &[f64], sfreq: f64, window_seconds:f64, mean_average:bool, bands:&[(f64,f64,&str)]) -> BTreeMap<String,f64> {
+    let (frequencies, psd) = welch_psd_nperseg(signal, sfreq, (window_seconds*sfreq).round() as usize, mean_average);
+    if bands != &BANDS && frequencies.len()>1 {
+        let low=bands.iter().map(|b|b.0).fold(1.0,f64::min);
+        let high=bands.iter().map(|b|b.1).fold(40.0,f64::max);
+        let total=integrate_trapezoid(&frequencies,&psd,low,high);
+        return bands.iter().map(|&(low,high,label)|(format!("{label}_PSD"),if total>0.0 {integrate_trapezoid(&frequencies,&psd,low,high)/total}else{0.0})).collect();
+    }
     if frequencies.is_empty() {
-        return BANDS
+        return bands
             .iter()
             .map(|&(_, _, label)| (format!("{label}_PSD"), 0.0))
             .collect();
     }
-    let minimum = BANDS
+    let minimum = bands
         .iter()
         .map(|band| band.0)
         .fold(f64::INFINITY, f64::min);
-    let maximum = BANDS
+    let maximum = bands
         .iter()
         .map(|band| band.1)
         .fold(f64::NEG_INFINITY, f64::max);
@@ -138,7 +150,7 @@ pub fn bandpowers(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
         .filter(|(frequency, _)| *frequency >= minimum && *frequency <= maximum)
         .collect();
     if selected.len() < 2 {
-        return BANDS
+        return bands
             .iter()
             .map(|&(_, _, label)| (format!("{label}_PSD"), 0.0))
             .collect();
@@ -147,12 +159,12 @@ pub fn bandpowers(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
     let total_values: Vec<f64> = selected.iter().map(|(_, value)| *value).collect();
     let total = simpson(&total_values, resolution);
     if total <= 0.0 || !total.is_finite() {
-        return BANDS
+        return bands
             .iter()
             .map(|&(_, _, label)| (format!("{label}_PSD"), 0.0))
             .collect();
     }
-    BANDS
+    bands
         .iter()
         .map(|&(low, high, label)| {
             let values: Vec<f64> = selected
@@ -167,7 +179,17 @@ pub fn bandpowers(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
         .collect()
 }
 
-pub fn acw50(signal: &[f64], sfreq: f64) -> f64 {
+pub fn integrate_trapezoid(frequencies:&[f64],values:&[f64],low:f64,high:f64)->f64 {
+    frequencies.windows(2).zip(values.windows(2)).map(|(f,p)|{
+        let start=low.max(f[0]);let end=high.min(f[1]);
+        if end<=start||f[1]<=f[0]{return 0.0;}
+        let interpolate=|at:f64|p[0]+(p[1]-p[0])*(at-f[0])/(f[1]-f[0]);
+        (interpolate(start)+interpolate(end))*(end-start)/2.0
+    }).sum()
+}
+
+pub fn acw50(signal:&[f64],sfreq:f64)->f64 {acw_fraction(signal,sfreq,0.5)}
+pub fn acw_fraction(signal: &[f64], sfreq: f64, fraction:f64) -> f64 {
     if signal.is_empty() || sfreq == 0.0 {
         return f64::NAN;
     }
@@ -184,7 +206,7 @@ pub fn acw50(signal: &[f64], sfreq: f64) -> f64 {
             .map(|(left, right)| left * right)
             .sum::<f64>()
             / variance;
-        if autocorrelation <= 0.5 {
+        if autocorrelation <= fraction {
             return lag as f64 / sfreq;
         }
     }

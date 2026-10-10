@@ -441,7 +441,11 @@ class TopoFigure {
     canvas.drawPath(
       _polyline(meanPts),
       Paint()
-        ..color = _tabRed
+        ..color = Color(
+          result.settings.sessionColors[sess.path] ??
+              result.settings.sessionColors[sess.name] ??
+              _tabRed.toARGB32(),
+        )
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3 * pt
         ..strokeJoin = StrokeJoin.round
@@ -473,7 +477,12 @@ class TopoFigure {
     // edgecolor='face') adds half a linewidth to the radius.
     final step = math.max(n ~/ 60, 1);
     final rad = (math.sqrt(8.0) / 2 + 0.5) * pt;
-    final dot = Paint()..color = _tabRed;
+    final dot = Paint()
+      ..color = Color(
+        result.settings.sessionColors[sess.path] ??
+            result.settings.sessionColors[sess.name] ??
+            _tabRed.toARGB32(),
+      );
     for (var k = 0; k < n; k += step) {
       final v = sess.mean[k];
       if (v.isNaN) continue;

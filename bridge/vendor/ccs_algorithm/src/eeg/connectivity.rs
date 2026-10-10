@@ -4,8 +4,11 @@ use rustfft::{num_complex::Complex64, FftPlanner};
 use crate::eeg::{features::BANDS, Options};
 
 const N_FREQS: usize = 15;
-const GC_LAGS: usize = 25;
 
+fn connectivity_bands(options:&Options)->Vec<(f64,f64,&str)> {
+    if options.psd_bands.is_empty(){BANDS[1..].to_vec()}
+    else{options.psd_bands.iter().filter(|b|b.low>=4.0&&b.high<=40.0).map(|b|(b.low,b.high,b.label.as_str())).collect()}
+}
 pub fn column_names(options: &Options) -> Vec<String> {
     let mut names = Vec::new();
     for (enabled, metric) in [
@@ -13,6 +16,7 @@ pub fn column_names(options: &Options) -> Vec<String> {
         (options.mim, "mim"),
         (options.gc, "gc"),
         (options.gc_tr, "gc_tr"),
+        (options.gc_contrast, "gc_contrast"),
         (options.coh, "coh"),
         (options.plv, "plv"),
         (options.ciplv, "ciplv"),
@@ -21,8 +25,7 @@ pub fn column_names(options: &Options) -> Vec<String> {
     ] {
         if enabled {
             names.extend(
-                BANDS[1..]
-                    .iter()
+                connectivity_bands(options).iter()
                     .map(|band| format!("conn_{metric}_{}", band.2)),
             );
         }
@@ -60,15 +63,17 @@ pub fn compute_epoch(
     let coefficients = morlet_coefficients(&data, sfreq, &frequencies, &cycles);
 
     let multivariate = multivariate_scores(&coefficients, labels, options);
-    let items: [(bool, &[f64]); 4] = [
+    let contrast: Vec<f64> = multivariate.gc.iter().zip(&multivariate.gc_tr).map(|(forward,reversed)| forward-reversed).collect();
+    let items: [(bool, &[f64]); 5] = [
         (options.mic, multivariate.mic.as_slice()),
         (options.mim, multivariate.mim.as_slice()),
         (options.gc, multivariate.gc.as_slice()),
         (options.gc_tr, multivariate.gc_tr.as_slice()),
+        (options.gc_contrast, contrast.as_slice()),
     ];
     for &(enabled, values) in items.iter() {
         if enabled {
-            let bands = band_means(values, &frequencies);
+            let bands = band_means_configured(values, &frequencies,&connectivity_bands(options));
             for channel in &mut output {
                 channel.extend_from_slice(&bands);
             }
@@ -78,7 +83,7 @@ pub fn compute_epoch(
     let bivariate = bivariate_scores(&coefficients, options);
     for channel in 0..n_channels {
         for metric in &bivariate[channel] {
-            output[channel].extend(band_means(metric, &frequencies));
+            output[channel].extend(band_means_configured(metric, &frequencies,&connectivity_bands(options)));
         }
     }
     output
@@ -157,13 +162,13 @@ fn multivariate_scores(
             }
         }
     }
-    let gc = if options.gc {
-        granger(&csd, seeds.len(), false)
+    let gc = if options.gc || options.gc_contrast {
+        granger(&csd, seeds.len(), false,options.advanced_parameters.gc_lags)
     } else {
         empty()
     };
-    let gc_tr = if options.gc_tr {
-        granger(&csd, seeds.len(), true)
+    let gc_tr = if options.gc_tr || options.gc_contrast {
+        granger(&csd, seeds.len(), true,options.advanced_parameters.gc_lags)
     } else {
         empty()
     };
@@ -298,13 +303,13 @@ fn robust_cholesky(matrix: &DMatrix<f64>) -> Option<DMatrix<f64>> {
     Some(DMatrix::from_diagonal(&clamped_evals.map(|v| v.sqrt())))
 }
 
-fn granger(csd: &[DMatrix<Complex64>], n_seeds: usize, reversed: bool) -> Vec<f64> {
+fn granger(csd: &[DMatrix<Complex64>], n_seeds: usize, reversed: bool,lags:usize) -> Vec<f64> {
     let n = csd[0].nrows();
-    if n_seeds == 0 || n_seeds == n || GC_LAGS >= (N_FREQS - 1) * 2 {
+    if n_seeds == 0 || n_seeds == n || lags >= (N_FREQS - 1) * 2 {
         return vec![f64::NAN; N_FREQS];
     }
-    let autocov = autocovariance(csd, reversed);
-    let Some((coefficients, covariance)) = whittle_lwr(&autocov, GC_LAGS) else {
+    let autocov = autocovariance(csd, reversed,lags);
+    let Some((coefficients, covariance)) = whittle_lwr(&autocov, lags) else {
         eprintln!("WARNING GC Whittle LWR solve failed for {n} signals");
         return vec![f64::NAN; N_FREQS];
     };
@@ -323,7 +328,7 @@ fn granger(csd: &[DMatrix<Complex64>], n_seeds: usize, reversed: bool) -> Vec<f6
         .map(|frequency| {
             let omega = std::f64::consts::PI * frequency as f64 / (N_FREQS - 1) as f64;
             let mut ar = DMatrix::<Complex64>::identity(n, n);
-            for lag in 0..GC_LAGS {
+            for lag in 0..lags {
                 let phase = Complex64::from_polar(1.0, -omega * (lag + 1) as f64);
                 ar -= coefficients[lag].map(|value| Complex64::new(value, 0.0) * phase);
             }
@@ -353,10 +358,10 @@ fn granger(csd: &[DMatrix<Complex64>], n_seeds: usize, reversed: bool) -> Vec<f6
         .collect()
 }
 
-fn autocovariance(csd: &[DMatrix<Complex64>], reversed: bool) -> Vec<DMatrix<f64>> {
+fn autocovariance(csd: &[DMatrix<Complex64>], reversed: bool,lags:usize) -> Vec<DMatrix<f64>> {
     let n = csd[0].nrows();
     let resolution = (N_FREQS - 1) * 2;
-    (0..=GC_LAGS)
+    (0..=lags)
         .map(|lag| {
             DMatrix::from_fn(n, n, |row, column| {
                 let (row, column) = if reversed {
@@ -587,8 +592,9 @@ fn morlet(sfreq: f64, frequency: f64, cycles: f64) -> Vec<Complex64> {
     wavelet
 }
 
-fn band_means(values: &[f64], frequencies: &[f64]) -> Vec<f64> {
-    BANDS[1..]
+fn band_means(values:&[f64],frequencies:&[f64])->Vec<f64> {band_means_configured(values,frequencies,&BANDS[1..])}
+fn band_means_configured(values: &[f64], frequencies: &[f64],bands:&[(f64,f64,&str)]) -> Vec<f64> {
+    bands
         .iter()
         .map(|band| {
             let selected: Vec<f64> = values

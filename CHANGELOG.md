@@ -4,6 +4,80 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.10]
+
+### Recording preparation and epoch handling
+
+- Added Crop / subepoch and save in Load Raw, Preprocess, and Feature Extraction.
+- Crop by annotation endpoints, annotation start plus duration, time endpoints,
+  or time start plus duration before creating subepochs. Saved portable recordings
+  retain annotations and preparation provenance for reuse.
+- Native previews are loaded at full resolution before preparation. Mixed-rate
+  channels are rejected rather than silently truncated.
+- Existing trials support within-trial crops and complete-epoch selection on the
+  stitched timeline. Sliding windows support overlap without crossing parent trials;
+  incomplete windows are dropped and sample rounding determines the exact hop.
+- Preserve window start/end coordinates in saved recordings and feature CSVs.
+  Interval extraction keeps complete windows; time bins use window centres.
+- Hide continuous epoch-cutting controls for already epoched recordings.
+
+### Preprocessing and feature settings
+
+- Added settings icons for output and feature references, filters, bad-channel
+  detection, interpolation, source analysis, and feature families.
+- Output references support keeping the input reference, common average, and named
+  EEG reference channels. Feature referencing can be configured independently.
+- Added FIR taps, Butterworth order, notch stop/transition widths, bad-channel
+  variance ratio, spline parameters, source SNR and selectable atlas regions.
+- Added Welch mean/median and window settings, custom frequency bands, FOOOF peak
+  controls, IRASA factors, sample-entropy tolerance, Higuchi kmax, ACW crossing,
+  and GC lag settings. Existing defaults are retained.
+- Added GC minus time-reversed GC as a separately named contrast. It uses the
+  same fits as GC and GC-TR and is distinct from net directional GC.
+- Fixed preprocessing resampling despite the downsampling option being disabled.
+- Recover preprocessing/source completion from saved provenance, recognize legacy
+  clean filenames, and recover adjacent feature CSVs and figure folders on reopen.
+
+### File selection and plot presentation
+
+- Added filename wildcard filtering with *, ?, and semicolon-separated patterns
+  to file selectors and batch folder queues.
+- Added manual session ordering and per-session hexadecimal line colors, including
+  exported plots. Display reordering preserves the baseline and computed statistics.
+
+### Metadata-based group statistics
+
+- Added Group Statistics in the batch workspace and Full Pipeline, adapted from
+  CCS SleepStudio's local Python LMM/GLM workbench.
+- Join feature CSVs with metadata CSV/XLSX, choose subject/group/within-subject
+  factors, covariates, and outcomes, then export model tables, contrasts, and plots.
+- Validate metadata joins; aggregate epoch values per recording/channel/condition;
+  avoid treating duplicated connectivity rows as separate channel observations.
+- LMM uses subject random intercepts; GLM uses HC3 or subject-clustered covariance.
+  Failed mixed models do not silently fall back to independent-observation OLS.
+- Contrasts use model-adjusted means and covariance, with selected-outcome multiple
+  comparison correction and separately recorded omnibus/coefficient families.
+- This optional workbench requires local Python with numpy, pandas, scipy,
+  matplotlib, and statsmodels. XLSX uses openpyxl; optional Word/PDF reports use
+  python-docx/reportlab. Set CCS_EEG_PYTHON to select an interpreter.
+
+### Analysis conventions and compatibility
+
+- FOOOF/IRASA retain a 1–40 Hz fit range; connectivity retains its 4–40 Hz grid.
+  Custom PSD bands may extend to Nyquist. Standard bands preserve legacy
+  integration; custom bands use trapezoidal integration.
+- Overlapping epochs are not independent group observations. Multiple subjects
+  and estimable designs are required for group inference.
+- Recording and analysis sidecars record the actual source, settings, and timing.
+  Existing cleaned files are not automatically regenerated with the new options.
+
+### Validation
+
+- 136 Flutter tests passed; 5 dataset-dependent tests skipped. Dart analysis was clean.
+- Rust bridge and parameter tests passed, including reference voltage differences,
+  alpha/high-frequency filtering, Welch robustness, and GC contrast identity.
+- 23 vendored reference-fixture tests and 5 group-statistics tests passed.
+
 ## [1.2.9]
 
 ### GEDAI controls

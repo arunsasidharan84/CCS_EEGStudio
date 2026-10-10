@@ -146,8 +146,16 @@ fn relative_bandpowers(
     maximum_frequency: usize,
     suffix: &str,
 ) -> BTreeMap<String, f64> {
+    relative_bandpowers_configured(spectrum,maximum_frequency,suffix,&BANDS)
+}
+fn relative_bandpowers_configured(spectrum:&[f64],maximum_frequency:usize,suffix:&str,bands:&[(f64,f64,&str)])->BTreeMap<String,f64>{
+    if bands != &BANDS {
+      let frequencies=(0..spectrum.len()).map(|i|i as f64).collect::<Vec<_>>();
+      let total=crate::eeg::features::integrate_trapezoid(&frequencies,spectrum,1.0,maximum_frequency as f64);
+      return bands.iter().map(|&(low,high,label)|(format!("{label}_{suffix}"),if total>0.0{crate::eeg::features::integrate_trapezoid(&frequencies,spectrum,low,high)/total}else{0.0})).collect();
+    }
     let total = simpson(&spectrum[1..=maximum_frequency]);
-    BANDS
+    bands
         .iter()
         .map(|&(low, high, label)| {
             let start = low as usize;
@@ -202,8 +210,15 @@ fn fractional_latency(power: &[f64], fraction: f64) -> f64 {
 }
 
 pub fn irasa_features(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
+    irasa_features_configured(signal,sfreq,&[])
+}
+pub fn irasa_features_configured(signal: &[f64], sfreq: f64, factors:&[f64]) -> BTreeMap<String,f64> {
+    irasa_features_banded(signal,sfreq,factors,&BANDS)
+}
+pub fn irasa_features_banded(signal:&[f64],sfreq:f64,factors:&[f64],bands:&[(f64,f64,&str)])->BTreeMap<String,f64>{
+    let factors:Vec<(usize,usize)> = if factors.is_empty() { H_FACTORS.to_vec() } else { factors.iter().map(|h|((h*100.0).round() as usize,100)).collect() };
     let (_, original) = welch_median(signal, sfreq);
-    let resampled = H_FACTORS
+    let resampled = factors
         .par_iter()
         .map(|&(up, down)| {
             let upsampled = resample_poly(signal, up, down);
@@ -256,7 +271,7 @@ pub fn irasa_features(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
         .collect::<Vec<_>>();
     let mut with_dc = vec![0.0];
     with_dc.extend_from_slice(&oscillatory);
-    let mut output = relative_bandpowers(&with_dc, 40, "Irasa");
+    let mut output = relative_bandpowers_configured(&with_dc, 40, "Irasa",bands);
     output.insert("intercept_Irasa".into(), intercept);
     output.insert("slope_Irasa".into(), slope);
     output.insert("rsquared_Irasa".into(), r_squared);
@@ -390,7 +405,7 @@ fn fit_gaussians(frequencies: &[f64], target: &[f64], peaks: &mut [Gaussian]) {
     }
 }
 
-fn fooof_model(psd: &[f64]) -> (Vec<f64>, BTreeMap<String, f64>) {
+fn fooof_model(psd: &[f64], max_peaks:usize, peak_threshold:f64) -> (Vec<f64>, BTreeMap<String, f64>) {
     let fit_max = 40.min(psd.len().saturating_sub(1));
     let frequencies = (1..=fit_max).map(|value| value as f64).collect::<Vec<_>>();
     let power = psd[1..=fit_max]
@@ -427,7 +442,7 @@ fn fooof_model(psd: &[f64]) -> (Vec<f64>, BTreeMap<String, f64>) {
         .collect::<Vec<_>>();
     let mut remaining = spectrum_flat.clone();
     let mut guesses = Vec::<Gaussian>::new();
-    while guesses.len() < 20 {
+    while guesses.len() < max_peaks {
         let (maximum_index, &maximum) = remaining
             .iter()
             .enumerate()
@@ -440,7 +455,7 @@ fn fooof_model(psd: &[f64]) -> (Vec<f64>, BTreeMap<String, f64>) {
             .sum::<f64>()
             / remaining.len() as f64)
             .sqrt();
-        if maximum <= 2.0 * standard_deviation || maximum <= 0.0 {
+        if maximum <= peak_threshold * standard_deviation || maximum <= 0.0 {
             break;
         }
         let half_height = maximum / 2.0;
@@ -600,12 +615,18 @@ fn fooof_model(psd: &[f64]) -> (Vec<f64>, BTreeMap<String, f64>) {
     (clipped, parameters)
 }
 
-pub fn fooof_features(signal: &[f64], sfreq: f64) -> BTreeMap<String, f64> {
+pub fn fooof_features(signal: &[f64], sfreq: f64) -> BTreeMap<String,f64> {
+    fooof_features_configured(signal,sfreq,20,2.0)
+}
+pub fn fooof_features_configured(signal:&[f64],sfreq:f64,max_peaks:usize,peak_threshold:f64)->BTreeMap<String,f64> {
+    fooof_features_banded(signal,sfreq,max_peaks,peak_threshold,&BANDS)
+}
+pub fn fooof_features_banded(signal:&[f64],sfreq:f64,max_peaks:usize,peak_threshold:f64,bands:&[(f64,f64,&str)])->BTreeMap<String,f64>{
     let (_, psd) = welch_median(signal, sfreq);
-    let (oscillatory, mut output) = fooof_model(&psd);
+    let (oscillatory, mut output) = fooof_model(&psd,max_peaks,peak_threshold);
     let mut with_dc = vec![0.0];
     with_dc.extend_from_slice(&oscillatory);
-    output.extend(relative_bandpowers(&with_dc, 40, "FOOOF"));
+    output.extend(relative_bandpowers_configured(&with_dc, 40, "FOOOF",bands));
     output
 }
 

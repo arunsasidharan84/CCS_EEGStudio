@@ -13,6 +13,10 @@ import 'topostats/topostats_batch.dart';
 import 'report/feature_report.dart';
 import 'topostats/topostats_engine.dart' show TopoStatsSettings;
 import 'recording_loader.dart';
+import 'recording_preparation_dialog.dart';
+import 'filtered_file_picker.dart';
+import 'group_statistics.dart';
+import 'processing_settings_dialog.dart';
 import 'erp_analysis.dart';
 import 'erp/stim_epoch_panel.dart';
 import 'topostats_analysis.dart';
@@ -62,6 +66,7 @@ enum _Module {
   erpAnalysis,
   topoStats,
   microstates,
+  groupStatistics,
 }
 
 class _PipelinePreset {
@@ -104,6 +109,7 @@ const _presets = <String, _PipelinePreset>{
       _Module.erpAnalysis,
       _Module.topoStats,
       _Module.microstates,
+      _Module.groupStatistics,
     ],
   ),
   'microstates': _PipelinePreset(
@@ -115,6 +121,7 @@ const _presets = <String, _PipelinePreset>{
 };
 
 String _moduleLabel(_Module m) => switch (m) {
+  _Module.groupStatistics => 'Group Statistics',
   _Module.loadRaw => 'Load Raw',
   _Module.preprocess => 'Preprocess',
   _Module.sourceSpace => 'Source Space',
@@ -126,6 +133,7 @@ String _moduleLabel(_Module m) => switch (m) {
 };
 
 String _moduleSubtitle(_Module m) => switch (m) {
+  _Module.groupStatistics => 'Metadata, LMM / GLM, contrasts',
   _Module.loadRaw => 'EDF, SET, FIF, VHDR',
   _Module.preprocess => 'Filter, re-reference, clean',
   _Module.sourceSpace => 'eLORETA inverse solution',
@@ -137,6 +145,7 @@ String _moduleSubtitle(_Module m) => switch (m) {
 };
 
 IconData _moduleIcon(_Module m) => switch (m) {
+  _Module.groupStatistics => Icons.groups,
   _Module.loadRaw => Icons.file_open,
   _Module.preprocess => Icons.cleaning_services,
   _Module.sourceSpace => Icons.psychology,
@@ -148,6 +157,7 @@ IconData _moduleIcon(_Module m) => switch (m) {
 };
 
 Color _moduleColor(_Module m) => switch (m) {
+  _Module.groupStatistics => _accentPurple,
   _Module.loadRaw => _accentBlue,
   _Module.preprocess => _accentPurple,
   _Module.sourceSpace => _accentBlue,
@@ -434,6 +444,9 @@ class _FeatureHomeState extends State<FeatureHome>
     setState(() {});
   }
 
+  bool get _usesExistingEpochs =>
+      !_batchMaximized && _raw?.pointsPerEpoch != null;
+
   String? get _gedaiEpochError {
     if (!_cfg.gedai) return null;
     final threshold = _gedaiThreshold.text.trim().toLowerCase();
@@ -442,7 +455,7 @@ class _FeatureHomeState extends State<FeatureHome>
         (numeric == null || !numeric.isFinite || numeric < 0 || numeric > 12)) {
       return 'Use auto, auto-, auto+, or a numeric threshold from 0 to 12.';
     }
-    if (_cfg.stimEpochs) return null;
+    if (_cfg.stimEpochs || _usesExistingEpochs) return null;
     final value = double.tryParse(_gedaiEpoch.text);
     if (value == null || !value.isFinite || value <= 0) {
       return 'GEDAI epoch size must be greater than 0 seconds.';
@@ -540,7 +553,8 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Opens a raw recording and keeps previously opened files available in the
   /// viewer switcher. Selecting a different input resets only derived outputs.
   Future<void> _loadRaw() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _rawExtensions,
@@ -559,8 +573,14 @@ class _FeatureHomeState extends State<FeatureHome>
         _preprocessed = null;
         _source = null;
         _directInput = null;
-        _featuresCsv = null;
-        _plotsDir = null;
+        final csv =
+            '${File(rec.path).parent.path}${Platform.pathSeparator}${_stem(rec.path)}.features.csv';
+        _featuresCsv = File(csv).existsSync() ? csv : null;
+        final figures =
+            '${File(rec.path).parent.path}${Platform.pathSeparator}Figures_TopoStats';
+        _plotsDir = _featuresCsv != null && Directory(figures).existsSync()
+            ? figures
+            : null;
         _selection = const ViewerSelection.empty();
         _channels = ChannelTypeMap.autoDetect(rec.labels);
       });
@@ -578,8 +598,14 @@ class _FeatureHomeState extends State<FeatureHome>
       _preprocessed = null;
       _source = null;
       _directInput = null;
-      _featuresCsv = null;
-      _plotsDir = null;
+      final csv =
+          '${File(recording.path).parent.path}${Platform.pathSeparator}${_stem(recording.path)}.features.csv';
+      _featuresCsv = File(csv).existsSync() ? csv : null;
+      final figures =
+          '${File(recording.path).parent.path}${Platform.pathSeparator}Figures_TopoStats';
+      _plotsDir = _featuresCsv != null && Directory(figures).existsSync()
+          ? figures
+          : null;
       _selection = const ViewerSelection.empty();
       _channels = ChannelTypeMap.autoDetect(recording.labels);
     });
@@ -588,7 +614,8 @@ class _FeatureHomeState extends State<FeatureHome>
 
   /// Loads a preprocessed file as the Stage 2 input, bypassing Stage 1.
   Future<void> _loadForSourceLocalisation() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _processedExtensions,
@@ -618,7 +645,8 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Only one file — extracting features from many files is Batch mode's job,
   /// and mixing the two here is exactly what made the old flow confusing.
   Future<void> _loadForExtraction() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _anyInputExtensions,
@@ -968,7 +996,8 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   Future<void> _compileCsv() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -1335,8 +1364,12 @@ class _FeatureHomeState extends State<FeatureHome>
               // Status indicators
               final hasOutput = switch (mod) {
                 _Module.loadRaw => _raw != null,
-                _Module.preprocess => _preprocessed != null,
-                _Module.sourceSpace => _source != null,
+                _Module.preprocess =>
+                  _preprocessed != null ||
+                      (_raw?.completedStages.contains('preprocess') ?? false),
+                _Module.sourceSpace =>
+                  _source != null ||
+                      (_raw?.completedStages.contains('source') ?? false),
                 _Module.featureExtraction => _featuresCsv != null,
                 _Module.plotsReport => _plotsDir != null,
                 _ => false,
@@ -1498,6 +1531,12 @@ class _FeatureHomeState extends State<FeatureHome>
           featureFilePaths: _featureFilesForTopoStats,
           runLabel: 'Run TopoStats',
           title: 'TopoStats',
+        );
+      case _Module.groupStatistics:
+        return GroupStatisticsWorkbench(
+          initialCsvPath: _batchFeatOutputs
+              .where((p) => p.endsWith('Batch_features.csv'))
+              .firstOrNull,
         );
       case _Module.microstates:
         return MicrostateAnalysisView(activeRecording: _activeRecording);
@@ -1881,12 +1920,37 @@ class _FeatureHomeState extends State<FeatureHome>
 
   // ── Stage 1 ─────────────────────────────────────────────────────────────
 
+  Future<void> _prepareRecording() async {
+    final recording =
+        _selectedModule == _Module.loadRaw ||
+            _selectedModule == _Module.preprocess
+        ? _raw
+        : _activeRecording;
+    if (recording == null) return;
+    final prepared = await showDialog<EegRecording>(
+      context: context,
+      builder: (_) => RecordingPreparationDialog(recording: recording),
+    );
+    if (prepared == null || !mounted) return;
+    setState(() {
+      _openedRecordings.add(prepared);
+    });
+    _selectOpenedRecording(prepared);
+  }
+
   Widget _buildLoadRawContent() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_raw != null)
+            _loadButton(
+              label: 'Crop / subepoch and save…',
+              color: _accentBlue,
+              onPressed: _running ? null : _prepareRecording,
+            ),
+
           _loadButton(
             label: _openedRecordings.isEmpty
                 ? 'Open Recording…'
@@ -1927,6 +1991,13 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_raw != null)
+            _loadButton(
+              label: 'Crop / subepoch and save…',
+              color: _accentBlue,
+              onPressed: _running ? null : _prepareRecording,
+            ),
+
           if (_raw != null)
             _recordingChip(_raw!, active: _activeStage == _Stage.raw)
           else
@@ -2134,6 +2205,24 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'Source-space parameters',
+              icon: const Icon(Icons.settings, size: 18),
+              onPressed: _running
+                  ? null
+                  : () async {
+                      await showProcessingSettings(
+                        context,
+                        _cfg,
+                        'Source Space',
+                      );
+                      if (mounted) setState(() {});
+                    },
+            ),
+          ),
+
           effectiveInput != null
               ? _pipelineBadge(
                   icon: Icons.arrow_right,
@@ -2182,6 +2271,13 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_activeRecording != null)
+            _loadButton(
+              label: 'Crop / subepoch and save…',
+              color: _accentBlue,
+              onPressed: _running ? null : _prepareRecording,
+            ),
+
           resolved != null
               ? _pipelineBadge(
                   icon: Icons.play_circle,
@@ -2254,7 +2350,7 @@ class _FeatureHomeState extends State<FeatureHome>
           if (_step3OtherExpanded) ...[
             const SizedBox(height: 4),
             _check(
-              'Remove non-EEG channels + avg ref',
+              'Remove non-EEG channels (reference in settings)',
               _cfg.removeNonEeg,
               (v) => _cfg.removeNonEeg = v,
             ),
@@ -2369,6 +2465,24 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'Preprocessing parameters',
+              icon: const Icon(Icons.settings, size: 18),
+              onPressed: _running
+                  ? null
+                  : () async {
+                      await showProcessingSettings(
+                        context,
+                        _cfg,
+                        'Preprocessing',
+                      );
+                      if (mounted) setState(() {});
+                    },
+            ),
+          ),
+
           _check(
             'Downsample to target rate',
             _cfg.downsample,
@@ -2414,7 +2528,12 @@ class _FeatureHomeState extends State<FeatureHome>
                     'Numeric 0-12: lower removes less. Inspect rhythm preservation, especially with sparse montages.',
               ),
             ),
-          if (_cfg.gedai)
+          if (_usesExistingEpochs)
+            _infoBox(
+              'Existing trial boundaries are preserved. Use Crop / subepoch to change the window or overlap.',
+              _accentBlue,
+            ),
+          if (_cfg.gedai && !_usesExistingEpochs)
             Padding(
               padding: const EdgeInsets.only(left: 24, bottom: 4),
               child: _field(
@@ -2427,17 +2546,19 @@ class _FeatureHomeState extends State<FeatureHome>
                 error: _gedaiEpochError,
               ),
             ),
-          _check(
-            'Epoch before GEDAI (memory safe)',
-            _cfg.epochBeforeGedai,
-            (v) => _cfg.epochBeforeGedai = v,
-          ),
-          StimEpochPanel(
-            config: _cfg,
-            markers: _raw?.markers ?? const [],
-            enabled: !_running,
-            onChanged: () => setState(() {}),
-          ),
+          if (!_usesExistingEpochs)
+            _check('Epoch before GEDAI (memory safe)', _cfg.epochBeforeGedai, (
+              v,
+            ) {
+              if (_raw?.pointsPerEpoch == null) _cfg.epochBeforeGedai = v;
+            }),
+          if (!_usesExistingEpochs)
+            StimEpochPanel(
+              config: _cfg,
+              markers: _raw?.markers ?? const [],
+              enabled: !_running,
+              onChanged: () => setState(() {}),
+            ),
           _check(
             'Interpolate bad channels',
             _cfg.interpolate,
@@ -2498,6 +2619,24 @@ class _FeatureHomeState extends State<FeatureHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              tooltip: 'Feature extraction parameters',
+              icon: const Icon(Icons.settings, size: 18),
+              onPressed: _running
+                  ? null
+                  : () async {
+                      await showProcessingSettings(
+                        context,
+                        _cfg,
+                        'Feature Extraction',
+                      );
+                      if (mounted) setState(() {});
+                    },
+            ),
+          ),
+
           _subLabel('SPECTRAL'),
           _check('PSD band power', _cfg.psd, (v) => _cfg.psd = v),
           _check('FOOOF / specparam', _cfg.fooof, (v) => _cfg.fooof = v),
@@ -2516,6 +2655,11 @@ class _FeatureHomeState extends State<FeatureHome>
           _check('MIM', _cfg.mim, (v) => _cfg.mim = v),
           _check('Granger Causality', _cfg.gc, (v) => _cfg.gc = v),
           _check('GC-TR', _cfg.gcTr, (v) => _cfg.gcTr = v),
+          _check(
+            'GC − GC-TR contrast',
+            _cfg.gcContrast,
+            (v) => _cfg.gcContrast = v,
+          ),
           const SizedBox(height: 6),
           _subLabel('BIVARIATE CONNECTIVITY'),
           _check('Coherence (COH)', _cfg.coh, (v) => _cfg.coh = v),
@@ -2565,7 +2709,8 @@ class _FeatureHomeState extends State<FeatureHome>
   // ══════════════════════════════════════════════════════════════════════
 
   Future<void> _addBatchPrepFiles() async {
-    final pick = await FilePicker.pickFiles(
+    final pick = await pickFilteredFiles(
+      context,
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: _rawExtensions,
@@ -2585,6 +2730,32 @@ class _FeatureHomeState extends State<FeatureHome>
     List<String> extensions,
     String title,
   ) async {
+    final controller = TextEditingController(text: '*');
+    final pattern = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Filter folder files'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Filename wildcard',
+            hintText: '*Rest*.edf;*Task*.edf',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Choose folder'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (pattern == null) return;
     final path = await FilePicker.getDirectoryPath(dialogTitle: title);
     if (path == null) return;
     final allowed = extensions.map((value) => '.$value').toSet();
@@ -2593,6 +2764,7 @@ class _FeatureHomeState extends State<FeatureHome>
         .where((entity) => entity is File)
         .map((entity) => entity.path)
         .where((file) => allowed.any((ext) => file.toLowerCase().endsWith(ext)))
+        .where((file) => matchesFilename(file, pattern))
         .toList();
     discovered.sort();
     setState(() {
@@ -2640,6 +2812,17 @@ class _FeatureHomeState extends State<FeatureHome>
                     style: const TextStyle(color: _textMuted, fontSize: 11),
                   ),
                   const Spacer(),
+                  TextButton.icon(
+                    onPressed: _running
+                        ? null
+                        : () => setState(() {
+                            _batchMaximized = false;
+                            _selectedModule = _Module.groupStatistics;
+                          }),
+                    icon: const Icon(Icons.groups, size: 16),
+                    label: const Text('Group Statistics'),
+                  ),
+
                   if (!_running && _batchResultCsvs.isNotEmpty) ...[
                     OutlinedButton.icon(
                       onPressed: _viewBatchResults,
@@ -2802,7 +2985,8 @@ class _FeatureHomeState extends State<FeatureHome>
     usePreviousLabel: 'Use Stage 1 outputs (or choose recordings directly)',
     onUsePreviousChanged: (v) => setState(() => _batchFeatUsePrep = v ?? true),
     onAdd: () async {
-      final pick = await FilePicker.pickFiles(
+      final pick = await pickFilteredFiles(
+        context,
         allowMultiple: true,
         type: FileType.custom,
         allowedExtensions: _anyInputExtensions,
@@ -2845,7 +3029,7 @@ class _FeatureHomeState extends State<FeatureHome>
           (v) => _cfg.combinedCsv = v,
         ),
         _check(
-          'Remove non-EEG channels + avg ref',
+          'Remove non-EEG channels (reference in settings)',
           _cfg.removeNonEeg,
           (v) => _cfg.removeNonEeg = v,
         ),
@@ -2885,7 +3069,8 @@ class _FeatureHomeState extends State<FeatureHome>
     usePreviousLabel: 'Use Stage 2 CSVs (or choose feature CSVs directly)',
     onUsePreviousChanged: (v) => setState(() => _batchPlotUseFeat = v ?? true),
     onAdd: () async {
-      final pick = await FilePicker.pickFiles(
+      final pick = await pickFilteredFiles(
+        context,
         allowMultiple: true,
         type: FileType.custom,
         allowedExtensions: ['csv'],
@@ -4080,6 +4265,28 @@ class _FeatureHomeState extends State<FeatureHome>
     ),
   );
 
+  bool _hasParameterSettings(String label) => [
+    'Bandpass + notch filter',
+    'Bad channel detection',
+    'GEDAI denoising',
+    'Interpolate bad channels',
+    'PSD band power',
+    'FOOOF / specparam',
+    'IRASA',
+    'Nonlinear dynamics',
+    'Autocorrelation window (ACW)',
+    'MIC',
+    'MIM',
+    'Granger Causality',
+    'GC-TR',
+    'GC − GC-TR contrast',
+    'Coherence (COH)',
+    'PLV',
+    'ciPLV',
+    'PLI',
+    'wPLI',
+  ].contains(label);
+
   Widget _check(String text, bool value, void Function(bool) set) =>
       CheckboxListTile(
         dense: true,
@@ -4087,9 +4294,36 @@ class _FeatureHomeState extends State<FeatureHome>
         visualDensity: VisualDensity.compact,
         value: value,
         onChanged: _running ? null : (v) => setState(() => set(v!)),
-        title: Text(
-          text,
-          style: const TextStyle(fontSize: 12, color: Colors.white),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(fontSize: 12, color: Colors.white),
+              ),
+            ),
+            if (_hasParameterSettings(text))
+              IconButton(
+                tooltip: '$text parameters',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.settings, size: 15),
+                onPressed: _running
+                    ? null
+                    : () async {
+                        final stage =
+                            [
+                              'Bandpass + notch filter',
+                              'Bad channel detection',
+                              'GEDAI denoising',
+                              'Interpolate bad channels',
+                            ].contains(text)
+                            ? 'Preprocessing'
+                            : 'Feature Extraction';
+                        await showProcessingSettings(context, _cfg, stage);
+                        if (mounted) setState(() {});
+                      },
+              ),
+          ],
         ),
       );
 

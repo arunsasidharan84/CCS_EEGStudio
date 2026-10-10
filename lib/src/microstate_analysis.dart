@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'filtered_file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'extraction_service.dart';
@@ -337,7 +338,8 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
   }
 
   Future<void> _addBatch() async {
-    final picked = await FilePicker.pickFiles(
+    final picked = await pickFilteredFiles(
+      context,
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: const [
@@ -361,7 +363,8 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
   }
 
   Future<void> _chooseInteractiveRecording() async {
-    final picked = await FilePicker.pickFiles(
+    final picked = await pickFilteredFiles(
+      context,
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: const [

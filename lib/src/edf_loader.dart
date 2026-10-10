@@ -81,11 +81,25 @@ class EdfLoader {
         List<double>.filled(records * samplesPerRecord[signalIndex], 0),
     ];
 
+    final markers = <EegMarker>[];
     final data = ByteData.sublistView(bytes);
     var cursor = headerBytes;
     for (var record = 0; record < records; record++) {
       for (var channel = 0; channel < signalCount; channel++) {
         final samplesInRecord = samplesPerRecord[channel];
+        if (labels[channel].toLowerCase().contains('annotation')) {
+          final end = cursor + samplesInRecord * 2;
+          if (end > bytes.length)
+            throw const FormatException('EDF annotation record is truncated.');
+          markers.addAll(
+            parseEdfAnnotations(
+              bytes.sublist(cursor, end),
+              displayRecordStart: record * dataRecordSeconds,
+            ),
+          );
+          cursor = end;
+          continue;
+        }
         final gain =
             (physicalMax[channel] - physicalMin[channel]) /
             (digitalMax[channel] - digitalMin[channel]);
@@ -121,6 +135,8 @@ class EdfLoader {
       sampleRateHz: sampleRate,
       channelLabels: displayLabels,
       channelSamples: channelSamples,
+      markers: markers
+        ..sort((a, b) => a.startSeconds.compareTo(b.startSeconds)),
       sourceDescription:
           '${displayLabels.length} channels, ${sampleRate.toStringAsFixed(1)} Hz, ${(records * dataRecordSeconds / 60).toStringAsFixed(1)} min',
     );
@@ -213,4 +229,46 @@ class _AsciiHeader {
   String _textAt(int offset, int width) {
     return ascii.decode(bytes.sublist(offset, offset + width)).trim();
   }
+}
+
+/// EDF+ time-annotated lists are byte strings, not calibrated signal samples.
+/// Remap each record's timekeeper to the same concatenated timeline as signals.
+List<EegMarker> parseEdfAnnotations(
+  Uint8List bytes, {
+  double displayRecordStart = 0,
+}) {
+  final lists = utf8
+      .decode(bytes, allowMalformed: true)
+      .split('\x00')
+      .where((s) => s.isNotEmpty)
+      .toList();
+  var clock = displayRecordStart;
+  if (lists.isNotEmpty) {
+    final fields = lists.first.split('\x14');
+    if (fields.skip(1).every((s) => s.trim().isEmpty)) {
+      final candidate = double.tryParse(fields.first.split('\x15').first);
+      if (candidate != null && candidate.isFinite) clock = candidate;
+    }
+  }
+  final markers = <EegMarker>[];
+  for (final tal in lists) {
+    final fields = tal.split('\x14');
+    if (fields.length < 2) continue;
+    final timing = fields.first.split('\x15');
+    final onset = double.tryParse(timing.first);
+    if (onset == null || !onset.isFinite) continue;
+    final duration = timing.length > 1
+        ? double.tryParse(timing[1]) ?? 0.0
+        : 0.0;
+    for (final description in fields.skip(1).where((s) => s.trim().isNotEmpty))
+      markers.add(
+        EegMarker(
+          type: 'Annotation',
+          description: description,
+          startSeconds: onset - clock + displayRecordStart,
+          durationSeconds: duration.isFinite && duration >= 0 ? duration : 0,
+        ),
+      );
+  }
+  return markers;
 }

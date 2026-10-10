@@ -143,6 +143,7 @@ class ExtractionService {
         await job.writeAsString(
           jsonEncode({
             'input': inputPath,
+            'recording_path': recording.path,
             'output': part.path,
             'format': inputFormat,
             'data_path': recording.dataPath,
@@ -150,6 +151,7 @@ class ExtractionService {
             'labels': recording.labels,
             'sample_count': recording.sampleCount,
             'epoch_count': recording.epochCount,
+            'epoch_start_seconds': recording.epochStartSeconds,
             'points_per_epoch': recording.pointsPerEpoch,
             'epoch_seconds': epochSeconds,
             'options': options.toJson(),
@@ -242,6 +244,29 @@ class ExtractionService {
         onProgress(1, 'Saved ${writtenPerFile.length} per-file CSVs');
       }
 
+      final analysisMetadata = {
+        'options': options.toJson(),
+        'recordings': [
+          for (final recording in recordings)
+            {
+              'source_path': recording.path,
+              'analysis_epoch_seconds': recording.pointsPerEpoch == null
+                  ? epochSeconds
+                  : recording.pointsPerEpoch! / recording.sampleRate,
+              'epoch_start_seconds': recording.epochStartSeconds,
+              'source_duration_seconds': recording.sourceDurationSeconds,
+            },
+        ],
+        'selection': {
+          'selected_channels': selection.selectedChannels,
+          'accepted_intervals': selection.acceptedIntervals,
+          'rejected_intervals': selection.rejectedIntervals,
+        },
+      };
+      for (final path in [...writtenPerFile, ?combined])
+        await File(
+          '$path.analysis.json',
+        ).writeAsString(jsonEncode(analysisMetadata));
       return ExtractionOutputs(
         combinedCsv: combined,
         perFileCsvs: List.unmodifiable(writtenPerFile),
@@ -328,6 +353,7 @@ class ExtractionService {
         jsonEncode({
           'job_type': 'preprocess',
           'input': inputPath,
+          'recording_path': recording.path,
           'output': outputPath,
           'format': inputFormat,
           'data_path': recording.dataPath,
@@ -380,11 +406,120 @@ class ExtractionService {
           'Preprocessed ${summary['channels']} channels. Bad channels: ${bad.isEmpty ? 'none' : bad}',
         );
       }
+      final resultSummary = stdout.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(stdout) as Map<String, dynamic>;
+      final outputRate =
+          (resultSummary['sample_rate'] as num?)?.toDouble() ??
+          recording.sampleRate;
+      final retained = (resultSummary['retained_parent_epochs'] as List?)
+          ?.cast<int>();
+      final preserveTimeline =
+          stim == null &&
+          selection.acceptedIntervals.isEmpty &&
+          selection.rejectedIntervals.isEmpty;
+      final copiedMarkers = <EegMarker>[];
+      final outputSamples =
+          (resultSummary['samples'] as num?)?.toInt() ?? recording.sampleCount;
+      if (recording.isEpoched) {
+        for (final marker in recording.markers) {
+          final index = marker.epochIndex;
+          if (retained != null && index != null && !retained.contains(index))
+            continue;
+          copiedMarkers.add(
+            EegMarker(
+              type: marker.type,
+              description: marker.description,
+              startSeconds: marker.startSeconds,
+              durationSeconds: marker.durationSeconds,
+              channelIndex: marker.channelIndex,
+              epochIndex: retained != null && index != null
+                  ? retained.indexOf(index)
+                  : index,
+            ),
+          );
+        }
+      } else if (stimJson != null && stim != null) {
+        final startOffset = (stim.tmin * outputRate).round();
+        final trialPoints = (stim.tmax * outputRate).round() - startOffset + 1;
+        final limit = (recording.durationSeconds * outputRate).round();
+        final onsets = (stimJson['onsets'] as List)
+            .cast<num>()
+            .map((v) => v.toDouble())
+            .where((onset) {
+              final start = (onset * outputRate).round() + startOffset;
+              return start >= 0 && start + trialPoints <= limit;
+            })
+            .toList();
+        if (onsets.length == outputSamples ~/ trialPoints) {
+          for (var epoch = 0; epoch < onsets.length; epoch++) {
+            final start = (onsets[epoch] * outputRate).round() + startOffset;
+            for (final marker in recording.markers) {
+              final sample = (marker.startSeconds * outputRate).round();
+              if (sample >= start && sample < start + trialPoints)
+                copiedMarkers.add(
+                  EegMarker(
+                    type: marker.type,
+                    description: marker.description,
+                    startSeconds: (sample - start) / outputRate,
+                    durationSeconds: math.min(
+                      marker.durationSeconds,
+                      (start + trialPoints - sample) / outputRate,
+                    ),
+                    channelIndex: marker.channelIndex,
+                    epochIndex: epoch,
+                  ),
+                );
+            }
+          }
+        }
+      } else if (preserveTimeline) {
+        final window = options.epochBeforeGedai
+            ? options.gedaiEpochSeconds
+            : null;
+        for (final marker in recording.markers.where(
+          (m) =>
+              m.startSeconds >= 0 &&
+              m.startSeconds < outputSamples / outputRate,
+        )) {
+          final epoch = window == null
+              ? null
+              : (marker.startSeconds / window).floor();
+          copiedMarkers.add(
+            EegMarker(
+              type: marker.type,
+              description: marker.description,
+              startSeconds: window == null
+                  ? marker.startSeconds
+                  : marker.startSeconds - epoch! * window,
+              durationSeconds: marker.durationSeconds,
+              channelIndex: marker.channelIndex,
+              epochIndex: epoch,
+            ),
+          );
+        }
+      }
+      final outputOnsets = retained == null
+          ? recording.epochStartSeconds
+          : [
+              for (final index in retained)
+                if (index < recording.epochStartSeconds.length)
+                  recording.epochStartSeconds[index],
+            ];
       await File('$outputPath.preprocessing.json').writeAsString(
         jsonEncode({
           'source_path': recording.path,
+          if (stim == null && (recording.isEpoched || preserveTimeline))
+            'epoch_start_seconds': outputOnsets,
+          'source_duration_seconds': recording.sourceDurationSeconds,
           'preprocessing': options.toJson(),
-          'summary': stdout.trim().isEmpty ? null : jsonDecode(stdout),
+          'summary': resultSummary,
+          'selection': {
+            'selected_channels': selection.selectedChannels,
+            'accepted_intervals': selection.acceptedIntervals,
+            'rejected_intervals': selection.rejectedIntervals,
+          },
+          'markers': [for (final marker in copiedMarkers) marker.toJson()],
           'timeline_preserved':
               stim == null &&
               selection.acceptedIntervals.isEmpty &&

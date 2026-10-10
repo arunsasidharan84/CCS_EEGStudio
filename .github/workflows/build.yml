@@ -266,7 +266,10 @@ jobs:
           workspaces: bridge
 
       - name: Build Rust engine (universal Linux static binary)
-        run: cargo build --release --target x86_64-unknown-linux-musl
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl
+          mkdir -p target/release
+          cp target/x86_64-unknown-linux-musl/release/ccs-eeg-engine target/release/ccs-eeg-engine
         working-directory: bridge
 
       # ── Flutter: setup + tests ────────────────────────────────────────────
