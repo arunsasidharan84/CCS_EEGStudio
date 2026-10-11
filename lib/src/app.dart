@@ -2516,6 +2516,136 @@ class _FeatureHomeState extends State<FeatureHome>
             _cfg.badChannels,
             (v) => _cfg.badChannels = v,
           ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: DropdownButtonFormField<String>(
+              value: _cfg.icaMethod,
+              isExpanded: true,
+              dropdownColor: _cardColor,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: const InputDecoration(
+                labelText: 'ICA cleaning (runs before ASR / GEDAI)',
+                helperText:
+                    'Blink-locked ICA + second ICA, components classified by ICLabel. Needs 10-05 electrode names.',
+                helperMaxLines: 3,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'none', child: Text('Off')),
+                DropdownMenuItem(
+                  value: 'runica',
+                  child: Text('Infomax (EEGLAB runica) + ICLabel'),
+                ),
+                DropdownMenuItem(
+                  value: 'picard',
+                  child: Text('Picard + ICLabel'),
+                ),
+              ],
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() => _cfg.icaMethod = v!),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: DropdownButtonFormField<String>(
+              value: _cfg.asrMode,
+              isExpanded: true,
+              dropdownColor: _cardColor,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: InputDecoration(
+                labelText:
+                    'ASR burst cleaning (cutoff ${_cfg.asrCutoff.toStringAsFixed(0)} SD)',
+                helperText:
+                    'Artifact Subspace Reconstruction (clean_rawdata parity). Follows ICA when both are on; the cutoff is set in Preprocessing parameters.',
+                helperMaxLines: 3,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'off', child: Text('Off')),
+                DropdownMenuItem(
+                  value: 'correct',
+                  child: Text('Correct (reconstruct bursts)'),
+                ),
+                DropdownMenuItem(
+                  value: 'reject',
+                  child: Text('Reject (drop burst samples)'),
+                ),
+              ],
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() => _cfg.asrMode = v!),
+            ),
+          ),
+          if (_cfg.asrMode != 'off')
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: DropdownButtonFormField<String>(
+                value: _cfg.asrVariant,
+                isExpanded: true,
+                dropdownColor: _cardColor,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                decoration: const InputDecoration(
+                  labelText: 'ASR variant',
+                  helperText:
+                      'Standard and Riemannian are ports of EEGLAB clean_rawdata. The others are experimental (see report); E-ASR / VMD / EMD are for up to 8 channels.',
+                  helperMaxLines: 3,
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'standard', child: Text('Standard (clean_rawdata)')),
+                  DropdownMenuItem(value: 'riemannian', child: Text('Riemannian ASR (rASR)')),
+                  DropdownMenuItem(value: 'adaptive', child: Text('Adaptive ASR (own EMA design)')),
+                  DropdownMenuItem(value: 'juggler_dbscan', child: Text('ASR_DBSCAN (movement-heavy data)')),
+                  DropdownMenuItem(value: 'juggler_gev', child: Text('ASR_GEV (movement-heavy data)')),
+                  DropdownMenuItem(value: 'easr', child: Text('E-ASR (delay embedding, few channels)')),
+                  DropdownMenuItem(value: 'vmd', child: Text('VMD-ASR (few channels)')),
+                  DropdownMenuItem(value: 'emd', child: Text('EMD-ASR (few channels)')),
+                ],
+                onChanged: _running
+                    ? null
+                    : (v) => setState(() => _cfg.asrVariant = v!),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: DropdownButtonFormField<String>(
+              value: _cfg.muscleMethod,
+              isExpanded: true,
+              dropdownColor: _cardColor,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: const InputDecoration(
+                labelText: 'Muscle / motion cleaner',
+                helperText:
+                    'Runs after ICA and before ASR. BSS-CCA validated against canonical-correlation references; iCanClean (pseudo-reference) and wICA are interpretations.',
+                helperMaxLines: 3,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'none', child: Text('Off')),
+                DropdownMenuItem(value: 'bss_cca', child: Text('BSS-CCA (muscle)')),
+                DropdownMenuItem(value: 'icanclean', child: Text('iCanClean (pseudo-reference)')),
+                DropdownMenuItem(value: 'wica', child: Text('wICA (HAPPE wavelet-enhanced ICA)')),
+              ],
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() => _cfg.muscleMethod = v!),
+            ),
+          ),
+          if ((_cfg.icaMethod != 'none' ||
+                  _cfg.asrMode != 'off' ||
+                  _cfg.muscleMethod != 'none') &&
+              _usesExistingEpochs)
+            _infoBox(
+              'ICA, ASR and muscle cleaners need continuous data and are skipped for epoched input.',
+              _accentBlue,
+            ),
+          if (_cfg.icaMethod != 'none' && _cfg.gedai)
+            _infoBox(
+              'ICA runs first and GEDAI afterwards. GEDAI already suppresses ocular and muscle artefacts, so enabling both is usually redundant: choose ICA (+ ASR) or GEDAI.',
+              _accentBlue,
+            ),
+          if (_cfg.asrMode == 'reject')
+            _infoBox(
+              'Reject mode removes burst samples, so output time stamps no longer map 1:1 to the input; use Correct to keep timing.',
+              _accentBlue,
+            ),
           _check('GEDAI denoising', _cfg.gedai, (v) => _cfg.gedai = v),
           if (_cfg.gedai)
             Padding(
@@ -2649,6 +2779,11 @@ class _FeatureHomeState extends State<FeatureHome>
             (v) => _cfg.nonlinear = v,
           ),
           _check('Autocorrelation window (ACW)', _cfg.acw, (v) => _cfg.acw = v),
+          _check(
+            'DFA (multi-band) / fE:I',
+            _cfg.dfaFei,
+            (v) => _cfg.dfaFei = v,
+          ),
           const SizedBox(height: 6),
           _subLabel('MULTIVARIATE CONNECTIVITY'),
           _check('MIC', _cfg.mic, (v) => _cfg.mic = v),

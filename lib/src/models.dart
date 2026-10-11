@@ -155,6 +155,31 @@ class PreprocessingOptions {
     this.epochBeforeGedai = false,
     this.nonEegChannels = const [],
     this.stimEpochs,
+    this.icaMethod = 'none',
+    this.icaBlink = true,
+    this.icaOther = true,
+    this.icaEyeChannel = '',
+    this.icaBlinkEpochs = 20,
+    this.icaBlinkThreshold = 0.99,
+    this.icaBlinkThresholdFloor = 0.60,
+    this.icaRemoveEcg = true,
+    this.icaArtefacts = const [],
+    this.icaOtherThreshold = 0.99,
+    this.icaOtherThresholdFloor = 0.60,
+    this.icaFitAsr = true,
+    this.icaFitAsrCutoff = 15,
+    this.icaSeed = 1,
+    this.asrMode = 'off',
+    this.asrCutoff = 20,
+    this.asrVariant = 'standard',
+    this.asrAdaptAlpha = 0.05,
+    this.asrEmbedDim = 8,
+    this.asrEmbedTau = 2,
+    this.asrModes = 4,
+    this.muscleMethod = 'none',
+    this.bsscaNRemove = 3,
+    this.iccThreshold = 0.7,
+    this.wicaLevels = 5,
   });
 
   factory PreprocessingOptions.fromJson(
@@ -186,6 +211,33 @@ class PreprocessingOptions {
     epochBeforeGedai: json['epoch_before_gedai'] as bool? ?? false,
     nonEegChannels:
         (json['non_eeg_channels'] as List?)?.cast<String>() ?? const [],
+    icaMethod: json['ica_method'] as String? ?? 'none',
+    icaBlink: json['ica_blink'] as bool? ?? true,
+    icaOther: json['ica_other'] as bool? ?? true,
+    icaEyeChannel: json['ica_eye_channel'] as String? ?? '',
+    icaBlinkEpochs: (json['ica_blink_epochs'] as num?)?.toInt() ?? 20,
+    icaBlinkThreshold: (json['ica_blink_threshold'] as num?)?.toDouble() ?? 0.99,
+    icaBlinkThresholdFloor:
+        (json['ica_blink_threshold_floor'] as num?)?.toDouble() ?? 0.60,
+    icaRemoveEcg: json['ica_remove_ecg'] as bool? ?? true,
+    icaArtefacts: (json['ica_artefacts'] as List?)?.cast<String>() ?? const [],
+    icaOtherThreshold: (json['ica_other_threshold'] as num?)?.toDouble() ?? 0.99,
+    icaOtherThresholdFloor:
+        (json['ica_other_threshold_floor'] as num?)?.toDouble() ?? 0.60,
+    icaFitAsr: json['ica_fit_asr'] as bool? ?? true,
+    icaFitAsrCutoff: (json['ica_fit_asr_cutoff'] as num?)?.toDouble() ?? 15,
+    icaSeed: (json['ica_seed'] as num?)?.toInt() ?? 1,
+    asrMode: json['asr_mode'] as String? ?? 'off',
+    asrCutoff: (json['asr_cutoff'] as num?)?.toDouble() ?? 20,
+    asrVariant: json['asr_variant'] as String? ?? 'standard',
+    asrAdaptAlpha: (json['asr_adapt_alpha'] as num?)?.toDouble() ?? 0.05,
+    asrEmbedDim: (json['asr_embed_dim'] as num?)?.toInt() ?? 8,
+    asrEmbedTau: (json['asr_embed_tau'] as num?)?.toInt() ?? 2,
+    asrModes: (json['asr_modes'] as num?)?.toInt() ?? 4,
+    muscleMethod: json['muscle_method'] as String? ?? 'none',
+    bsscaNRemove: (json['bsscca_n_remove'] as num?)?.toInt() ?? 3,
+    iccThreshold: (json['icc_threshold'] as num?)?.toDouble() ?? 0.7,
+    wicaLevels: (json['wica_levels'] as num?)?.toInt() ?? 5,
   );
 
   /// Stimulus-locked epoching (ERP): cut epochs around these markers after
@@ -214,6 +266,44 @@ class PreprocessingOptions {
   final double notchWidthHz, notchTransitionHz, sourceSnr;
   final List<String> sourceRegions;
   final bool epochBeforeGedai;
+
+  /// ICA cleaning run before ASR / GEDAI: 'none' | 'runica' | 'picard'
+  /// (blink-locked stage + second stage, components classified by ICLabel).
+  final String icaMethod;
+  final bool icaBlink, icaOther, icaRemoveEcg, icaFitAsr;
+
+  /// Blink-detection channel label (empty = automatic frontal channel).
+  final String icaEyeChannel;
+  final int icaBlinkEpochs, icaSeed;
+
+  /// ASR burst cutoff of the copy ICA is fitted on (MATLAB `ica2_BurstCriterion`).
+  final double icaFitAsrCutoff;
+  final double icaBlinkThreshold,
+      icaBlinkThresholdFloor,
+      icaOtherThreshold,
+      icaOtherThresholdFloor;
+
+  /// ICLabel classes removed by the second ICA stage (empty = Muscle,
+  /// Line Noise, Channel Noise).
+  final List<String> icaArtefacts;
+
+  /// Artifact Subspace Reconstruction: 'off' | 'correct' | 'reject'.
+  final String asrMode;
+  final double asrCutoff;
+
+  /// ASR flavour: 'standard' | 'riemannian' | 'adaptive' | 'juggler_dbscan' |
+  /// 'juggler_gev' | 'easr' | 'vmd' | 'emd'.
+  final String asrVariant;
+  final double asrAdaptAlpha;
+  final int asrEmbedDim;
+  final int asrEmbedTau;
+  final int asrModes;
+
+  /// Non-ASR muscle/motion cleaner: 'none' | 'bss_cca' | 'icanclean' | 'wica'.
+  final String muscleMethod;
+  final int bsscaNRemove;
+  final double iccThreshold;
+  final int wicaLevels;
 
   /// Channels the user has marked as non-EEG.  These are excluded from bad
   /// channel detection, interpolation and the common average reference.
@@ -246,6 +336,31 @@ class PreprocessingOptions {
     'source_regions': sourceRegions,
     'epoch_before_gedai': epochBeforeGedai,
     'non_eeg_channels': nonEegChannels,
+    'ica_method': icaMethod,
+    'ica_blink': icaBlink,
+    'ica_other': icaOther,
+    'ica_eye_channel': icaEyeChannel,
+    'ica_blink_epochs': icaBlinkEpochs,
+    'ica_blink_threshold': icaBlinkThreshold,
+    'ica_blink_threshold_floor': icaBlinkThresholdFloor,
+    'ica_remove_ecg': icaRemoveEcg,
+    'ica_artefacts': icaArtefacts,
+    'ica_other_threshold': icaOtherThreshold,
+    'ica_other_threshold_floor': icaOtherThresholdFloor,
+    'ica_fit_asr': icaFitAsr,
+    'ica_fit_asr_cutoff': icaFitAsrCutoff,
+    'ica_seed': icaSeed,
+    'asr_mode': asrMode,
+    'asr_cutoff': asrCutoff,
+    'asr_variant': asrVariant,
+    'asr_adapt_alpha': asrAdaptAlpha,
+    'asr_embed_dim': asrEmbedDim,
+    'asr_embed_tau': asrEmbedTau,
+    'asr_modes': asrModes,
+    'muscle_method': muscleMethod,
+    'bsscca_n_remove': bsscaNRemove,
+    'icc_threshold': iccThreshold,
+    'wica_levels': wicaLevels,
     if (stimEpochs != null) 'stim_epochs_spec': stimEpochs!.toJson(),
   };
 }
@@ -267,6 +382,7 @@ class ExtractionOptions {
     required this.gc,
     required this.gcTr,
     this.gcContrast = false,
+    this.dfaFei = false,
     this.psdWindowSeconds = 1,
     this.psdAverage = 'median',
     this.psdBands = const [],
@@ -298,6 +414,7 @@ class ExtractionOptions {
   final bool gc;
   final bool gcTr;
   final bool gcContrast;
+  final bool dfaFei;
   final double psdWindowSeconds;
   final String psdAverage;
   final List<Map<String, dynamic>> psdBands;
@@ -339,6 +456,7 @@ class ExtractionOptions {
     'gc': gc,
     'gc_tr': gcTr,
     'gc_contrast': gcContrast,
+    'dfa_fei': dfaFei,
     'coh': coh,
     'plv': plv,
     'ciplv': ciplv,
@@ -372,6 +490,32 @@ class AnalysisConfig {
   bool epochBeforeGedai = true;
   double gedaiEpochSeconds = 1;
   String gedaiThreshold = 'auto';
+  // ICA (runica / Picard + ICLabel) and ASR, run before GEDAI.
+  String icaMethod = 'none';
+  bool icaBlink = true;
+  bool icaOther = true;
+  String icaEyeChannel = '';
+  int icaBlinkEpochs = 20;
+  double icaBlinkThreshold = 0.99;
+  double icaBlinkThresholdFloor = 0.60;
+  bool icaRemoveEcg = true;
+  double icaFitAsrCutoff = 15;
+  List<String> icaArtefacts = [];
+  double icaOtherThreshold = 0.99;
+  double icaOtherThresholdFloor = 0.60;
+  bool icaFitAsr = true;
+  int icaSeed = 1;
+  String asrMode = 'off';
+  double asrCutoff = 20;
+  String asrVariant = 'standard';
+  double asrAdaptAlpha = 0.05;
+  int asrEmbedDim = 8;
+  int asrEmbedTau = 2;
+  int asrModes = 4;
+  String muscleMethod = 'none';
+  int bsscaNRemove = 3;
+  double iccThreshold = 0.7;
+  int wicaLevels = 5;
   String referenceMode = 'none';
   List<String> referenceChannels = [];
   int firTaps = 0;
@@ -440,6 +584,7 @@ class AnalysisConfig {
   bool gc = false;
   bool gcTr = false;
   bool gcContrast = false;
+  bool dfaFei = false;
 
   // Bivariate connectivity
   bool coh = true;
@@ -461,7 +606,7 @@ class AnalysisConfig {
       wpli;
 
   bool get anyFeature =>
-      psd || fooof || irasa || nonlinear || acw || anyConnectivity;
+      psd || fooof || irasa || nonlinear || dfaFei || acw || anyConnectivity;
 
   // ── Channel handling ─────────────────────────────────────────────────────
   /// Drop non-EEG channels and re-reference to the common average.
@@ -552,6 +697,31 @@ class AnalysisConfig {
       epochBeforeGedai: epochBeforeGedai,
       nonEegChannels: nonEegChannels,
       stimEpochs: stimEpochSpec,
+      icaMethod: icaMethod,
+      icaBlink: icaBlink,
+      icaOther: icaOther,
+      icaEyeChannel: icaEyeChannel,
+      icaBlinkEpochs: icaBlinkEpochs,
+      icaBlinkThreshold: icaBlinkThreshold,
+      icaBlinkThresholdFloor: icaBlinkThresholdFloor,
+      icaRemoveEcg: icaRemoveEcg,
+      icaArtefacts: icaArtefacts,
+      icaOtherThreshold: icaOtherThreshold,
+      icaOtherThresholdFloor: icaOtherThresholdFloor,
+      icaFitAsr: icaFitAsr,
+      icaFitAsrCutoff: icaFitAsrCutoff,
+      icaSeed: icaSeed,
+      asrMode: asrMode,
+      asrCutoff: asrCutoff,
+      asrVariant: asrVariant,
+      asrAdaptAlpha: asrAdaptAlpha,
+      asrEmbedDim: asrEmbedDim,
+      asrEmbedTau: asrEmbedTau,
+      asrModes: asrModes,
+      muscleMethod: muscleMethod,
+      bsscaNRemove: bsscaNRemove,
+      iccThreshold: iccThreshold,
+      wicaLevels: wicaLevels,
     );
   }
 
@@ -567,6 +737,7 @@ class AnalysisConfig {
     fooof: fooof,
     irasa: irasa,
     nonlinear: nonlinear,
+    dfaFei: dfaFei,
     acw: acw,
     connectivity: anyConnectivity,
     mic: mic,

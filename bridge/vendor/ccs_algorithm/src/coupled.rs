@@ -7,7 +7,8 @@
 
 use crate::cardiac::{extract_cardiac_features, CardiacFeatures, Modality};
 use crate::eeg::connectivity::{column_names, compute_epoch};
-use crate::eeg::features::{acw50, bandpowers};
+use crate::eeg::dfa_fei;
+use crate::eeg::features::{acw50, bandpowers, BANDS};
 use crate::eeg::nonlinear::all as extract_nonlinear;
 use crate::eeg::spectral::{fooof_features, irasa_features};
 use crate::eeg::Options;
@@ -125,6 +126,12 @@ pub fn compute_eeg_subepoch(
             let nl = extract_nonlinear(signal);
             for (k, v) in nl {
                 feats.insert(k.to_string(), v);
+            }
+        }
+        if options.dfa_fei {
+            let db = dfa_fei::all(signal, srate, &BANDS);
+            for (k, v) in db {
+                feats.insert(k, v);
             }
         }
 

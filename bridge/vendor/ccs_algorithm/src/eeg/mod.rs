@@ -76,6 +76,10 @@ pub struct Options {
     /// heuristics, so UI and engine can never disagree about what is EEG.
     #[serde(default)]
     pub non_eeg_channels: Vec<String>,
+    /// DFA (Detrended Fluctuation Analysis, multi-band) + fE/I
+    /// (functional Excitation/Inhibition ratio) feature family.
+    #[serde(default)]
+    pub dfa_fei: bool,
 }
 
 impl Options {
@@ -109,6 +113,7 @@ impl Options {
             wpli: true,
             remove_non_eeg: false,
             non_eeg_channels: Vec::new(),
+            dfa_fei: false,
         }
     }
 }
@@ -133,6 +138,7 @@ pub struct Row {
 }
 
 pub mod connectivity;
+pub mod dfa_fei;
 pub mod features;
 pub mod fif_loader;
 pub mod montage;

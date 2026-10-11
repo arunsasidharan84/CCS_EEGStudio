@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.10</b> ·
+  <b>Current version: 1.2.11</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -202,6 +202,24 @@ Non-EEG channels are **auto-detected from their labels** on load — ECG, EOG, E
 - **GEDAI windows**: Explicitly configure the window/epoch size used for GEDAI, with memory-safe pre-epoching for long recordings.
 - **Stimulus epochs**: Cut event-locked trials after filtering and before GEDAI, retain marker labels and epoch timing, and optionally apply baseline correction.
 
+### ICA, ASR and muscle cleaning
+
+Preprocess offers opt-in **Infomax/runica or Picard ICA**, blink and second-stage
+ICLabel removal, **ASR Correct/Reject** with selectable variants, and **BSS-CCA,
+iCanClean or wavelet ICA**. Parameters are exposed through the settings icon.
+The processing order is bad-channel detection → ICA → muscle cleaner → ASR →
+fixed-window epoching/GEDAI → interpolation → output reference/source projection.
+ICA requires at least 8 good located 10-05 channels and 20 seconds of continuous
+input. These cleaners skip already epoched data, including stimulus trials cut
+before this stage. ASR Reject changes the timeline; Correct preserves its length.
+
+Standard/Riemannian ASR, runica/Picard, ICLabel, BSS-CCA, iCanClean and wICA have
+specific numerical reference checks. Adaptive ASR is our EMA design; E-ASR and
+mode-based ASR combinations are experimental adaptations without original-code
+parity. They are not interchangeable implementations of every similarly named
+published algorithm. See [method references and scoped validation](docs/methods_and_validation.md)
+for parameter conventions, evidence and limits.
+
 ### ERP Analysis
 - Define conditions from marker chips or regular expressions.
 - Plot condition means ± SEM and test temporal clusters by permutation.
@@ -223,6 +241,15 @@ Non-EEG channels are **auto-detected from their labels** on load — ECG, EOG, E
 ### Nonlinear Metrics
 Eight epoch-wise nonlinear complexity and entropy metrics per channel:
 - Sample Entropy (SampEn), Approximate Entropy (ApEn), Hurst Exponent, Lempel-Ziv Complexity, Autocorrelation Window (ACW), Detrended Fluctuation Analysis (DFA) exponent, Higuchi Fractal Dimension, Katz Fractal Dimension.
+
+### Band-limited DFA and fE:I
+
+The optional DFA/fE:I family estimates amplitude-envelope scaling and a functional
+excitation/inhibition index in each selected band. It follows Hardstone et al.
+(2012) and Bruining et al. (2020), with windows clamped to available samples and
+missing values for bands that cannot fit. Short epochs do not establish long-range
+correlations at the literature's timescales. Method papers and implementation
+conventions are listed below and in the [validation guide](docs/methods_and_validation.md).
 
 ### Connectivity Analysis
 Nine connectivity measures computed via Morlet wavelet cross-spectra matching `mne-connectivity 0.8`:
@@ -308,6 +335,30 @@ The Rust engine is continuously verified against Python reference implementation
 See [`scripts/compare_parity.py`](scripts/compare_parity.py) and [`scripts/run_parity_test.sh`](scripts/run_parity_test.sh) for instructions on running parity validation suites.
 
 ---
+
+## 📚 Method references
+
+| App method | Paper or original implementation | Studio convention |
+| :--- | :--- | :--- |
+| Infomax ICA / runica | Bell & Sejnowski (1995), [doi:10.1162/neco.1995.7.6.1129](https://doi.org/10.1162/neco.1995.7.6.1129); [EEGLAB source](https://github.com/sccn/eeglab) | Native runica/pop_runica port; fixed seed; two-stage CCS component selection. |
+| Picard | Ablin, Cardoso & Gramfort (2018), [doi:10.1109/TSP.2018.2844203](https://doi.org/10.1109/TSP.2018.2844203); [original code](https://github.com/mind-inria/picard) | Port of python-picard 0.8. |
+| ICLabel | Pion-Tonachini, Kreutz-Delgado & Makeig (2019), [doi:10.1016/j.neuroimage.2019.05.026](https://doi.org/10.1016/j.neuroimage.2019.05.026); [classifier source](https://github.com/sccn/ICLabel) | Default network; dynamic class thresholds; recognized scalp positions required. |
+| ASR | [EEGLAB clean_rawdata documentation](https://eeglab.org/plugins/clean_rawdata/); [reference ASR source](https://github.com/sccn/clean_rawdata/blob/master/readme-asr.txt) | Native calibration/reconstruction/window rejection; Studio uses its own channel detector and 1 Hz fitting copy. |
+| Riemannian ASR | Blum et al. (2019), [doi:10.3389/fnhum.2019.00141](https://doi.org/10.3389/fnhum.2019.00141) | EEGLAB Riemannian port; 30-second Studio processing blocks. |
+| BSS-CCA | De Clercq et al. (2006), [doi:10.1109/TBME.2006.879459](https://doi.org/10.1109/TBME.2006.879459); [mne-denoise method](https://mne.tools/mne-denoise/dev/bss_cca.html) | Lagged-signal CCA; configurable component count or correlation threshold. |
+| iCanClean | Downey & Ferris, [arXiv:2201.11798](https://arxiv.org/abs/2201.11798); [reference estimator](https://mne.tools/mne-denoise/stable/generated/mne_denoise.icanclean.ICanClean.html) | Pseudo-reference from a zero-phase fourth-order Butterworth band-stop filter. |
+| wICA | Gabard-Durnam et al. (2018), [doi:10.3389/fnins.2018.00097](https://doi.org/10.3389/fnins.2018.00097); [HAPPE source](https://github.com/lcnhappe/happe) | Extended runica, coif5 SWT, ddencmp soft threshold; default 5 levels. |
+| GEDAI | [GEDAI author implementation](https://github.com/Marco-Congedo/Gedai); [method tutorial](https://neuroimage.usc.edu/brainstorm/Tutorials/Gedai) | CCS port with standard leadfield covariance; explicitly warns on identity fallback. |
+| Amplitude-envelope DFA | Hardstone et al. (2012), [doi:10.3389/fphys.2012.00450](https://doi.org/10.3389/fphys.2012.00450) | Band-specific fit scales; insufficient samples yield missing values. |
+| fE:I | Bruining et al. (2020), [doi:10.1038/s41598-020-65500-4](https://doi.org/10.1038/s41598-020-65500-4) | Native CCS Python-method port; short-window adaptations are identified in the guide. |
+| FOOOF / spectral parameterization | Donoghue et al. (2020), [doi:10.1038/s41593-020-00744-x](https://doi.org/10.1038/s41593-020-00744-x) | Native fit, configurable peaks; 1–40 Hz fitting range. |
+| IRASA | Wen & Liu (2016), [original article](https://pmc.ncbi.nlm.nih.gov/articles/PMC4706469/) | Native resampling/spectral separation; configurable factors, 1–40 Hz fit range. |
+| Connectivity / GC / GC-TR | [MNE-Connectivity spectral connectivity API](https://mne.tools/mne-connectivity/stable/generated/mne_connectivity.spectral_connectivity_epochs.html) | Morlet grid 4–40 Hz; native GC/GC-TR fits and their separately named difference. |
+
+The [method and validation guide](docs/methods_and_validation.md) distinguishes
+paper references, source ports, upstream numerical checks and release regression
+tests. A numerical match on selected fixtures is not a claim of universal artifact
+removal accuracy. Adaptive/embedding/mode-based ASR limits are documented there.
 
 ## ⌨️ Keyboard Shortcuts
 

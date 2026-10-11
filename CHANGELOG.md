@@ -4,6 +4,79 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.11]
+
+### ICA and ASR preprocessing (alternative or precursor to GEDAI)
+
+- New **ICA cleaning** option in Preprocess: EEGLAB-parity Infomax (`runica`) or Picard,
+  with blink-locked ICA (eye / optional heart components), a second ICA stage
+  (muscle, line noise, channel noise) and ICLabel classification. Runs before ASR and GEDAI.
+- New **ASR burst cleaning** (clean_rawdata parity): *Correct* reconstructs bursts in place
+  (timing preserved), *Reject* drops burst samples. It follows ICA when both are enabled.
+- Engine: vendored `bridge/vendor/ccs_ica` (sources of `ccs_toolbox/rust_ica`, validated against
+  MATLAB/EEGLAB). ICA/ICLabel need 10-05 electrode names and continuous data; bad channels are
+  left out of the decomposition and interpolated afterwards. The preprocessing summary gains an
+  `ica` report (components removed with ICLabel classes, ASR samples modified).
+- Parameters (eye channel, thresholds, ICLabel classes, ASR cutoff, seed) are in Preprocessing parameters.
+- **ASR variants**: Riemannian ASR (EEGLAB `asr_calibrate_r` port, MATLAB-verified), ASR_DBSCAN / ASR_GEV calibration for
+  movement-heavy data (sample selection matches mne-denoise `select_juggler_reference_samples`: DBSCAN identical, GEV 1 of 12000
+  samples), adaptive (EMA) ASR (own design, not the published A-ASR), and E-ASR / VMD-ASR / EMD-ASR for up to 8 channels
+  (interpretations; the E-ASR reference could not be accessed, so no reference check exists).
+- **Muscle / motion cleaners** (after ICA, before ASR): BSS-CCA and iCanClean (pseudo-reference) match mne-denoise numerically
+  (1e-8 or better); wICA follows HAPPE `wICA.m` (coif5 SWT, 5 levels, `ddencmp` soft threshold) and matches a MATLAB run of it to
+  9e-5 (MATLAB single precision). wICA default levels are now 5.
+- Verification scripts and numbers: `ccs_toolbox/rust_ica/README.md`.
+
+### Orbit recording fixes
+
+- Corrected the engine handoff for Orbit `.orb` / `.signal` recordings: the app
+  sends the parsed full-resolution channels as portable EEG rather than asking
+  the EDF reader to parse Orbit JSON. This fixes "invalid digit found in string"
+  during preprocessing and feature extraction.
+- Scalar C/D fields no longer create false EEG channels; array-valued C/D still
+  represent additional channels. Two-channel recordings show AF7, AF8 and PPG.
+- Added regression checks for channel detection and engine preprocessing/extraction.
+
+### DFA and functional excitation/inhibition
+
+- Added optional band-limited amplitude-envelope DFA and fE:I extraction with
+  band-specific CSV columns, family reporting, and shared batch controls.
+- The Rust implementation follows the CCS Python DFA/fE:I implementation and
+  Hardstone/Bruining methodology. Fit ranges and windows adapt to available data;
+  bands without enough data yield missing values rather than fabricated estimates.
+- Short-window results are adaptations and do not establish literature-scale
+  long-range correlations. fE:I is a signal-derived index, not a measured synaptic ratio.
+
+### Pipeline behavior and reproducibility
+
+- ICA requires continuous input, at least 8 good channels with recognized 10-05
+  positions and at least 20 seconds of data. Unlocated/bad channels are excluded.
+- Enabled cleaners run after bad-channel detection in ICA, muscle, ASR order,
+  before fixed-window subepoching/GEDAI. Already epoched input skips these cleaners
+  with a warning. Stimulus epochs created before this stage are also epoched input.
+- ASR Correct preserves sample count; Reject removes samples and loses one-to-one
+  input timing. Marker copying and raw/cleaned comparison are disabled when that
+  timeline is not preserved.
+- E-ASR, VMD-ASR and EMD-ASR skip inputs above 8 channels with a warning.
+  Riemannian ASR uses 30-second processing blocks in Studio.
+- ICA, ASR and muscle cleaning remain opt-in; enabling multiple cleaners combines
+  their effects. Sidecars, activity logs and reports record selected options and outcomes.
+- GEDAI reports whether a leadfield or identity reference was used. Unknown labels
+  produce an explicit warning: identity fallback is not leadfield-based GEDAI.
+- Updated macOS project and CocoaPods deployment targets consistently to macOS 12.
+- Added method papers, reference implementation links and a scoped numerical
+  validation table in README and docs/methods_and_validation.md.
+
+### Validation
+
+- Dart analysis is clean; 138 Flutter tests passed with 5 dataset-dependent skips.
+  All Rust bridge tests passed, including 8 ICA/ASR and 4 advanced-parameter checks.
+  The vendored algorithm library passed all 26 tests, including DFA/fE:I checks.
+  The local macOS 1.2.11 bundle compiled and passed code-signature verification.
+- Detailed parity figures describe upstream checks, not freshly rerun clinical or
+  algorithm-effectiveness validation. ICA2 removal is weakly tested on the upstream
+  fixtures because no components exceeded its thresholds.
+
 ## [1.2.10]
 
 ### Recording preparation and epoch handling

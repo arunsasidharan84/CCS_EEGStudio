@@ -848,6 +848,27 @@ Future<void> writeFeatureReport({
       ),
       ('Bad-channel detection', p.badchannel, ''),
       (
+        'ICA + ICLabel',
+        p.icaMethod != 'none',
+        p.icaMethod != 'none'
+            ? '${p.icaMethod == 'picard' ? 'Picard' : 'Infomax runica'}'
+                  '${p.icaBlink ? ', blink stage' : ''}'
+                  '${p.icaOther ? ', second stage' : ''}'
+            : '',
+      ),
+      (
+        'ASR',
+        p.asrMode != 'off',
+        p.asrMode != 'off'
+            ? '${p.asrMode}, cutoff ${p.asrCutoff.toStringAsFixed(0)}, ${p.asrVariant}'
+            : '',
+      ),
+      (
+        'Muscle / motion cleaner',
+        p.muscleMethod != 'none',
+        p.muscleMethod != 'none' ? p.muscleMethod : '',
+      ),
+      (
         'GEDAI denoising',
         p.gedai,
         p.gedai

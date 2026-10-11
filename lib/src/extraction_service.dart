@@ -117,7 +117,7 @@ class ExtractionService {
 
         if (!File(recording.path).existsSync() ||
             recording.isEpoched ||
-            recording.format == 'ccseeg') {
+            (recording.format == 'ccseeg' || recording.format == 'orb')) {
           final tempInput = File('${temp.path}/input_temp_$i.ccseeg.json');
           final jsonMap = {
             'format': 'ccseeg-v1',
@@ -326,7 +326,7 @@ class ExtractionService {
 
       if (!File(recording.path).existsSync() ||
           recording.isEpoched ||
-          recording.format == 'ccseeg') {
+          (recording.format == 'ccseeg' || recording.format == 'orb')) {
         final tempInput = File('${temp.path}/input_temp.ccseeg.json');
         final jsonMap = {
           'format': 'ccseeg-v1',
@@ -405,6 +405,38 @@ class ExtractionService {
           1,
           'Preprocessed ${summary['channels']} channels. Bad channels: ${bad.isEmpty ? 'none' : bad}',
         );
+        final icaReport = summary['ica'];
+        if (icaReport is Map<String, dynamic>) {
+          final icaInfo = icaReport['ica'];
+          if (icaInfo is Map<String, dynamic>) {
+            String stage(Object? v) {
+              if (v is! Map<String, dynamic> || v['ran'] != true) {
+                return 'not run';
+              }
+              final removed = (v['removed'] as List?)?.length ?? 0;
+              final classes = (v['removed_class'] as List?)?.join(', ') ?? '';
+              return '$removed of ${v['components']} components removed'
+                  '${classes.isEmpty ? '' : ' ($classes)'}';
+            }
+
+            onProgress(
+              1,
+              'ICA (${icaInfo['method']}): blink stage ${stage(icaInfo['blink_stage'])}; '
+              'second stage ${stage(icaInfo['other_stage'])}',
+            );
+          }
+          final asrInfo = icaReport['asr'];
+          if (asrInfo is Map<String, dynamic>) {
+            onProgress(
+              1,
+              'ASR (${asrInfo['mode']}, cutoff ${asrInfo['cutoff']}): '
+              '${asrInfo['samples_changed']} of ${asrInfo['samples_total']} samples modified',
+            );
+          }
+        }
+        for (final w in (summary['warnings'] as List?) ?? const []) {
+          onProgress(1, '⚠ $w');
+        }
       }
       final resultSummary = stdout.trim().isEmpty
           ? <String, dynamic>{}
@@ -415,6 +447,7 @@ class ExtractionService {
       final retained = (resultSummary['retained_parent_epochs'] as List?)
           ?.cast<int>();
       final preserveTimeline =
+          options.asrMode != 'reject' &&
           stim == null &&
           selection.acceptedIntervals.isEmpty &&
           selection.rejectedIntervals.isEmpty;
@@ -618,6 +651,7 @@ class ExtractionService {
     final hasFooof = opts?.fooof ?? familyCols.containsKey('fooof');
     final hasNl = opts?.nonlinear ?? familyCols.containsKey('nonlinear');
     final hasAcw = opts?.acw ?? false;
+    final hasDfaFei = opts?.dfaFei ?? familyCols.containsKey('dfa_fei');
     final hasConn = (opts != null)
         ? (opts.mic ||
               opts.mim ||
@@ -645,6 +679,7 @@ class ExtractionService {
         hasFooof: hasFooof,
         hasNl: hasNl,
         hasAcw: hasAcw,
+        hasDfaFei: hasDfaFei,
         hasConn: hasConn,
         lines: lines,
       ),
@@ -723,6 +758,7 @@ class ExtractionService {
     required bool hasFooof,
     required bool hasNl,
     required bool hasAcw,
+    required bool hasDfaFei,
     required bool hasConn,
     required List<String> lines,
   }) {
@@ -817,6 +853,9 @@ class ExtractionService {
       ('Notch Filter', prepOpts?.filter ?? false),
       ('Downsample', prepOpts?.downsample ?? false),
       ('Bad Ch Detection', prepOpts?.badchannel ?? false),
+      ('ICA + ICLabel', (prepOpts?.icaMethod ?? 'none') != 'none'),
+      ('ASR', (prepOpts?.asrMode ?? 'off') != 'off'),
+      ('Muscle cleaner', (prepOpts?.muscleMethod ?? 'none') != 'none'),
       ('GEDAI Denoising', prepOpts?.gedai ?? false),
       ('Bad Ch Interpolate', prepOpts?.interpolate ?? false),
       ('CAR Reference', true),
@@ -874,6 +913,7 @@ class ExtractionService {
       ('IRASA Fractal/Oscillatory PSD', hasIrasa, _Rgb(0.23, 0.69, 0.40)),
       ('Nonlinear Dynamics (8 metrics)', hasNl, _Rgb(0.68, 0.35, 0.97)),
       ('Autocorrelation Window (ACW)', hasAcw, _Rgb(0.95, 0.60, 0.13)),
+      ('DFA (multi-band) / fE:I', hasDfaFei, _Rgb(0.35, 0.80, 0.80)),
       ('Functional Connectivity (9 measures)', hasConn, _Rgb(0.97, 0.35, 0.35)),
     ];
     for (final (label, active, col) in featDefs) {
@@ -1152,6 +1192,12 @@ class ExtractionService {
         if (prepOpts.downsample)
           'Downsample → ${prepOpts.downsampleFreq.toStringAsFixed(0)} Hz',
         if (prepOpts.badchannel) 'Bad channel detection',
+        if (prepOpts.icaMethod != 'none')
+          'ICA (${prepOpts.icaMethod}) + ICLabel',
+        if (prepOpts.asrMode != 'off')
+          'ASR ${prepOpts.asrMode} (${prepOpts.asrVariant}, cutoff ${prepOpts.asrCutoff.toStringAsFixed(0)})',
+        if (prepOpts.muscleMethod != 'none')
+          'Muscle cleaner (${prepOpts.muscleMethod})',
         if (prepOpts.gedai) 'GEDAI artefact rejection',
         if (prepOpts.interpolate) 'Spherical interpolation',
         'Common-average reference',
@@ -1861,6 +1907,7 @@ class ExtractionService {
     'irasa' => _Rgb(0.15, 0.60, 0.85),
     'nonlinear' => _Rgb(0.68, 0.35, 0.97),
     'connectivity' => _Rgb(0.97, 0.35, 0.35),
+    'dfa_fei' => _Rgb(0.35, 0.80, 0.80),
     _ => _Rgb(0.23, 0.51, 0.97),
   };
 
@@ -1889,6 +1936,9 @@ class ExtractionService {
         header.startsWith('mim_') ||
         header.startsWith('gc_')) {
       return 'connectivity';
+    }
+    if (header.endsWith('_DFA') || header.endsWith('_fEI')) {
+      return 'dfa_fei';
     }
     return 'other';
   }

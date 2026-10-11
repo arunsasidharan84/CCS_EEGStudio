@@ -45,8 +45,12 @@ class OrbLoader {
 
         final aList = _extractNumList(decoded['A']);
         final bList = _extractNumList(decoded['B']);
-        final cList = _extractNumList(decoded['C']);
-        final dList = _extractNumList(decoded['D']);
+        final cList = decoded['C'] is List
+            ? _extractNumList(decoded['C'])
+            : const <double>[];
+        final dList = decoded['D'] is List
+            ? _extractNumList(decoded['D'])
+            : const <double>[];
 
         if (cList.isNotEmpty || dList.isNotEmpty) has4Channels = true;
 

@@ -20,6 +20,8 @@ serde_json = "1"
 regex = "1"
 rand = "0.8"
 flate2 = "1.0"
+statrs = "0.17"
+ccs_ica = { path = "../ccs_ica" }
 
 [dev-dependencies]
 approx = "0.5"

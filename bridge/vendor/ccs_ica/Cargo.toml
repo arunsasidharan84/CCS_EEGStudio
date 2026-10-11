@@ -1,0 +1,16 @@
+[package]
+name = "ccs_ica"
+version = "0.1.0"
+edition = "2021"
+description = "Vendored from ccs_toolbox/rust_ica: EEGLAB runica/Picard ICA, ICLabel, blink detection and clean_rawdata ASR (parity-validated against MATLAB)"
+publish = false
+autobins = false
+
+[lib]
+name = "ccs_ica"
+path = "src/lib.rs"
+
+[dependencies]
+nalgebra = "0.32"
+rustfft = "6"
+serde_json = "1"

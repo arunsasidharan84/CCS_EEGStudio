@@ -64,6 +64,33 @@ Future<bool> showProcessingSettings(
       regularization = TextEditingController(
         text: '${config.splineRegularization}',
       );
+  final icaEye = TextEditingController(text: config.icaEyeChannel),
+      icaEpochs = TextEditingController(text: '${config.icaBlinkEpochs}'),
+      icaBlinkHi = TextEditingController(text: '${config.icaBlinkThreshold}'),
+      icaBlinkLo = TextEditingController(
+        text: '${config.icaBlinkThresholdFloor}',
+      ),
+      icaArtefacts = TextEditingController(
+        text: config.icaArtefacts.join(', '),
+      ),
+      icaOtherHi = TextEditingController(text: '${config.icaOtherThreshold}'),
+      icaOtherLo = TextEditingController(
+        text: '${config.icaOtherThresholdFloor}',
+      ),
+      icaSeed = TextEditingController(text: '${config.icaSeed}'),
+      icaFitCutoff = TextEditingController(text: '${config.icaFitAsrCutoff}'),
+      asrCutoff = TextEditingController(text: '${config.asrCutoff}'),
+      asrAlpha = TextEditingController(text: '${config.asrAdaptAlpha}'),
+      asrEmbedDim = TextEditingController(text: '${config.asrEmbedDim}'),
+      asrEmbedTau = TextEditingController(text: '${config.asrEmbedTau}'),
+      asrModes = TextEditingController(text: '${config.asrModes}'),
+      bsscaN = TextEditingController(text: '${config.bsscaNRemove}'),
+      iccThr = TextEditingController(text: '${config.iccThreshold}'),
+      wicaLevels = TextEditingController(text: '${config.wicaLevels}');
+  var icaBlink = config.icaBlink,
+      icaOther = config.icaOther,
+      icaRemoveEcg = config.icaRemoveEcg,
+      icaFitAsr = config.icaFitAsr;
   String? error;
   Widget field(
     TextEditingController c,
@@ -173,6 +200,101 @@ Future<bool> showProcessingSettings(
                   const Text(
                     'GEDAI still uses its internal full-rank pseudo-average reference. The chosen output reference is applied after cleaning.',
                   ),
+                  const Divider(height: 24),
+                  const Text(
+                    'ICA cleaning (choose the algorithm in the Preprocessing panel)',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Blink-locked ICA stage (eye / heart)'),
+                    value: icaBlink,
+                    onChanged: (v) => setState(() => icaBlink = v!),
+                  ),
+                  if (icaBlink) ...[
+                    field(
+                      icaEye,
+                      'Blink detection channel',
+                      help: 'Empty = Fp1, Fp2, AFz, Fz, F7, F8, AF3 or AF4, whichever exists.',
+                    ),
+                    field(icaEpochs, 'Blink epochs for the decomposition'),
+                    field(
+                      icaBlinkHi,
+                      'Eye component threshold (start)',
+                      help: 'ICLabel probability; lowered stepwise to the floor below.',
+                    ),
+                    field(icaBlinkLo, 'Eye component threshold (floor)'),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Also remove heart (ECG) components'),
+                      value: icaRemoveEcg,
+                      onChanged: (v) => setState(() => icaRemoveEcg = v!),
+                    ),
+                  ],
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Second ICA stage (muscle / line noise / channel noise)',
+                    ),
+                    value: icaOther,
+                    onChanged: (v) => setState(() => icaOther = v!),
+                  ),
+                  if (icaOther) ...[
+                    field(
+                      icaArtefacts,
+                      'ICLabel classes to remove',
+                      help: 'Comma-separated; empty = Muscle, Line Noise, Channel Noise.',
+                    ),
+                    field(icaOtherHi, 'Component threshold (start)'),
+                    field(icaOtherLo, 'Component threshold (floor)'),
+                    field(
+                      icaFitCutoff,
+                      'ASR cutoff for the ICA fit copy (SD)',
+                      help: 'MATLAB ica2_BurstCriterion (default 15); burst and window rejection apply to this copy only.',
+                    ),
+                    CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Fit ICA on ASR-cleaned data'),
+                      subtitle: const Text(
+                        'As the MATLAB pipeline: bursts are rejected from the copy ICA is fitted on only.',
+                      ),
+                      value: icaFitAsr,
+                      onChanged: (v) => setState(() => icaFitAsr = v!),
+                    ),
+                  ],
+                  field(
+                    icaSeed,
+                    'ICA random seed',
+                    help: 'Fixed seed makes the decomposition reproducible.',
+                  ),
+                  const Divider(height: 24),
+                  field(
+                    asrCutoff,
+                    'ASR burst cutoff (SD)',
+                    help: 'clean_rawdata BurstCriterion: 5 aggressive, 20 conservative (default).',
+                  ),
+                  if (config.asrVariant == 'adaptive')
+                    field(
+                      asrAlpha,
+                      'Adaptive ASR update rate (0-1)',
+                      help: 'Weight of each clean block in the running calibration; 0 = static ASR.',
+                    ),
+                  if (config.asrVariant == 'easr') ...[
+                    field(asrEmbedDim, 'E-ASR embedding dimension', help: 'Pseudo-channels per channel (2-32).'),
+                    field(asrEmbedTau, 'E-ASR delay (samples)', help: '1-50.'),
+                  ],
+                  if (config.asrVariant == 'vmd' || config.asrVariant == 'emd')
+                    field(asrModes, 'Number of modes', help: 'VMD modes / EMD components used as ASR channels (2-12).'),
+                  if (config.muscleMethod == 'bss_cca')
+                    field(bsscaN, 'BSS-CCA sources removed', help: 'Lowest-autocorrelation sources dropped (1+; typical 1-10% of channels).'),
+                  if (config.muscleMethod == 'icanclean')
+                    field(iccThr, 'iCanClean R² threshold', help: 'Canonical components with R² above this are removed (default 0.7).'),
+                  if (config.muscleMethod == 'wica')
+                    field(wicaLevels, 'wICA wavelet levels', help: 'HAPPE wICA: coif5 SWT levels, soft threshold (default 5).'),
                 ],
                 if (stage == 'Source Space') ...[
                   field(
@@ -333,6 +455,80 @@ Future<bool> showProcessingSettings(
                     throw const FormatException(
                       'IIR order must be even, 2-12.',
                     );
+                  final eh = double.parse(icaBlinkHi.text),
+                      el = double.parse(icaBlinkLo.text),
+                      oh = double.parse(icaOtherHi.text),
+                      ol = double.parse(icaOtherLo.text),
+                      ac = double.parse(asrCutoff.text),
+                      fc = double.parse(icaFitCutoff.text);
+                  final ne = int.parse(icaEpochs.text),
+                      sd = int.parse(icaSeed.text);
+                  if (!eh.isFinite ||
+                      !el.isFinite ||
+                      !oh.isFinite ||
+                      !ol.isFinite ||
+                      eh > 1 ||
+                      oh > 1 ||
+                      el <= 0 ||
+                      ol <= 0 ||
+                      ne < 2 ||
+                      sd < 0)
+                    throw const FormatException(
+                      'ICA thresholds must be in (0, 1], blink epochs at least 2, seed non-negative.',
+                    );
+                  if (!fc.isFinite || fc < 1 || fc > 200)
+                    throw const FormatException(
+                      'ICA fit ASR cutoff must be between 1 and 200.',
+                    );
+                  if (!ac.isFinite || ac < 1 || ac > 200)
+                    throw const FormatException(
+                      'ASR cutoff must be between 1 and 200.',
+                    );
+                  final aa = double.parse(asrAlpha.text),
+                      ed = int.parse(asrEmbedDim.text),
+                      et = int.parse(asrEmbedTau.text),
+                      am = int.parse(asrModes.text),
+                      bn = int.parse(bsscaN.text),
+                      it = double.parse(iccThr.text),
+                      wl = int.parse(wicaLevels.text);
+                  if (!aa.isFinite || aa < 0 || aa > 1)
+                    throw const FormatException('Adaptive ASR rate must be in [0, 1].');
+                  if (ed < 2 || ed > 32 || et < 1 || et > 50)
+                    throw const FormatException('E-ASR dimension must be 2-32 and delay 1-50.');
+                  if (am < 2 || am > 12)
+                    throw const FormatException('Mode count must be 2-12.');
+                  if (bn < 1)
+                    throw const FormatException('BSS-CCA must remove at least 1 source.');
+                  if (!it.isFinite || it <= 0 || it >= 1)
+                    throw const FormatException('iCanClean R² threshold must be in (0, 1).');
+                  if (wl < 1 || wl > 12)
+                    throw const FormatException('wICA levels must be 1-12.');
+                  config
+                    ..icaBlink = icaBlink
+                    ..icaOther = icaOther
+                    ..icaRemoveEcg = icaRemoveEcg
+                    ..icaFitAsr = icaFitAsr
+                    ..icaEyeChannel = icaEye.text.trim()
+                    ..icaBlinkEpochs = ne
+                    ..icaBlinkThreshold = eh
+                    ..icaBlinkThresholdFloor = el
+                    ..icaOtherThreshold = oh
+                    ..icaOtherThresholdFloor = ol
+                    ..icaSeed = sd
+                    ..asrCutoff = ac
+                    ..asrAdaptAlpha = aa
+                    ..asrEmbedDim = ed
+                    ..asrEmbedTau = et
+                    ..asrModes = am
+                    ..bsscaNRemove = bn
+                    ..iccThreshold = it
+                    ..wicaLevels = wl
+                    ..icaFitAsrCutoff = fc
+                    ..icaArtefacts = icaArtefacts.text
+                        .split(',')
+                        .map((v) => v.trim())
+                        .where((v) => v.isNotEmpty)
+                        .toList();
                   config
                     ..badVarianceRatio = vr
                     ..splineStiffness = ss
@@ -457,6 +653,23 @@ Future<bool> showProcessingSettings(
     bands,
     order,
     featureRefs,
+    icaEye,
+    icaEpochs,
+    icaBlinkHi,
+    icaBlinkLo,
+    icaArtefacts,
+    icaOtherHi,
+    icaOtherLo,
+    icaSeed,
+    icaFitCutoff,
+    asrCutoff,
+    asrAlpha,
+    asrEmbedDim,
+    asrEmbedTau,
+    asrModes,
+    bsscaN,
+    iccThr,
+    wicaLevels,
   ]) {
     c.dispose();
   }

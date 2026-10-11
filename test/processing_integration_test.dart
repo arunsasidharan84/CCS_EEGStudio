@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:ccs_eeg_app/src/orbit_loader.dart';
 import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:ccs_eeg_app/src/models.dart';
@@ -10,6 +11,31 @@ void main() {
   final engine = File(
     '${Directory.current.path}/bridge/target/release/ccs-eeg-engine${Platform.isWindows ? '.exe' : ''}',
   );
+  test('Orbit input is handed to engine as portable data', () async {
+    final dir = Directory.systemTemp.createTempSync('orb_engine_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final file = File('${dir.path}/sample.orb')..writeAsStringSync([
+      for (var i = 0; i < 250; i++)
+        '{"A":[$i],"B":[${i * 2}],"E":25,"C":0}',
+    ].join('\n'));
+    final rec = OrbLoader().load(file.path);
+    final cfg = AnalysisConfig()
+      ..downsample = false ..filter = false ..badChannels = false
+      ..gedai = false ..interpolate = false ..epochBeforeGedai = false
+      ..featureReferenceMode = 'none'
+      ..fooof = false ..irasa = false ..nonlinear = false ..acw = false
+      ..mic = false ..coh = false;
+    final clean = await ExtractionService().preprocess(
+      recording: rec, outputPath: '${dir.path}/clean.ccseeg.json',
+      options: cfg.toPreprocessingOptions(), onProgress: (_, __) {},
+    );
+    expect(clean.labels, ['AF7', 'AF8', 'PPG']);
+    expect(clean.sampleCount, 250);
+    final csv = '${dir.path}/features.csv';
+    await ExtractionService().run(recordings: [rec], outputPath: csv,
+      options: cfg.toExtractionOptions(), epochSeconds: 1, onProgress: (_, __) {});
+    expect(File(csv).readAsStringSync(), contains('AF7'));
+  }, skip: !engine.existsSync());
   test(
     'preprocessing preserves annotations and completion history',
     () async {

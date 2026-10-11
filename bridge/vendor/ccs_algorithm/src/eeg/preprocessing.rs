@@ -69,6 +69,81 @@ pub struct PreprocessOptions {
     /// epochs (GEDAI uses one trial per window).
     #[serde(default)]
     pub stim_epochs: Option<StimEpochOptions>,
+    /// ICA-based cleaning ("none" | "runica" | "picard"), run *before* ASR / GEDAI.  Blink-locked ICA stage plus a
+    /// second ICA stage; components are classified with ICLabel (parity-validated against EEGLAB/MATLAB).
+    #[serde(default)]
+    pub ica_method: String,
+    #[serde(default = "default_true")]
+    pub ica_blink: bool,
+    #[serde(default = "default_true")]
+    pub ica_other: bool,
+    /// Eye channel used to detect blinks (empty = Fp1/Fp2/AFz/Fz/F7/F8/AF3/AF4, else first channel).
+    #[serde(default)]
+    pub ica_eye_channel: String,
+    #[serde(default = "default_ica_blink_epochs")]
+    pub ica_blink_epochs: usize,
+    #[serde(default = "default_ica_blink_hi")]
+    pub ica_blink_threshold: f64,
+    #[serde(default = "default_ica_blink_lo")]
+    pub ica_blink_threshold_floor: f64,
+    #[serde(default = "default_true")]
+    pub ica_remove_ecg: bool,
+    /// ICLabel classes removed by the second stage (empty = Muscle, Line Noise, Channel Noise).
+    #[serde(default)]
+    pub ica_artefacts: Vec<String>,
+    #[serde(default = "default_ica_other_hi")]
+    pub ica_other_threshold: f64,
+    #[serde(default = "default_ica_other_lo")]
+    pub ica_other_threshold_floor: f64,
+    /// ASR burst rejection applied to the ICA fit data (as `pop_clean_rawdata` in the MATLAB pipeline).
+    #[serde(default = "default_true")]
+    pub ica_fit_asr: bool,
+    /// ASR burst cutoff of the ICA fit copy (`ica2_BurstCriterion`, pipeline default 15).
+    #[serde(default = "default_ica_fit_cutoff")]
+    pub ica_fit_asr_cutoff: f64,
+    #[serde(default = "default_ica_seed")]
+    pub ica_seed: u32,
+    /// Artifact Subspace Reconstruction ("off" | "correct" | "reject"), after ICA when both are enabled.
+    #[serde(default)]
+    pub asr_mode: String,
+    #[serde(default = "default_asr_cutoff")]
+    pub asr_cutoff: f64,
+    /// ASR flavour: "" / "standard" | "riemannian" | "adaptive" | "juggler_dbscan" | "juggler_gev" | "easr" | "vmd" | "emd".
+    /// Standard and riemannian are ports of clean_rawdata (MATLAB-validated); the others are documented interpretations.
+    #[serde(default)]
+    pub asr_variant: String,
+    #[serde(default = "default_adapt_alpha")]
+    pub asr_adapt_alpha: f64,
+    #[serde(default = "default_adapt_block")]
+    pub asr_adapt_block_seconds: f64,
+    #[serde(default = "default_embed_dim")]
+    pub asr_embed_dim: usize,
+    #[serde(default = "default_embed_tau")]
+    pub asr_embed_tau: usize,
+    #[serde(default = "default_n_modes")]
+    pub asr_modes: usize,
+    #[serde(default = "default_dbscan_topk")]
+    pub asr_dbscan_top_k: usize,
+    /// Non-ASR muscle / motion cleaner run after ICA and before ASR: "" | "bss_cca" | "icanclean" | "wica".
+    #[serde(default)]
+    pub muscle_method: String,
+    /// BSS-CCA: number of lowest-autocorrelation sources removed (0 = use `bsscca_rho`).
+    #[serde(default = "default_bsscca_n")]
+    pub bsscca_n_remove: usize,
+    #[serde(default)]
+    pub bsscca_rho: f64,
+    #[serde(default = "default_icc_threshold")]
+    pub icc_threshold: f64,
+    #[serde(default = "default_icc_segment")]
+    pub icc_segment_seconds: f64,
+    #[serde(default = "default_icc_lo")]
+    pub icc_stop_low_hz: f64,
+    #[serde(default = "default_icc_hi")]
+    pub icc_stop_high_hz: f64,
+    #[serde(default = "default_wica_levels")]
+    pub wica_levels: usize,
+    #[serde(default = "default_wica_mult")]
+    pub wica_threshold_mult: f64,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
@@ -175,6 +250,10 @@ pub struct PreprocessSummary {
     pub thresholds: Vec<f64>,
     pub warnings: Vec<String>,
     pub source_localized: bool,
+    /// ICA / ASR report (components removed, ICLabel classes, ASR samples changed ...); `null` when neither ran.
+    pub ica: Option<serde_json::Value>,
+    /// GEDAI reference actually used: "leadfield", "identity" (labels unknown: not valid GEDAI) or null when GEDAI did not run.
+    pub gedai_reference: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -208,7 +287,23 @@ pub fn run(
     if !options.source_snr.is_finite() || options.source_snr<=0.0 { return Err("Source SNR must be positive".into()); }
     if !options.notch_width_hz.is_finite() || options.notch_width_hz<=0.0 || !options.notch_transition_hz.is_finite() || options.notch_transition_hz<=0.0 { return Err("Notch widths must be positive".into()); }
     if !options.bad_variance_ratio.is_finite() || options.bad_variance_ratio<2.0 || options.spline_stiffness<2 || options.spline_stiffness>8 || !options.spline_regularization.is_finite() || options.spline_regularization<=0.0 {return Err("Invalid bad-channel or interpolation parameters".into());}
+    if !["", "none", "runica", "picard"].contains(&options.ica_method.as_str()) { return Err("ICA method must be none, runica or picard".into()); }
+    if !["", "off", "correct", "reject"].contains(&options.asr_mode.as_str()) { return Err("ASR mode must be off, correct or reject".into()); }
+    if !["", "standard", "riemannian", "adaptive", "juggler_dbscan", "juggler_gev", "easr", "vmd", "emd"].contains(&options.asr_variant.as_str()) { return Err("ASR variant must be standard, riemannian, adaptive, juggler_dbscan, juggler_gev, easr, vmd or emd".into()); }
+    if !["", "none", "bss_cca", "icanclean", "wica"].contains(&options.muscle_method.as_str()) { return Err("Muscle method must be none, bss_cca, icanclean or wica".into()); }
+    if !(0.0..=1.0).contains(&options.asr_adapt_alpha) { return Err("ASR adaptation rate must be between 0 and 1".into()); }
+    if options.asr_adapt_block_seconds < 0.5 || options.asr_adapt_block_seconds > 60.0 { return Err("ASR adaptation block must be 0.5-60 s".into()); }
+    if options.asr_embed_dim < 2 || options.asr_embed_dim > 32 || options.asr_embed_tau < 1 || options.asr_embed_tau > 50 { return Err("E-ASR embedding dimension must be 2-32 and delay 1-50 samples".into()); }
+    if options.asr_modes < 2 || options.asr_modes > 12 { return Err("VMD/EMD mode count must be 2-12".into()); }
+    if options.asr_dbscan_top_k < 1 || options.asr_dbscan_top_k > 32 { return Err("DBSCAN feature count must be 1-32".into()); }
+    if options.icc_threshold <= 0.0 || options.icc_threshold >= 1.0 || options.icc_segment_seconds < 0.5 || options.icc_stop_low_hz <= 0.0 || options.icc_stop_high_hz <= options.icc_stop_low_hz { return Err("iCanClean: R² threshold must be in (0,1), segment >= 0.5 s and a valid stop band".into()); }
+    if options.muscle_method == "bss_cca" && options.bsscca_n_remove == 0 && !(options.bsscca_rho > 0.0 && options.bsscca_rho < 1.0) { return Err("BSS-CCA needs a number of sources to remove or a correlation threshold in (0,1)".into()); }
+    if options.wica_levels < 1 || options.wica_levels > 12 || options.wica_threshold_mult <= 0.0 { return Err("wICA: levels must be 1-12 and the threshold multiplier positive".into()); }
+    if !options.asr_cutoff.is_finite() || options.asr_cutoff < 1.0 || options.asr_cutoff > 200.0 { return Err("ASR cutoff must be between 1 and 200".into()); }
+    if !options.ica_fit_asr_cutoff.is_finite() || options.ica_fit_asr_cutoff < 1.0 || options.ica_fit_asr_cutoff > 200.0 { return Err("ICA fit ASR cutoff must be between 1 and 200".into()); }
+    if !(options.ica_blink_threshold <= 1.0 && options.ica_blink_threshold_floor > 0.0 && options.ica_other_threshold <= 1.0 && options.ica_other_threshold_floor > 0.0) { return Err("ICLabel thresholds must be in (0, 1]".into()); }
     let mut warnings = Vec::new();
+    let mut ica_report: Option<serde_json::Value> = None;
     normalize_channel_set(rec, &options.non_eeg_channels);
 
     eprintln!("PROGRESS 10 Converting channels to f64...");
@@ -311,6 +406,27 @@ pub fn run(
     } else {
         Vec::new()
     };
+    let ica_on = matches!(options.ica_method.as_str(), "runica" | "picard");
+    let asr_on = matches!(options.asr_mode.as_str(), "correct" | "reject");
+    let muscle_on = matches!(options.muscle_method.as_str(), "bss_cca" | "icanclean" | "wica");
+    if ica_on || asr_on || muscle_on {
+        if rec.source_epoch_samples.is_some() {
+            warnings.push("ICA / ASR / muscle cleaners need continuous data; skipped for epoched input".into());
+        } else {
+            match run_ica_asr(&mut f64_channels, rec.rate, &rec.labels, &bad_channels, options, &mut warnings) {
+                Ok((report, keep_mask)) => {
+                    if let Some(mask) = keep_mask {
+                        for ch in f64_channels.iter_mut() {
+                            let kept: Vec<f64> = ch.iter().zip(mask.iter()).filter(|(_, &k)| k).map(|(v, _)| *v).collect();
+                            *ch = kept;
+                        }
+                    }
+                    ica_report = Some(report);
+                }
+                Err(e) => warnings.push(format!("ICA/ASR skipped: {e}")),
+            }
+        }
+    }
     // Already-epoched data (stimulus epochs, -epo.fif, epoched .set) keeps its
     // own epochs: re-chunking would break the trial alignment and labels.
     if rec.source_epoch_samples.is_none()
@@ -333,6 +449,7 @@ pub fn run(
         }
     }
     let mut sensai_score = None;
+    let mut gedai_reference = "";
     let mut thresholds = Vec::new();
     if options.gedai && rec.channels.len() >= 4 {
         // Epoched data: one epoch per GEDAI window, and the data are padded to
@@ -367,6 +484,18 @@ pub fn run(
             &options.gedai_threshold,
         ) {
             Ok(result) => {
+                let missing = leadfield_missing_labels(&rec.labels);
+                if !missing.is_empty() {
+                    gedai_reference = "identity";
+                    warnings.push(format!(
+                        "GEDAI ran WITHOUT its leadfield reference: {} of {} channel labels are not in the built-in 10-05 leadfield ({}). \
+                         An identity reference covariance was used, so the spatial prior is lost and the output is NOT valid GEDAI cleaning. \
+                         Use standard 10-05 electrode names, or use ASR / ICA instead.",
+                        missing.len(), rec.labels.len(), missing.join(", ")
+                    ));
+                } else {
+                    gedai_reference = "leadfield";
+                }
                 let len = result.clean.first().map(Vec::len).unwrap_or(0);
                 let len = if epoched.is_some() { orig_len.min(len) } else { len };
                 f64_channels = result.clean;
@@ -428,6 +557,8 @@ pub fn run(
         thresholds,
         warnings,
         source_localized,
+        ica: ica_report,
+        gedai_reference: if gedai_reference.is_empty() { None } else { Some(gedai_reference.to_string()) },
     })
 }
 
@@ -1285,6 +1416,19 @@ fn idwt_step_haar(v: &[f64], w: &[f64], j: usize) -> Vec<f64> {
     v_prev
 }
 
+/// Channel labels that are not present in the built-in GEDAI leadfield (empty = full leadfield reference available).
+pub fn leadfield_missing_labels(labels: &[String]) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Leadfield {
+        labels: Vec<String>,
+    }
+    let Ok(parsed) = serde_json::from_str::<Leadfield>(include_str!("../resources/gedai_leadfield.json")) else {
+        return labels.to_vec();
+    };
+    let known: std::collections::HashSet<String> = parsed.labels.iter().map(|l| l.to_lowercase()).collect();
+    labels.iter().filter(|l| !known.contains(&l.to_lowercase())).cloned().collect()
+}
+
 pub fn leadfield_cov(labels: &[String]) -> Option<DMatrix<f64>> {
     #[derive(Deserialize)]
     struct Leadfield {
@@ -1381,6 +1525,27 @@ pub fn apply_output_reference(data: &mut [Vec<f64>], labels: &[String], mode: &s
     Ok(())
 }
 
+fn default_ica_blink_epochs() -> usize { 20 }
+fn default_ica_fit_cutoff() -> f64 { 15.0 }
+fn default_ica_blink_hi() -> f64 { 0.99 }
+fn default_ica_blink_lo() -> f64 { 0.60 }
+fn default_ica_other_hi() -> f64 { 0.99 }
+fn default_ica_other_lo() -> f64 { 0.60 }
+fn default_ica_seed() -> u32 { 1 }
+fn default_asr_cutoff() -> f64 { 20.0 }
+fn default_adapt_alpha() -> f64 { 0.05 }
+fn default_adapt_block() -> f64 { 2.0 }
+fn default_embed_dim() -> usize { 8 }
+fn default_embed_tau() -> usize { 2 }
+fn default_n_modes() -> usize { 4 }
+fn default_dbscan_topk() -> usize { 5 }
+fn default_bsscca_n() -> usize { 3 }
+fn default_icc_threshold() -> f64 { 0.7 }
+fn default_icc_segment() -> f64 { 2.0 }
+fn default_icc_lo() -> f64 { 1.0 }
+fn default_icc_hi() -> f64 { 8.0 }
+fn default_wica_levels() -> usize { 5 }
+fn default_wica_mult() -> f64 { 1.0 }
 fn default_true() -> bool {
     true
 }
@@ -1654,4 +1819,186 @@ mod tests {
         assert_eq!(result.clean.len(), 4);
         assert!(result.score.is_finite());
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// ICA (runica / Picard + ICLabel + blink detection) and ASR, backed by the parity-validated `ccs_ica` crate
+// ---------------------------------------------------------------------------------------------------------------
+
+/// ICLabel/topoplot location (EEGLAB `theta` deg, `radius`) of a channel from the built-in 10-05 table.
+/// The table is in MNE head coordinates (x right, y anterior, z up); EEGLAB's `theta` is measured from the nose,
+/// positive to the right, and `radius = 0.5 - elevation/180`.
+fn ica_chan_loc(label: &str) -> ccs_ica::iclabel::ChanLoc {
+    let mut key = label.trim().to_uppercase();
+    if let Some(rest) = key.strip_prefix("EEG ") { key = rest.to_string(); }
+    if let Some(i) = key.find(|c: char| c == '-' || c == ' ') { key.truncate(i); }
+    let pos = crate::eeg::montage::STANDARD_1005_POS.get(key.as_str()).copied();
+    let (theta, radius) = match pos {
+        Some([x, y, z]) => {
+            let theta = x.atan2(y).to_degrees();
+            let elev = z.atan2((x * x + y * y).sqrt()).to_degrees();
+            (Some(theta), Some(0.5 - elev / 180.0))
+        }
+        None => (None, None),
+    };
+    ccs_ica::iclabel::ChanLoc { label: label.to_string(), theta, radius }
+}
+
+/// Runs ICA (blink stage + general stage) and/or ASR on the continuous data in place.  Bad channels are left out of
+/// the decomposition (they are interpolated later).  Returns the JSON report and, for ASR reject mode, the keep-mask.
+fn run_ica_asr(
+    data: &mut Vec<Vec<f64>>,
+    rate: f64,
+    labels: &[String],
+    bad_channels: &[String],
+    options: &PreprocessOptions,
+    warnings: &mut Vec<String>,
+) -> Result<(serde_json::Value, Option<Vec<bool>>), String> {
+    use ccs_ica::pipeline::IcaMethod;
+    use ccs_ica::studio::*;
+    let bad: std::collections::HashSet<String> = bad_channels.iter().map(|b| b.to_lowercase()).collect();
+    let mut report = serde_json::json!({});
+    let mut keep_mask: Option<Vec<bool>> = None;
+
+    if matches!(options.ica_method.as_str(), "runica" | "picard") {
+        let locs_all: Vec<_> = labels.iter().map(|l| ica_chan_loc(l)).collect();
+        let good: Vec<usize> = (0..labels.len()).filter(|&i| !bad.contains(&labels[i].to_lowercase()) && locs_all[i].theta.is_some()).collect();
+        let unlocated: Vec<&str> = (0..labels.len()).filter(|&i| locs_all[i].theta.is_none()).map(|i| labels[i].as_str()).collect();
+        if !unlocated.is_empty() {
+            warnings.push(format!("ICA/ICLabel left out channels without a 10-05 scalp position: {}", unlocated.join(", ")));
+        }
+        if good.len() < 8 {
+            return Err(format!("ICA needs at least 8 good channels with scalp positions (found {})", good.len()));
+        }
+        if data[0].len() as f64 / rate < 20.0 {
+            return Err("ICA needs at least 20 s of data".into());
+        }
+        eprintln!("PROGRESS 46 ICA ({}): high-pass copy for the decomposition...", options.ica_method);
+        let target: Vec<Vec<f64>> = good.iter().map(|&i| data[i].clone()).collect();
+        let hp: Vec<Vec<f64>> = if options.filter && options.low_hz >= 1.0 {
+            target.clone()
+        } else {
+            target.par_iter().map(|ch| { let mut c = ch.clone(); fir_bandpass_custom(&mut c, rate, 1.0, 0.0, options.fir_taps); c }).collect()
+        };
+        let locs: Vec<_> = good.iter().map(|&i| locs_all[i].clone()).collect();
+        let mut o = StudioIcaOpts::default();
+        o.method = if options.ica_method == "picard" { IcaMethod::Picard } else { IcaMethod::Runica };
+        o.blink_stage = options.ica_blink;
+        o.other_stage = options.ica_other;
+        o.eye_chan = if options.ica_eye_channel.trim().is_empty() { None } else { Some(options.ica_eye_channel.trim().to_string()) };
+        o.nepochs = options.ica_blink_epochs.max(2);
+        o.blink_threshold = vec![options.ica_blink_threshold, options.ica_blink_threshold_floor];
+        o.remove_ecg = options.ica_remove_ecg;
+        if !options.ica_artefacts.is_empty() { o.other_artefacts = options.ica_artefacts.clone(); }
+        o.other_threshold = vec![options.ica_other_threshold, options.ica_other_threshold_floor];
+        o.fit_asr_cutoff = if options.ica_fit_asr { Some(options.ica_fit_asr_cutoff) } else { None };
+        o.seed = options.ica_seed;
+        eprintln!("PROGRESS 48 ICA ({}): blink detection, decomposition and ICLabel...", options.ica_method);
+        let (clean, rep) = clean_ica(&target, &hp, &locs, rate, &o)?;
+        for (k, &i) in good.iter().enumerate() {
+            data[i] = clean[k].clone();
+        }
+        let stage = |s: &StageReport| serde_json::json!({
+            "ran": s.ran, "components": s.components, "removed": s.removed, "removed_class": s.removed_class,
+            "signals_lost": s.signals_lost, "note": s.note,
+        });
+        for n in &rep.notes { warnings.push(n.clone()); }
+        if !rep.stage1.note.is_empty() { warnings.push(rep.stage1.note.clone()); }
+        report["ica"] = serde_json::json!({
+            "method": options.ica_method, "channels_used": good.iter().map(|&i| labels[i].clone()).collect::<Vec<_>>(),
+            "eye_channel": rep.eye_chan, "blink_events": rep.blink_events, "blink_epochs": rep.blink_epochs_used,
+            "blink_stage": stage(&rep.stage1), "other_stage": stage(&rep.stage2),
+        });
+    }
+
+    let vopts = {
+        let mut v = VariantOpts::default();
+        v.asr_variant = if options.asr_variant.is_empty() { "standard".into() } else { options.asr_variant.clone() };
+        v.adapt_alpha = options.asr_adapt_alpha;
+        v.adapt_block_seconds = options.asr_adapt_block_seconds;
+        v.embed_dim = options.asr_embed_dim;
+        v.embed_tau = options.asr_embed_tau;
+        v.n_modes = options.asr_modes;
+        v.dbscan_top_k = options.asr_dbscan_top_k;
+        v.muscle_method = options.muscle_method.clone();
+        v.bsscca_n_remove = options.bsscca_n_remove;
+        v.bsscca_rho = options.bsscca_rho;
+        v.icc_threshold = options.icc_threshold;
+        v.icc_segment = options.icc_segment_seconds;
+        v.icc_stop_lo = options.icc_stop_low_hz;
+        v.icc_stop_hi = options.icc_stop_high_hz;
+        v.wica_levels = options.wica_levels;
+        v.wica_mult = options.wica_threshold_mult;
+        v.seed = options.ica_seed;
+        v
+    };
+
+    if matches!(options.muscle_method.as_str(), "bss_cca" | "icanclean" | "wica") {
+        let good: Vec<usize> = (0..labels.len()).filter(|&i| !bad.contains(&labels[i].to_lowercase())).collect();
+        if good.len() < 4 {
+            return Err("Muscle cleaners need at least 4 good channels".into());
+        }
+        eprintln!("PROGRESS 50 Muscle/motion cleaner ({})...", options.muscle_method);
+        let rows: Vec<Vec<f64>> = good.iter().map(|&i| data[i].clone()).collect();
+        let hp_rows: Vec<Vec<f64>> = if options.filter && options.low_hz >= 1.0 {
+            rows.clone()
+        } else {
+            rows.par_iter().map(|ch| { let mut c = ch.clone(); fir_bandpass_custom(&mut c, rate, 1.0, 0.0, options.fir_taps); c }).collect()
+        };
+        match extra_clean(&hp_rows, rate, &vopts) {
+            Ok((clean, rep)) => {
+                // as for ASR: apply the correction (cleaned - high-passed) to the original so < 1 Hz content is kept
+                for (k, &i) in good.iter().enumerate() {
+                    for t in 0..data[i].len() {
+                        data[i][t] += clean[k][t] - hp_rows[k][t];
+                    }
+                }
+                report["muscle"] = rep;
+            }
+            Err(e) => warnings.push(format!("Muscle cleaner ({}) skipped: {e}", options.muscle_method)),
+        }
+    }
+
+    if matches!(options.asr_mode.as_str(), "correct" | "reject") {
+        let reject = options.asr_mode == "reject";
+        let good: Vec<usize> = (0..labels.len()).filter(|&i| !bad.contains(&labels[i].to_lowercase())).collect();
+        if good.len() < 2 {
+            return Err("ASR needs at least 2 good channels".into());
+        }
+        eprintln!("PROGRESS 52 ASR ({}, cutoff {})...", options.asr_mode, options.asr_cutoff);
+        let rows: Vec<Vec<f64>> = good.iter().map(|&i| data[i].clone()).collect();
+        let hp_rows: Vec<Vec<f64>> = if options.filter && options.low_hz >= 1.0 {
+            rows.clone()
+        } else {
+            rows.par_iter().map(|ch| { let mut c = ch.clone(); fir_bandpass_custom(&mut c, rate, 1.0, 0.0, options.fir_taps); c }).collect()
+        };
+        // clean_rawdata expects high-passed data; ASR is estimated on the 1 Hz copy and the correction is applied
+        // to the same samples of the unfiltered-below-1 Hz data only in reject mode (mask) or via the difference.
+        match asr_clean_variant(&hp_rows, rate, options.asr_cutoff, reject, &vopts) {
+            Ok((out, asr_note)) => {
+                if !asr_note.is_empty() { warnings.push(asr_note); }
+                if reject {
+                    keep_mask = out.keep_mask.clone();
+                } else {
+                    // repaired(hp) - hp is the ASR correction; add it to the original (preserves < 1 Hz content)
+                    for (k, &i) in good.iter().enumerate() {
+                        for t in 0..data[i].len() {
+                            data[i][t] += out.data[k][t] - hp_rows[k][t];
+                        }
+                    }
+                }
+                report["asr"] = serde_json::json!({
+                    "mode": options.asr_mode, "cutoff": options.asr_cutoff, "variant": vopts.asr_variant,
+                    "samples_changed": out.changed_samples, "samples_total": data[0].len(),
+                    "samples_kept": keep_mask.as_ref().map(|m| m.iter().filter(|&&k| k).count()),
+                });
+                if reject {
+                    warnings.push("ASR reject mode removed samples; time stamps of the output no longer map 1:1 to the input".into());
+                }
+            }
+            Err(e) => warnings.push(format!("ASR skipped: {e}")),
+        }
+    }
+    Ok((report, keep_mask))
 }

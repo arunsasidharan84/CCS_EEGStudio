@@ -490,6 +490,14 @@ fn features(x: &[f32], rate: f64, o: &Options) -> Vec<f64> {
     if o.acw {
         out.push(features::acw_fraction(&signal, rate,o.advanced_parameters.acw_fraction));
     }
+    if o.dfa_fei {
+        let bands = psd_bands(o);
+        let values = dfa_fei::all(&signal, rate, &bands);
+        for band in &bands {
+            out.push(values[&format!("{}_DFA", band.2)]);
+            out.push(values[&format!("{}_fEI", band.2)]);
+        }
+    }
     out
 }
 
@@ -548,6 +556,12 @@ fn columns(o: &Options) -> Vec<String> {
     }
     if o.acw {
         c.push("ACW".into());
+    }
+    if o.dfa_fei {
+        for band in psd_bands(o) {
+            c.push(format!("{}_DFA", band.2));
+            c.push(format!("{}_fEI", band.2));
+        }
     }
     if o.connectivity {
         c.extend(connectivity::column_names(o));
@@ -1044,6 +1058,7 @@ mod tests {
             wpli: false,
             remove_non_eeg: true,
             non_eeg_channels: Vec::new(),
+            dfa_fei: false,
         };
         assert_eq!(groups(&o, 5, 2.0).unwrap().len(), 2)
     }
