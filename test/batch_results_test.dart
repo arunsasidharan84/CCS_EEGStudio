@@ -33,6 +33,24 @@ void main() {
   });
   tearDown(() => dir.deleteSync(recursive: true));
 
+  test('PDF-only plots retain statistics without redundant PNGs', () async {
+    final results = await generateTopoStatsFigures(
+      csvPaths: sessions,
+      outputDir: dir.path,
+      features: ['Gamma1_Irasa'],
+      writePng: false,
+      base: const TopoStatsSettings(nPermutations: 10),
+    );
+    expect(results, isNotEmpty);
+    final outputs = Directory(
+      '${dir.path}/Figures_TopoStats',
+    ).listSync(recursive: true);
+    expect(outputs.where((f) => f.path.endsWith('.png')), isEmpty);
+    expect(outputs.where((f) => f.path.endsWith('_report.pdf')), isNotEmpty);
+    expect(outputs.where((f) => f.path.endsWith('_stats.csv')), isNotEmpty);
+    expect(results.every((r) => File(r.path).existsSync()), true);
+  });
+
   test('mixed batch outputs plot individual sessions exactly once', () {
     final files = prepareSessionFeatureCsvs([
       combined,

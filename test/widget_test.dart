@@ -250,7 +250,7 @@ void main() {
       ),
     );
     await tester.scrollUntilVisible(
-      find.text('Combined TopoStats PDF per recording'),
+      find.text('One plots PDF per recording'),
       250,
       scrollable: find
           .descendant(
@@ -261,7 +261,7 @@ void main() {
           )
           .first,
     );
-    expect(find.text('Combined TopoStats PDF per recording'), findsWidgets);
+    expect(find.text('One plots PDF per recording'), findsWidgets);
   });
 
   testWidgets('run buttons are disabled until there is something to run', (

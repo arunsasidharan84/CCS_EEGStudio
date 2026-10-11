@@ -620,13 +620,14 @@ class AnalysisConfig {
   bool perFileCsv = true;
 
   /// Also write a single pooled CSV across all inputs.
-  bool combinedCsv = true;
+  bool combinedCsv = false;
 
   bool generatePlots = true;
 
   /// Also write one combined TopoStats PDF (summary + every figure) and one
   /// stats table per recording next to the PNGs.
   bool topoStatsPdf = true;
+  bool topoStatsPng = false;
 
   bool generatePdfReport = true;
 

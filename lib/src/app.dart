@@ -1,3 +1,4 @@
+import 'feature_window_warnings.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
@@ -806,6 +807,29 @@ class _FeatureHomeState extends State<FeatureHome>
     }
   }
 
+  Future<bool> _confirmFeatureWindows(EegRecording rec) async {
+    final warnings = featureWindowWarnings(_cfg, rec);
+    if (warnings.isEmpty || !mounted) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Feature window is too short'),
+            content: SizedBox(width: 520, child: Text(warnings.join('\n\n'))),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Change settings'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Continue with missing / limited values'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   /// Stage 3 — feature extraction for the single active recording.
   ///
   /// This now has its own Run button in the Stage 3 card, matching Stages 1
@@ -821,6 +845,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('Select at least one feature family.');
       return;
     }
+    if (!await _confirmFeatureWindows(input)) return;
     final path = await FilePicker.saveFile(
       dialogTitle: 'Save extracted EEG features',
       fileName: '${_stem(input.path)}.features.csv',
@@ -917,6 +942,7 @@ class _FeatureHomeState extends State<FeatureHome>
           baselineDurationMin: window > 0 ? window : 2.0,
         ),
         writePdf: _cfg.topoStatsPdf,
+        writePng: _cfg.topoStatsPng || !_cfg.topoStatsPdf,
         onProgress: (p, msg) {
           if (msg.isNotEmpty) _log('  [Plots] $msg');
           if (mounted) setState(() => _progress = p);
@@ -940,6 +966,7 @@ class _FeatureHomeState extends State<FeatureHome>
     EegRecording rec,
     ExtractionOptions options, {
     EegRecording? raw,
+    String? outputPath,
     List<String> excludedChannels = const [],
   }) async {
     try {
@@ -975,10 +1002,12 @@ class _FeatureHomeState extends State<FeatureHome>
         if (source != null && File(source).existsSync())
           raw = await _loader.load(source);
       }
-      final reportPath = csvPath.replaceAll(
-        RegExp(r'\.csv$', caseSensitive: false),
-        '_report.pdf',
-      );
+      final reportPath =
+          outputPath ??
+          csvPath.replaceAll(
+            RegExp(r'(\.features)?\.csv$', caseSensitive: false),
+            '.analysis_report.pdf',
+          );
       await writeFeatureReport(
         outputPath: reportPath,
         csvPath: csvPath,
@@ -2590,14 +2619,38 @@ class _FeatureHomeState extends State<FeatureHome>
                   helperMaxLines: 3,
                 ),
                 items: const [
-                  DropdownMenuItem(value: 'standard', child: Text('Standard (clean_rawdata)')),
-                  DropdownMenuItem(value: 'riemannian', child: Text('Riemannian ASR (rASR)')),
-                  DropdownMenuItem(value: 'adaptive', child: Text('Adaptive ASR (own EMA design)')),
-                  DropdownMenuItem(value: 'juggler_dbscan', child: Text('ASR_DBSCAN (movement-heavy data)')),
-                  DropdownMenuItem(value: 'juggler_gev', child: Text('ASR_GEV (movement-heavy data)')),
-                  DropdownMenuItem(value: 'easr', child: Text('E-ASR (delay embedding, few channels)')),
-                  DropdownMenuItem(value: 'vmd', child: Text('VMD-ASR (few channels)')),
-                  DropdownMenuItem(value: 'emd', child: Text('EMD-ASR (few channels)')),
+                  DropdownMenuItem(
+                    value: 'standard',
+                    child: Text('Standard (clean_rawdata)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'riemannian',
+                    child: Text('Riemannian ASR (rASR)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'adaptive',
+                    child: Text('Adaptive ASR (own EMA design)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'juggler_dbscan',
+                    child: Text('ASR_DBSCAN (movement-heavy data)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'juggler_gev',
+                    child: Text('ASR_GEV (movement-heavy data)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'easr',
+                    child: Text('E-ASR (delay embedding, few channels)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'vmd',
+                    child: Text('VMD-ASR (few channels)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'emd',
+                    child: Text('EMD-ASR (few channels)'),
+                  ),
                 ],
                 onChanged: _running
                     ? null
@@ -2619,9 +2672,18 @@ class _FeatureHomeState extends State<FeatureHome>
               ),
               items: const [
                 DropdownMenuItem(value: 'none', child: Text('Off')),
-                DropdownMenuItem(value: 'bss_cca', child: Text('BSS-CCA (muscle)')),
-                DropdownMenuItem(value: 'icanclean', child: Text('iCanClean (pseudo-reference)')),
-                DropdownMenuItem(value: 'wica', child: Text('wICA (HAPPE wavelet-enhanced ICA)')),
+                DropdownMenuItem(
+                  value: 'bss_cca',
+                  child: Text('BSS-CCA (muscle)'),
+                ),
+                DropdownMenuItem(
+                  value: 'icanclean',
+                  child: Text('iCanClean (pseudo-reference)'),
+                ),
+                DropdownMenuItem(
+                  value: 'wica',
+                  child: Text('wICA (HAPPE wavelet-enhanced ICA)'),
+                ),
               ],
               onChanged: _running
                   ? null
@@ -2830,9 +2892,14 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const SizedBox(height: 4),
           _check(
-            'Combined TopoStats PDF per recording',
+            'One plots PDF per recording',
             _cfg.topoStatsPdf,
             (v) => _cfg.topoStatsPdf = v,
+          ),
+          _check(
+            'Also export individual plot PNGs',
+            _cfg.topoStatsPng,
+            (v) => _cfg.topoStatsPng = v,
           ),
         ],
       ),
@@ -3970,6 +4037,7 @@ class _FeatureHomeState extends State<FeatureHome>
     if (_cfg.combinedCsv) combinedSink = File(combinedPath).openWrite();
     final written = <String>[];
     var succeeded = 0;
+    final acknowledgedWarnings = <String>{};
     try {
       for (var i = 0; i < kept.length; i++) {
         if (_batchCancelRequested) break;
@@ -3985,6 +4053,21 @@ class _FeatureHomeState extends State<FeatureHome>
           // Deliberately retain only one recording at a time. The psiconnect
           // corpus is ~20 GB; loading its 482 previews together exhausted RAM.
           final rec = await _loader.load(path);
+          final windowAdvice = featureWindowWarnings(_cfg, rec).join('\n');
+          if (windowAdvice.isNotEmpty &&
+              acknowledgedWarnings.add(windowAdvice)) {
+            if (!await _confirmFeatureWindows(rec)) {
+              _batchCancelRequested = true;
+              _updateBatchFile(
+                path,
+                'Cancelled',
+                progress: 1,
+                completed: true,
+                failed: true,
+              );
+              break;
+            }
+          }
           final nonEeg = ChannelTypeMap.autoDetect(rec.labels).nonEegChannels;
           final options = _cfg.toExtractionOptions(
             nonEegChannels: nonEeg,
@@ -4020,7 +4103,14 @@ class _FeatureHomeState extends State<FeatureHome>
 
           if (_cfg.perFileCsv) written.add(perFilePath);
           if (_cfg.generatePdfReport) {
-            await _writeReport(jobCsv, rec, options, excludedChannels: nonEeg);
+            await _writeReport(
+              jobCsv,
+              rec,
+              options,
+              excludedChannels: nonEeg,
+              outputPath:
+                  '$outDir${Platform.pathSeparator}${_stem(path)}.analysis_report.pdf',
+            );
           }
           succeeded++;
           _updateBatchFile(path, 'Done', progress: 1, completed: true);

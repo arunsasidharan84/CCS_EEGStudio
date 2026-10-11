@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.11</b> ·
+  <b>Current version: 1.2.12</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -242,6 +242,27 @@ for parameter conventions, evidence and limits.
 Eight epoch-wise nonlinear complexity and entropy metrics per channel:
 - Sample Entropy (SampEn), Approximate Entropy (ApEn), Hurst Exponent, Lempel-Ziv Complexity, Autocorrelation Window (ACW), Detrended Fluctuation Analysis (DFA) exponent, Higuchi Fractal Dimension, Katz Fractal Dimension.
 
+### Feature windows and output defaults
+
+Before extraction, the app warns about short selected-feature windows: DFA/fE:I
+below the practical 60-second full-band recommendation, FOOOF/IRASA below one
+second, a Welch window longer than the epoch, or too few samples for the GC lag
+count. Saved parent-epoch lengths take precedence over the extraction control.
+Choose **Change settings** or explicitly continue with limited/missing results;
+batch runs ask once for each distinct warning. The app never merges trials silently.
+
+The 60-second DFA/fE:I recommendation accommodates the implementation's long
+fit scales; it is not a universal paper-prescribed minimum or a guarantee that
+fE:I passes its validity criteria. For two-second windows, lower-band estimates
+may be missing even though Gamma1 DFA is available. See the method references
+below and the [window/output guide](docs/output_files.md).
+
+Defaults now retain per-recording CSVs, analysis PDFs, and combined plots PDFs
+with statistics tables. A pooled CSV and individual high-resolution PNGs are
+optional exports. Disabling the plots PDF generates PNGs instead. New summary
+reports use `.analysis_report.pdf`. Cleaned recordings and provenance companions
+remain; existing output files are not automatically deleted.
+
 ### Band-limited DFA and fE:I
 
 The optional DFA/fE:I family estimates amplitude-envelope scaling and a functional
@@ -256,8 +277,12 @@ Nine connectivity measures computed via Morlet wavelet cross-spectra matching `m
 - **MIC** (Maximized Imaginary Coherence), **MIM** (Multivariate Interaction Measure), **GC** (Granger Causality 25-lag VAR), **GC-TR** (Time-reversed GC), **GC − GC-TR contrast**, **Coherence**, **PLV**, **ciPLV**, **PLI**, **wPLI**.
 
 ### Outputs & Plot Layout
+
+See the [output file guide](docs/output_files.md) for compact defaults, report names,
+provenance companions, optional exports and short-window warnings.
+
 - **Per-file CSV export**: `<recording>.features.csv` for every input, with one row per (epoch, channel, bin) and all enabled feature columns.
-- **Combined CSV export**: `Batch_features.csv` pooling every recording with provenance metadata (`subjid`, `sessn`, `condn`).
+- **Optional combined CSV export**: `Batch_features.csv` pooling every recording with provenance metadata (`subjid`, `sessn`, `condn`).
 - **Publication-grade PDF reports & Scalp Maps**: High-resolution vector visualizations and executive summaries.
 
 ---

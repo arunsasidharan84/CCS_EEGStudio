@@ -4,6 +4,56 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.12]
+
+### Feature-window warnings
+
+- Added a pre-extraction popup for selected DFA/fE:I windows below the practical
+  60-second full-band recommendation, FOOOF/IRASA below one second, Welch windows
+  longer than the epoch, and insufficient samples for the configured GC lag count.
+- Use actual saved parent-epoch length for already epoched files. Increasing the
+  extraction control does not silently merge existing trials.
+- Offer Change settings or explicit continuation with limited/missing values.
+  Batch extraction deduplicates identical warnings; cancellation stops the stage.
+- Confirmed the supplied Girish two-second outputs: all 28,132 Gamma1 DFA values
+  are finite, 3,759 Gamma1 fE:I values are finite, and Delta through Beta2 DFA/fE:I
+  values are missing. Missing values are retained rather than filled or fabricated.
+- Sixty seconds is an implementation-informed recommendation, not a universal
+  validity guarantee. fE:I has additional validity gates even with longer windows.
+
+### Compact outputs and naming
+
+- Default to one feature CSV per recording rather than also writing a redundant
+  pooled Batch_features.csv. Combined export remains available when selected.
+- Default to one combined plots PDF and statistics CSV per recording without
+  hundreds of individual PNGs. PNG export remains selectable; disabling the plots
+  PDF produces PNGs so a visible plot output remains available.
+- Name new preprocessing/feature summary reports `.analysis_report.pdf`, replacing
+  `.features_report.pdf`. Plot reports retain their established TopoStats names.
+- Keep batch analysis PDFs in the selected output directory even when individual
+  feature CSVs are disabled and engine CSVs are temporary.
+- Retain cleaned signals, analysis/preprocessing provenance and numerical plot
+  statistics. Existing outputs are not deleted or renamed automatically.
+
+### Documentation and method references
+
+- Updated README with actual window-warning thresholds, output defaults, method
+  papers and reference implementation links.
+- Added docs/output_files.md to distinguish data, analysis reports, plots, statistics,
+  provenance and optional duplicate exports; docs/methods_and_validation.md retains
+  scoped ICA/ASR/DFA/fE:I reference evidence and experimental-variant limits.
+- No feature algorithms or estimator thresholds were changed in this release.
+
+### Validation
+
+- Targeted window/default/export tests passed, including PDF-only output retaining
+  statistics without PNG files and saved epoch lengths overriding UI cut settings.
+- The full run passed 141 tests with 5 skips; the sole stale UI-label test was
+  updated and passed in the 12-test UI rerun (142 tests covered in total).
+- Dart analysis is clean. The local macOS 1.2.12 bundle compiled, embedded its
+  release engine, and passed code-signature verification. Desktop CI also runs
+  the complete suite before publishing platform packages.
+
 ## [1.2.11]
 
 ### ICA and ASR preprocessing (alternative or precursor to GEDAI)

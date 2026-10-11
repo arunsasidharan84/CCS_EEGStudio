@@ -127,6 +127,7 @@ Future<List<TopoBatchOutput>> generateTopoStatsFigures({
   TopoStatsSettings base = const TopoStatsSettings(),
   List<String>? features,
   bool writePdf = true,
+  bool writePng = true,
   void Function(double progress, String message)? onProgress,
 }) async {
   final outDir = '$outputDir${Platform.pathSeparator}Figures_TopoStats';
@@ -179,8 +180,10 @@ Future<List<TopoBatchOutput>> generateTopoStatsFigures({
       await for (final r in job.results) {
         final fig = TopoFigure(r);
         final stem = '$outDir${Platform.pathSeparator}${r.outputFileName}';
-        final png = await fig.toPng(dpi: r.settings.dpi.toDouble());
-        await File('$stem.png').writeAsBytes(png);
+        final png = writePng
+            ? await fig.toPng(dpi: r.settings.dpi.toDouble())
+            : Uint8List(0);
+        if (writePng) await File('$stem.png').writeAsBytes(png);
         // one stats table per recording (feature column first)
         final lines = r.toCsv().split('\n');
         if (stats.isEmpty) stats.writeln('feature,${lines.first}');
@@ -191,10 +194,23 @@ Future<List<TopoBatchOutput>> generateTopoStatsFigures({
         // stays small; the PNG on disk keeps the full script resolution.
         final pdfPng = !writePdf
             ? Uint8List(0)
-            : (r.settings.dpi > 110 ? await fig.toPng(dpi: 110) : png);
+            : (!writePng || r.settings.dpi > 110
+                  ? await fig.toPng(dpi: 110)
+                  : png);
         pages.add((r, pdfPng, fig.widthIn, fig.heightIn));
-        saved.add(TopoBatchOutput('$stem.png', recId, r.settings.feature));
-        onProgress?.call((gi + 1) / groups.length, '  ✓ ${_base(stem)}.png');
+        saved.add(
+          TopoBatchOutput(
+            writePng
+                ? '$stem.png'
+                : '$outDir${Platform.pathSeparator}${recId}_TopoStats_report.pdf',
+            recId,
+            r.settings.feature,
+          ),
+        );
+        onProgress?.call(
+          (gi + 1) / groups.length,
+          '  ✓ ${r.settings.feature}${writePng ? ' PNG' : ' added to plots PDF'}',
+        );
       }
     } catch (e) {
       onProgress?.call((gi + 1) / groups.length, '  ⚠ $recId: $e');
