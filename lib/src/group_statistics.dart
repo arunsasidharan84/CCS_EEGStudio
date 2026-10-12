@@ -1,3 +1,5 @@
+import 'filename_metadata.dart';
+import 'topostats/topostats_engine.dart' show splitFeatureCsvLine;
 import 'dart:convert';
 import 'dart:io';
 
@@ -146,6 +148,139 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
       });
       await _inspectCsv();
     }
+  }
+
+  Future<void> _inferMetadata() async {
+    final file = File(_csvPathController.text.trim());
+    if (!file.existsSync()) {
+      _showSnack('Select a feature CSV first.');
+      return;
+    }
+    final names = <String>{};
+    var index = -1;
+    await for (final line
+        in file
+            .openRead()
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      final fields = splitFeatureCsvLine(line);
+      if (index < 0) {
+        index = fields.indexOf('filename');
+        if (index < 0) {
+          _showSnack('This CSV needs a filename column.');
+          return;
+        }
+      } else if (fields.length > index && fields[index].isNotEmpty) {
+        names.add(fields[index]);
+      }
+    }
+    if (!mounted) return;
+    final pattern = TextEditingController();
+    var rows = inferFilenameMetadata(names);
+    String? error;
+    var appliedPattern = '';
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, refresh) {
+          final cols = <String>{for (final row in rows) ...row.keys}.toList();
+          return AlertDialog(
+            title: const Text('Review metadata inferred from filenames'),
+            content: SizedBox(
+              width: 850,
+              height: 420,
+              child: Column(
+                children: [
+                  const Text(
+                    'Auto: BIDS sub/ses/task/run/acq fields, or legacy SubNN subject IDs. Missing values stay blank. Review before use.',
+                  ),
+                  TextField(
+                    controller: pattern,
+                    onChanged: (_) => refresh(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Optional regex with named groups',
+                      hintText:
+                          r'(?<Subject>[^_]+)_(?<Session>[^_]+)_(?<Task>[^_]+)',
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => refresh(() {
+                      try {
+                        rows = inferFilenameMetadata(
+                          names,
+                          pattern: pattern.text,
+                        );
+                        error = null;
+                        appliedPattern = pattern.text;
+                      } catch (e) {
+                        error = '$e';
+                      }
+                    }),
+                    child: const Text('Update preview'),
+                  ),
+                  if (error != null)
+                    Text(error!, style: const TextStyle(color: Colors.red)),
+                  Text('${rows.length} filenames; first 10 shown'),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          columns: [
+                            for (final col in cols)
+                              DataColumn(label: Text(col)),
+                          ],
+                          rows: [
+                            for (final row in rows.take(10))
+                              DataRow(
+                                cells: [
+                                  for (final col in cols)
+                                    DataCell(Text(row[col] ?? '')),
+                                ],
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed:
+                    error != null ||
+                        cols.length < 2 ||
+                        pattern.text != appliedPattern
+                    ? null
+                    : () => Navigator.pop(context, true),
+                child: const Text('Save reviewed metadata'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    pattern.dispose();
+    if (accepted != true) return;
+    final path = await FilePicker.saveFile(
+      dialogTitle: 'Save reviewed filename metadata',
+      fileName: 'filename_metadata.csv',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+    if (path == null) return;
+    await File(path).writeAsString(filenameMetadataCsv(rows));
+    if (!mounted) return;
+    setState(() {
+      _metadataPathController.text = path;
+      _metadataKeyController.text = 'filename';
+    });
+    await _inspectCsv();
   }
 
   Future<void> _pickMetadataFile() async {
@@ -580,6 +715,16 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
               ],
             ),
             const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _isAnalyzing || _isInspecting
+                    ? null
+                    : _inferMetadata,
+                icon: const Icon(Icons.auto_fix_high),
+                label: const Text('Infer metadata from filenames…'),
+              ),
+            ),
             Row(
               children: [
                 Expanded(

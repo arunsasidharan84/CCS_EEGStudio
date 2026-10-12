@@ -216,12 +216,14 @@ class PreprocessingOptions {
     icaOther: json['ica_other'] as bool? ?? true,
     icaEyeChannel: json['ica_eye_channel'] as String? ?? '',
     icaBlinkEpochs: (json['ica_blink_epochs'] as num?)?.toInt() ?? 20,
-    icaBlinkThreshold: (json['ica_blink_threshold'] as num?)?.toDouble() ?? 0.99,
+    icaBlinkThreshold:
+        (json['ica_blink_threshold'] as num?)?.toDouble() ?? 0.99,
     icaBlinkThresholdFloor:
         (json['ica_blink_threshold_floor'] as num?)?.toDouble() ?? 0.60,
     icaRemoveEcg: json['ica_remove_ecg'] as bool? ?? true,
     icaArtefacts: (json['ica_artefacts'] as List?)?.cast<String>() ?? const [],
-    icaOtherThreshold: (json['ica_other_threshold'] as num?)?.toDouble() ?? 0.99,
+    icaOtherThreshold:
+        (json['ica_other_threshold'] as num?)?.toDouble() ?? 0.99,
     icaOtherThresholdFloor:
         (json['ica_other_threshold_floor'] as num?)?.toDouble() ?? 0.60,
     icaFitAsr: json['ica_fit_asr'] as bool? ?? true,
@@ -560,6 +562,9 @@ class AnalysisConfig {
 
   // ── Epoching / duration ──────────────────────────────────────────────────
   double epochSeconds = 2;
+  double epochOverlapSeconds = 0;
+  double preprocessingOverlapSeconds = 0;
+  bool subepochExisting = false;
   DurationMode mode = DurationMode.full;
   double startSeconds = 0;
   double endSeconds = 120;

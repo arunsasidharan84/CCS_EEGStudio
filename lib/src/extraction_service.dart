@@ -1,3 +1,4 @@
+import 'recording_transform.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -99,6 +100,8 @@ class ExtractionService {
     required String outputPath,
     required ExtractionOptions options,
     required double epochSeconds,
+    double epochOverlapSeconds = 0,
+    bool subepochExisting = false,
     ViewerSelection selection = const ViewerSelection.empty(),
     Map<String, String>? perFilePaths,
     bool writeCombined = true,
@@ -110,7 +113,19 @@ class ExtractionService {
     final writtenPerFile = <String>[];
     try {
       for (var i = 0; i < recordings.length; i++) {
-        final recording = recordings[i];
+        var recording = recordings[i];
+        if (recording.isEpoched &&
+            recording.preview.any((c) => c.length != recording.sampleCount)) {
+          recording = await RecordingLoader().loadFull(recording);
+        }
+        final rewindow = subepochExisting && recording.isEpoched;
+        if (rewindow) {
+          recording = RecordingTransform.subepoch(
+            recording,
+            epochSeconds,
+            epochOverlapSeconds,
+          );
+        }
         final part = File('${temp.path}/part_$i.csv');
         String inputPath = recording.path;
         String inputFormat = recording.format;
@@ -154,6 +169,7 @@ class ExtractionService {
             'epoch_start_seconds': recording.epochStartSeconds,
             'points_per_epoch': recording.pointsPerEpoch,
             'epoch_seconds': epochSeconds,
+            'epoch_overlap_seconds': rewindow ? 0 : epochOverlapSeconds,
             'options': options.toJson(),
             'selected_channels': selection.selectedChannels,
             'accepted_intervals': selection.acceptedIntervals,
@@ -250,6 +266,7 @@ class ExtractionService {
           for (final recording in recordings)
             {
               'source_path': recording.path,
+              'epoch_overlap_seconds': epochOverlapSeconds,
               'analysis_epoch_seconds': recording.pointsPerEpoch == null
                   ? epochSeconds
                   : recording.pointsPerEpoch! / recording.sampleRate,
@@ -280,9 +297,27 @@ class ExtractionService {
     required EegRecording recording,
     required String outputPath,
     required PreprocessingOptions options,
+    double outputOverlapSeconds = 0,
+    double? outputWindowSeconds,
     ViewerSelection selection = const ViewerSelection.empty(),
     required ProgressCallback onProgress,
   }) async {
+    final outputWindow = outputWindowSeconds ?? options.gedaiEpochSeconds;
+    if (!outputOverlapSeconds.isFinite ||
+        outputOverlapSeconds < 0 ||
+        outputOverlapSeconds >= outputWindow) {
+      throw ArgumentError(
+        'Saved epoch overlap must be nonnegative and shorter than its window.',
+      );
+    }
+    if (outputOverlapSeconds > 0 && !recording.isEpoched) {
+      // Clean original samples once, then form overlapping saved windows.
+      options = PreprocessingOptions.fromJson({
+        ...options.toJson(),
+        'epoch_before_gedai': false,
+        'epoch_length_seconds': null,
+      });
+    }
     final executable = ExtractionService.findEngine();
     // Stimulus-locked epochs: pick the events from the raw markers here; the
     // engine cuts them after filtering and before GEDAI. Interval selections
@@ -559,7 +594,37 @@ class ExtractionService {
               selection.rejectedIntervals.isEmpty,
         }),
       );
-      return await RecordingLoader().load(outputPath);
+      var cleaned = await RecordingLoader().load(outputPath);
+      if (outputOverlapSeconds > 0) {
+        cleaned = RecordingTransform.subepoch(
+          cleaned,
+          outputWindowSeconds ?? options.gedaiEpochSeconds,
+          outputOverlapSeconds,
+        );
+        await RecordingTransform.save(
+          cleaned,
+          outputPath,
+          sourcePath: recording.path,
+          operations: {
+            'window_seconds': outputWindowSeconds ?? options.gedaiEpochSeconds,
+            'overlap_seconds': outputOverlapSeconds,
+            'windowed_after_cleaning': true,
+          },
+        );
+        final sidecar = File('$outputPath.preprocessing.json');
+        final meta =
+            jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
+        meta['epoch_start_seconds'] = cleaned.epochStartSeconds;
+        meta['source_duration_seconds'] = cleaned.sourceDurationSeconds;
+        meta['markers'] = [for (final m in cleaned.markers) m.toJson()];
+        meta['timeline_preserved'] = false;
+        meta['output_window_seconds'] =
+            outputWindowSeconds ?? options.gedaiEpochSeconds;
+        meta['output_overlap_seconds'] = outputOverlapSeconds;
+        await sidecar.writeAsString(jsonEncode(meta));
+        cleaned = await RecordingLoader().load(outputPath);
+      }
+      return cleaned;
     } finally {
       await temp.delete(recursive: true);
     }

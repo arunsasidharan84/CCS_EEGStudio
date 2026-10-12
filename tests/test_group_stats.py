@@ -20,6 +20,18 @@ class GroupStatsTests(unittest.TestCase):
                 for epoch in range(6):
                     rows.append({'filename':name+'_clean','subjid':f'S{subject:02}','Chan':channel,'Epoch':epoch+1,'bin_idx':0,'bin_start_s':0,'bin_end_s':12,'Alpha_PSD':4*(group=='B')+offset+.5*(channel=='F4')+rng.normal(0,.2)})
         return pd.DataFrame(rows),pd.DataFrame(metadata)
+    def test_numeric_categorical_factors_have_matching_contrast_levels(self):
+        rng=np.random.default_rng(11)
+        rows=[]
+        for subject in range(20):
+            offset=rng.normal()
+            for session in [1,2]:
+                rows.append({'Subject':f'S{subject}', 'Group':subject%2,
+                    'Session':session, 'Alpha_PSD':offset+subject%2+session+rng.normal(0,.3)})
+        result=g.fit_statistical_model(pd.DataFrame(rows),'Alpha_PSD','Group','Session',[], 'Subject','lmm','fdr')
+        self.assertIsNotNone(result)
+        self.assertTrue(result['posthoc_contrasts'])
+
     def test_metadata_and_epoch_aggregation(self):
         df,meta=self.table()
         with tempfile.TemporaryDirectory() as directory:

@@ -121,7 +121,7 @@ SUBJECT_CANDIDATE_NAMES = [
 ]
 
 GROUP_CANDIDATE_NAMES = [
-    "group", "groupid", "group_id", "status", "psgtype", "condition",
+    "group", "groupid", "group_id", "status", "psgtype", "task", "condition",
     "cohort", "arm", "treatment", "diagnosis", "dx", "slept_well"
 ]
 
@@ -494,7 +494,12 @@ def fit_statistical_model(
             rename_map[cov] = safe_cov
             valid_covs.append(safe_cov)
 
-    safe_df = sub_df.rename(columns=rename_map)
+    safe_df = sub_df.rename(columns=rename_map).copy()
+    # CSV parsers may infer session/run codes as integers. Contrast grids use
+    # string level labels, so fit categorical factors on the same representation.
+    for factor in ['GRP_VAR', 'SUBGRP_VAR']:
+        if factor in safe_df:
+            safe_df[factor] = safe_df[factor].astype(str)
     # Drop rows missing valid covariates
     if valid_covs:
         safe_df = safe_df.dropna(subset=valid_covs)

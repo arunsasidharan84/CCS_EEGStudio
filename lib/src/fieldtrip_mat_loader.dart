@@ -62,7 +62,7 @@ class FieldTripMatLoader {
       sampleCount: data['sample_count'] as int,
       format: 'mat',
       epochCount: data['epoch_count'] as int,
-      pointsPerEpoch: data['points_per_epoch'] as int,
+      pointsPerEpoch: data['points_per_epoch'] as int?,
       epochLabels: data['epoch_labels'] == null
           ? null
           : List<String>.from(data['epoch_labels'] as List),

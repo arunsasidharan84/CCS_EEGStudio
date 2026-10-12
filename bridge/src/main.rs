@@ -21,6 +21,8 @@ struct Job {
     points_per_epoch: Option<usize>,
     epoch_seconds: f64,
     #[serde(default)]
+    epoch_overlap_seconds: f64,
+    #[serde(default)]
     epoch_start_seconds: Vec<f64>,
     options: Options,
     preprocessing: Option<preprocessing::PreprocessOptions>,
@@ -204,7 +206,7 @@ fn main() -> Result<(), String> {
             "labels": rec.labels,
             "sample_count": total_samples,
             "epoch_count": epoch_count,
-            "points_per_epoch": points_per_epoch,
+            "points_per_epoch": rec.source_epoch_samples,
             "epoch_labels": rec.epoch_labels,
             "preview": preview,
             "format": "mat"
@@ -241,7 +243,7 @@ fn main() -> Result<(), String> {
         apply_interval_selection(&mut recording,job.accepted_intervals.as_deref(),job.rejected_intervals.as_deref());
         None
     };
-    let epoch_onsets = retained_parent_epochs.as_ref().map(|indices|indices.iter().filter_map(|i|job.epoch_start_seconds.get(*i).copied()).collect::<Vec<_>>()).unwrap_or_else(||job.epoch_start_seconds.clone());
+    let mut epoch_onsets = retained_parent_epochs.as_ref().map(|indices|indices.iter().filter_map(|i|job.epoch_start_seconds.get(*i).copied()).collect::<Vec<_>>()).unwrap_or_else(||job.epoch_start_seconds.clone());
 
     if job.job_type=="export_portable" {
         let portable=serde_json::json!({"format":"ccseeg-v1","sample_rate":recording.rate,"labels":recording.labels,"channels":recording.channels,"source_epoch_samples":recording.source_epoch_samples,"epoch_labels":recording.epoch_labels});
@@ -291,7 +293,12 @@ fn main() -> Result<(), String> {
     if parameters.irasa_factors.iter().any(|h|!h.is_finite() || *h<=1.0 || *h>=2.0) {return Err("IRASA factors must be between 1 and 2 (exclusive)".into());}
     if (job.options.fooof || job.options.irasa) && epoch_samples < recording.rate.round() as usize {return Err("FOOOF and IRASA require epochs at least one second long".into());}
     if (job.options.fooof || job.options.irasa) && recording.rate<80.0 {return Err("FOOOF and IRASA require a sampling rate of at least 80 Hz for its 1-40 Hz bands".into());}
-    let total_epochs = recording.channels[0].len() / epoch_samples;
+    let offsets = analysis_offsets(recording.channels[0].len(), epoch_samples,
+        recording.source_epoch_samples, job.epoch_overlap_seconds, recording.rate)?;
+    let total_epochs = offsets.len();
+    if job.epoch_overlap_seconds > 0.0 && epoch_onsets.is_empty() {
+        epoch_onsets = offsets.iter().map(|&x| x as f64 / recording.rate).collect();
+    }
     if total_epochs == 0 {
         return Err("recording is shorter than one analysis epoch".into());
     }
@@ -317,7 +324,7 @@ fn main() -> Result<(), String> {
         let rows: Vec<Row> = (first..last)
             .into_par_iter()
             .flat_map_iter(|epoch| {
-                let a = epoch * epoch_samples;
+                let a = offsets[epoch];
                 let b = a + epoch_samples;
                 let options = &job.options;
                 let connectivity =
@@ -359,6 +366,25 @@ fn main() -> Result<(), String> {
     )?;
     eprintln!("PROGRESS 100 Complete");
     Ok(())
+}
+
+fn analysis_offsets(total: usize, window: usize, parent: Option<usize>, overlap: f64, rate: f64) -> Result<Vec<usize>, String> {
+    if !overlap.is_finite() || overlap < 0.0 || overlap * rate >= window as f64 {
+        return Err("Epoch overlap must be nonnegative and shorter than the epoch".into());
+    }
+    let hop = window.saturating_sub((overlap * rate).round() as usize);
+    if hop == 0 { return Err("Epoch overlap leaves no sample hop".into()); }
+    let parent = parent.unwrap_or(total);
+    let mut offsets = Vec::new();
+    if parent >= window && parent > 0 {
+        for base in (0..total).step_by(parent) {
+            let end = (base + parent).min(total);
+            if end >= base + window {
+                offsets.extend((base..=end-window).step_by(hop));
+            }
+        }
+    }
+    Ok(offsets)
 }
 
 fn recording_stem(path:&str)->String {
@@ -1136,5 +1162,16 @@ mod tests {
         let result=remove_non_eeg_and_reference_configured(&mut rec,&["Fp1".to_string(),"Cz".to_string()],"average",&[],true);
         assert!(result.is_err());
         assert_eq!(rec.labels.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::analysis_offsets;
+    #[test]
+    fn sliding_windows_keep_original_trial_boundaries() {
+        assert_eq!(analysis_offsets(20, 4, Some(10), 0.2, 10.0).unwrap(), vec![0,2,4,6,10,12,14,16]);
+        assert_eq!(analysis_offsets(10, 4, None, 0.0, 10.0).unwrap(), vec![0,4]);
+        assert!(analysis_offsets(10, 4, None, 0.4, 10.0).is_err());
     }
 }

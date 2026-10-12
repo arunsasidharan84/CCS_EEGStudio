@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.12</b> ·
+  <b>Current version: 1.2.13</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -155,6 +155,32 @@ File selectors support `*`, `?`, and semicolon-separated filename patterns.
 Plots support manual session ordering and line colors. Reopening saved cleaned
 recordings recovers preprocessing/source history and adjacent analysis outputs.
 See [workflow details and analysis conventions](docs/workflow_improvements.md).
+
+### Preprocessed dataset batches
+
+**Version 1.2.13** fixes continuous FieldTrip files appearing as one saved epoch
+and failing extraction. A one-cell continuous FieldTrip trial now remains
+continuous; full-resolution engine samples are kept separate from waveform previews.
+
+To test a subset: enable **Already preprocessed: start with features**, enter 10
+under **Folder import: first N subjects**, then import the folder in the feature
+stage. Set the epoch length and overlap; enable **Subepoch existing trials** only
+when existing parent trials should be subdivided. Saved preprocessing overlap is
+formed after cleaning so each source sample is cleaned once. Stage 4 opens the
+metadata/model workbench after the feature/plot stages when requested.
+
+Use **Infer metadata from filenames…** to preview BIDS Subject/Session/Task/Run/
+Acquisition fields or a custom named-group pattern, then save the reviewed CSV.
+Unknown fields stay blank. Choose the subject ID, factors and outcomes before
+running group inference. Two-second fE:I remains available for bands/windows that
+pass its validity checks; the window warning is advisory.
+
+
+Batch Workspace can start directly with features for already-cleaned data, limit
+folder imports by subject count, create overlapping analysis windows and hand the
+successful outputs to Stage 4 group statistics. Filename metadata inference has a
+review/save preview and custom named-group patterns. See the
+[psiconnect workflow and pilot checks](docs/psiconnect_batch_workflow.md).
 
 ### Metadata and group statistics
 

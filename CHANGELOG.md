@@ -4,6 +4,72 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.13]
+
+### FieldTrip loading and extraction
+
+- Fixed continuous FieldTrip MAT inspection: a one-cell continuous trial remains
+  continuous instead of being exposed as one synthetic saved epoch.
+- This fixes "recording is shorter than one analysis epoch" for psiconnect
+  recordings longer than four minutes. The native engine reads the original
+  full-resolution file rather than a decimated waveform preview.
+- Materialize full samples before serializing decimated native epoched inputs.
+  Original recording names and source identity remain in feature outputs.
+
+### Overlapping windows
+
+- Added feature epoch overlap in seconds. Zero overlap preserves nonoverlapping
+  extraction; overlap must be nonnegative and shorter than the window.
+- Added optional subdivision of existing trials into feature windows, preserving
+  parent boundaries and source window coordinates. Incomplete tails are dropped.
+- Added overlapping saved windows after preprocessing: clean each original sample
+  once, then construct the output windows. On continuous inputs this defers saved
+  epoch construction until cleaning finishes. Existing parent trials remain boundaries.
+- Persist output window/overlap and timing provenance. Overlap is not a change to
+  GEDAI's internal covariance-window implementation.
+- Short-window DFA/fE:I is permitted when meaningful for a band. Lower-band
+  missing values and fE:I validity failures remain missing; the advisory warning
+  does not block explicit continuation or fabricate values.
+
+### Batch workflow and group statistics
+
+- Added Already preprocessed mode to start with features and hide preprocessing.
+- Added first-N-subject folder import (zero means all), using sorted BIDS subject
+  IDs or first filename tokens. Queue counts now reflect the selected input stage.
+- The main workflow can run feature extraction and plots without a preprocessing queue.
+- Added Stage 4 Group Statistics, with optional automatic opening after batch
+  completion. It pools successful feature outputs into an explicit group-input
+  table and opens metadata/model configuration; it does not run an unspecified model.
+- Fixed numeric categorical factors (such as sessions 1/2) being represented
+  differently during model fitting and adjusted contrast construction.
+
+### Filename metadata
+
+- Added Infer metadata from filenames with a review-and-save preview.
+- Recognize BIDS sub/ses/task/run/acq fields and legacy SubNN subject identifiers.
+- Support custom named-group regular expressions and require an updated preview
+  before saving an edited pattern. Preserve identifier strings in the metadata CSV.
+- Deduplicate recording names, leave unmatched fields blank, select the reviewed
+  CSV for metadata joining, and set filename as the join key.
+- No demographic, diagnosis or treatment details are inferred from unsupported names.
+
+### Validation and documentation
+
+- 146 Flutter tests passed with 5 dataset-dependent skips; Dart analysis is clean.
+  Rust tests passed, including sliding-window boundary checks; 6 Python statistics
+  tests passed, including numeric categorical contrasts.
+- All 79 recordings from PC001–PC010 passed full-channel PSD extraction using
+  two-second windows and one-second overlap: 1,466,112 rows. No other subjects
+  were processed and the source files were not modified.
+- Bounded first-ten-second checks from one recording per subject produced 5,760
+  finite Gamma1 DFA values and 708 finite Gamma1 fE:I values. Lower-band fits were
+  unavailable at that window length; this is not a claim of validity in all bands.
+- Exercised a metadata-joined Fz Alpha_PSD LMM with Task/Session fixed factors and
+  Subject random intercepts. This validates the workflow, not a full dataset finding.
+- Compiled and verified the local macOS app; platform CI builds installers for release.
+- Updated README and docs/psiconnect_batch_workflow.md with controls, naming rules,
+  statistical setup, implementation conventions and the exact pilot scope.
+
 ## [1.2.12]
 
 ### Feature-window warnings

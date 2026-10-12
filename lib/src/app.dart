@@ -269,6 +269,12 @@ class _FeatureHomeState extends State<FeatureHome>
   final _end = TextEditingController(text: '120');
   final _bin = TextEditingController(text: '60');
   final _epoch = TextEditingController(text: '2');
+  final _epochOverlap = TextEditingController(text: '0');
+  final _prepOverlap = TextEditingController(text: '0');
+  bool _batchPreprocessedInput = false;
+  String? _groupInputCsv;
+  bool _batchOpenGroupAfter = true;
+  final _batchSubjectLimit = TextEditingController(text: '0');
   final _gedaiEpoch = TextEditingController(text: '1');
   final _gedaiThreshold = TextEditingController(text: 'auto');
   final _exclude = TextEditingController(text: 'OBD, HRDT, ARSQ');
@@ -402,6 +408,8 @@ class _FeatureHomeState extends State<FeatureHome>
     _preNotch.addListener(_syncConfigFromControllers);
     _preDownsample.addListener(_syncConfigFromControllers);
     _epoch.addListener(_syncConfigFromControllers);
+    _epochOverlap.addListener(_syncConfigFromControllers);
+    _prepOverlap.addListener(_syncConfigFromControllers);
     _gedaiEpoch.addListener(_syncConfigFromControllers);
     _gedaiThreshold.addListener(_syncConfigFromControllers);
     _start.addListener(_syncConfigFromControllers);
@@ -428,6 +436,8 @@ class _FeatureHomeState extends State<FeatureHome>
       ..downsampleFreq =
           double.tryParse(_preDownsample.text) ?? _cfg.downsampleFreq
       ..epochSeconds = double.tryParse(_epoch.text) ?? _cfg.epochSeconds
+      ..epochOverlapSeconds = double.tryParse(_epochOverlap.text) ?? 0
+      ..preprocessingOverlapSeconds = double.tryParse(_prepOverlap.text) ?? 0
       ..gedaiEpochSeconds =
           gedaiEpoch != null && gedaiEpoch.isFinite && gedaiEpoch > 0
           ? gedaiEpoch
@@ -471,6 +481,9 @@ class _FeatureHomeState extends State<FeatureHome>
       _end,
       _bin,
       _epoch,
+      _epochOverlap,
+      _prepOverlap,
+      _batchSubjectLimit,
       _gedaiEpoch,
       _gedaiThreshold,
       _exclude,
@@ -738,6 +751,8 @@ class _FeatureHomeState extends State<FeatureHome>
         recording: input,
         outputPath: path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json',
         selection: _selection,
+        outputOverlapSeconds: _cfg.preprocessingOverlapSeconds,
+        outputWindowSeconds: _cfg.gedaiEpochSeconds,
         options: _cfg.toPreprocessingOptions(
           nonEegChannels: _channels.nonEegChannels,
         ),
@@ -813,7 +828,7 @@ class _FeatureHomeState extends State<FeatureHome>
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Feature window is too short'),
+            title: const Text('Review feature window settings'),
             content: SizedBox(width: 520, child: Text(warnings.join('\n\n'))),
             actions: [
               TextButton(
@@ -871,6 +886,8 @@ class _FeatureHomeState extends State<FeatureHome>
         outputPath: path,
         options: options,
         epochSeconds: _cfg.epochSeconds,
+        epochOverlapSeconds: _cfg.epochOverlapSeconds,
+        subepochExisting: _cfg.subepochExisting,
         selection: _selection,
         onProgress: (p, m) {
           _log(m);
@@ -1563,9 +1580,11 @@ class _FeatureHomeState extends State<FeatureHome>
         );
       case _Module.groupStatistics:
         return GroupStatisticsWorkbench(
-          initialCsvPath: _batchFeatOutputs
-              .where((p) => p.endsWith('Batch_features.csv'))
-              .firstOrNull,
+          initialCsvPath:
+              _groupInputCsv ??
+              _batchFeatOutputs
+                  .where((p) => p.endsWith('Batch_features.csv'))
+                  .firstOrNull,
         );
       case _Module.microstates:
         return MicrostateAnalysisView(activeRecording: _activeRecording);
@@ -2739,11 +2758,16 @@ class _FeatureHomeState extends State<FeatureHome>
               ),
             ),
           if (!_usesExistingEpochs)
-            _check('Epoch before GEDAI (memory safe)', _cfg.epochBeforeGedai, (
-              v,
-            ) {
-              if (_raw?.pointsPerEpoch == null) _cfg.epochBeforeGedai = v;
-            }),
+            _field(
+              _prepOverlap,
+              'Saved epoch overlap after cleaning (s)',
+              suffix: 's',
+            ),
+          _check('Epoch before GEDAI (memory safe)', _cfg.epochBeforeGedai, (
+            v,
+          ) {
+            if (_raw?.pointsPerEpoch == null) _cfg.epochBeforeGedai = v;
+          }),
           if (!_usesExistingEpochs)
             StimEpochPanel(
               config: _cfg,
@@ -2768,6 +2792,12 @@ class _FeatureHomeState extends State<FeatureHome>
         _subLabel('EPOCH & DURATION'),
         const SizedBox(height: 6),
         _field(_epoch, 'Epoch length (s)', suffix: 's'),
+        _field(_epochOverlap, 'Epoch overlap (s)', suffix: 's'),
+        _check(
+          'Subepoch existing trials (keep parent boundaries)',
+          _cfg.subepochExisting,
+          (v) => _cfg.subepochExisting = v,
+        ),
         const SizedBox(height: 6),
         DropdownButtonFormField<DurationMode>(
           value: _cfg.mode,
@@ -2969,12 +2999,45 @@ class _FeatureHomeState extends State<FeatureHome>
         .where((file) => matchesFilename(file, pattern))
         .toList();
     discovered.sort();
+    final maxSubjects = int.tryParse(_batchSubjectLimit.text) ?? 0;
+    if (maxSubjects > 0) {
+      final subjects = <String>{};
+      discovered.removeWhere((file) {
+        final name = _shortName(file);
+        final id =
+            RegExp(r'sub-([^_]+)').firstMatch(name)?.group(1) ??
+            name.split('_').first;
+        if (subjects.contains(id)) return false;
+        if (subjects.length >= maxSubjects) return true;
+        subjects.add(id);
+        return false;
+      });
+    }
     setState(() {
       for (final file in discovered) {
         if (!destination.contains(file)) destination.add(file);
       }
     });
     _log('Added ${discovered.length} supported file(s) from $path.');
+  }
+
+  Future<void> _openBatchGroupStatistics() async {
+    final csvs = preferSessionFeatureCsvs(_batchFeatOutputs);
+    if (csvs.isNotEmpty) {
+      final dir = Directory(
+        '${File(csvs.first).parent.path}${Platform.pathSeparator}Group_Statistics',
+      );
+      await dir.create(recursive: true);
+      final path =
+          '${dir.path}${Platform.pathSeparator}group_input.features.csv';
+      await _service.compileCsvFiles(csvs, path);
+      _groupInputCsv = path;
+    }
+    if (!mounted) return;
+    setState(() {
+      _batchMaximized = false;
+      _selectedModule = _Module.groupStatistics;
+    });
   }
 
   Widget _buildBatchBar({bool fillAvailable = false}) {
@@ -3010,17 +3073,12 @@ class _FeatureHomeState extends State<FeatureHome>
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    '${_batchPrepFiles.length} files queued',
+                    '${(_batchPreprocessedInput ? _batchFeatFiles : _batchPrepFiles).length} files queued',
                     style: const TextStyle(color: _textMuted, fontSize: 11),
                   ),
                   const Spacer(),
                   TextButton.icon(
-                    onPressed: _running
-                        ? null
-                        : () => setState(() {
-                            _batchMaximized = false;
-                            _selectedModule = _Module.groupStatistics;
-                          }),
+                    onPressed: _running ? null : _openBatchGroupStatistics,
                     icon: const Icon(Icons.groups, size: 16),
                     label: const Text('Group Statistics'),
                   ),
@@ -3054,10 +3112,18 @@ class _FeatureHomeState extends State<FeatureHome>
                   else ...[
                     const SizedBox(width: 4),
                     FilledButton.icon(
-                      onPressed: _batchPrepFiles.isEmpty ? null : _runFullBatch,
+                      onPressed:
+                          (_batchPreprocessedInput
+                                  ? _batchFeatFiles
+                                  : _batchPrepFiles)
+                              .isEmpty
+                          ? null
+                          : _runFullBatch,
                       icon: const Icon(Icons.play_circle_filled, size: 14),
-                      label: const Text(
-                        'Run Full Pipeline',
+                      label: Text(
+                        _batchPreprocessedInput
+                            ? 'Run feature workflow'
+                            : 'Run Full Pipeline',
                         style: TextStyle(fontSize: 11),
                       ),
                       style: FilledButton.styleFrom(
@@ -3098,18 +3164,98 @@ class _FeatureHomeState extends State<FeatureHome>
               _accentBlue,
             ),
           ),
-          // Batch content: 3 stage cards side by side
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _field(
+              _batchSubjectLimit,
+              'Folder import: first N subjects (0 = all)',
+            ),
+          ),
+          SwitchListTile(
+            dense: true,
+            title: const Text('Already preprocessed: start with features'),
+            value: _batchPreprocessedInput,
+            onChanged: _running
+                ? null
+                : (v) => setState(() {
+                    _batchPreprocessedInput = v;
+                    _batchFeatUsePrep = !v;
+                    _batchPlotUseFeat = true;
+                  }),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                const Icon(Icons.groups, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Next: group statistics · choose metadata and subject/state factors',
+                  ),
+                ),
+                TextButton(
+                  onPressed: _running ? null : _openBatchGroupStatistics,
+                  child: const Text(
+                    'Open group statistics with batch features',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Batch content: preprocessing is optional.
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: _buildBatchStage1Card()),
+                  if (!_batchPreprocessedInput)
+                    Expanded(child: _buildBatchStage1Card()),
                   const SizedBox(width: 10),
                   Expanded(child: _buildBatchStage2Card()),
                   const SizedBox(width: 10),
                   Expanded(child: _buildBatchStage3Card()),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: _cardColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Stage 4: Group Statistics',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Batch feature CSVs → metadata join → subject/state factors → LMM / GLM. Review the model before running it.',
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Open after batch finishes'),
+                            value: _batchOpenGroupAfter,
+                            onChanged: _running
+                                ? null
+                                : (v) =>
+                                      setState(() => _batchOpenGroupAfter = v),
+                          ),
+                          const Spacer(),
+                          FilledButton.icon(
+                            onPressed: _running
+                                ? null
+                                : _openBatchGroupStatistics,
+                            icon: const Icon(Icons.groups),
+                            label: const Text('Configure group analysis'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -3906,6 +4052,8 @@ class _FeatureHomeState extends State<FeatureHome>
           options: _cfg.toPreprocessingOptions(
             nonEegChannels: channels.nonEegChannels,
           ),
+          outputOverlapSeconds: _cfg.preprocessingOverlapSeconds,
+          outputWindowSeconds: _cfg.gedaiEpochSeconds,
           onProgress: (p, msg) {
             _updateBatchFile(path, 'Running', progress: p);
             if (standalone) {
@@ -4078,6 +4226,8 @@ class _FeatureHomeState extends State<FeatureHome>
             recordings: [rec],
             outputPath: jobCsv,
             epochSeconds: _cfg.epochSeconds,
+            epochOverlapSeconds: _cfg.epochOverlapSeconds,
+            subepochExisting: _cfg.subepochExisting,
             selection: const ViewerSelection.empty(),
             writeCombined: true,
             options: options,
@@ -4143,6 +4293,7 @@ class _FeatureHomeState extends State<FeatureHome>
         } catch (_) {}
       }
       setState(() {
+        _groupInputCsv = null;
         _batchFeatOutputs
           ..clear()
           ..addAll(written);
@@ -4234,8 +4385,9 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Runs all three stages back to back, feeding each stage the files the
   /// previous one actually produced.
   Future<void> _runFullBatch() async {
-    if (_batchPrepFiles.isEmpty) {
-      _log('Queue is empty — add files in Stage 1.');
+    final queue = _batchPreprocessedInput ? _batchFeatFiles : _batchPrepFiles;
+    if (queue.isEmpty) {
+      _log('Queue is empty — add recordings in the active input stage.');
       return;
     }
     setState(() {
@@ -4243,24 +4395,26 @@ class _FeatureHomeState extends State<FeatureHome>
       _progress = 0;
       _logVisible = true;
     });
-    _startBatchProgress('Full batch pipeline · preprocessing', _batchPrepFiles);
-    _log('══ FULL BATCH PIPELINE — ${_batchPrepFiles.length} files ══');
+    _startBatchProgress('Batch workflow', queue);
+    _log('══ BATCH WORKFLOW — ${queue.length} files ══');
     try {
-      final preprocessed = await _runBatchPreprocessing(standalone: false);
+      final preprocessed = _batchPreprocessedInput
+          ? List<String>.of(_batchFeatFiles)
+          : await _runBatchPreprocessing(standalone: false);
       if (preprocessed.isEmpty) {
         _log('✗ Stage 1 produced nothing — aborting.');
         return;
       }
       setState(() => _progress = 1 / 3);
 
-      _batchFeatUsePrep = true;
+      _batchFeatUsePrep = !_batchPreprocessedInput;
       _resetBatchProgressStage(
         'Full batch pipeline · feature extraction',
         preprocessed,
       );
       final csvs = await _runBatchExtraction(standalone: false);
-      if (csvs.isEmpty) {
-        _log('✗ Stage 2 produced nothing — aborting.');
+      if (csvs.isEmpty || _batchCancelRequested) {
+        _log('Feature stage stopped or produced no output.');
         return;
       }
       setState(() => _progress = 2 / 3);
@@ -4272,6 +4426,9 @@ class _FeatureHomeState extends State<FeatureHome>
         _updateBatchFile(path, 'Done', progress: 1, completed: true);
       }
       _log('══ FULL BATCH PIPELINE COMPLETE ══');
+      if (_batchOpenGroupAfter && !_batchCancelRequested) {
+        await _openBatchGroupStatistics();
+      }
     } catch (e) {
       _log('✗ Pipeline error: $e');
     } finally {

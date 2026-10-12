@@ -2,9 +2,15 @@ import 'models.dart';
 
 /// Advice uses the actual saved parent epoch, rather than the UI's cut length.
 List<String> featureWindowWarnings(AnalysisConfig config, EegRecording rec) {
-  final seconds = rec.pointsPerEpoch != null
+  final seconds = rec.pointsPerEpoch != null && !config.subepochExisting
       ? rec.pointsPerEpoch! / rec.sampleRate
       : config.epochSeconds;
+  final overlap = config.epochOverlapSeconds;
+  if (!overlap.isFinite || overlap < 0 || overlap >= seconds) {
+    return [
+      'Epoch overlap must be nonnegative and shorter than the analysis epoch.',
+    ];
+  }
   final gcLags = (config.featureParameters['gc_lags'] as num?)?.toInt() ?? 25;
   final warnings = <String>[];
   if (config.dfaFei && seconds < 60) {
