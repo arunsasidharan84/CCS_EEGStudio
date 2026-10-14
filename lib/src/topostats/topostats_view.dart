@@ -259,38 +259,65 @@ class _TopoStatsViewState extends State<TopoStatsView> {
       _groups.clear();
       _cache.clear();
     }
-    final prep = prepareSessionFeatureCsvs(seed, _sessionScratch!.path);
-    final grouped = groupByRecording(prep);
+    var prep = prepareSessionFeatureCsvs(seed, _sessionScratch!.path);
+    var overallRid = inferRecId(prep);
+    if (prep.length == 1 && overallRid.isNotEmpty) {
+      final sib = discoverSessionFiles(_dir(prep.first), overallRid);
+      if (sib.length > 1) {
+        prep = sib;
+        overallRid = inferRecId(prep);
+      }
+    }
 
-    if (grouped.isEmpty && prep.isNotEmpty) {
-      final rid = inferRecId(prep);
-      final g = TopoPlotGroup(
-        id: rid.isNotEmpty ? rid : 'group_${_groups.length + 1}',
-        recId: rid,
-        files: List<String>.from(prep),
+    if (overallRid.isNotEmpty) {
+      final existingIdx = _groups.indexWhere(
+        (g) => g.recId == overallRid || g.id == overallRid,
       );
-      if (g.files.length > 8) g.disabled.addAll(g.files.skip(8));
-      _groups.add(g);
-    } else {
-      grouped.forEach((rid, gFiles) {
-        if (gFiles.isEmpty) return;
-        final existingIdx = _groups.indexWhere(
-          (g) => g.recId == rid || (rid.isNotEmpty && g.id == rid),
+      if (existingIdx >= 0 && append) {
+        final existing = _groups[existingIdx];
+        final combined = {...existing.files, ...prep}.toList()..sort();
+        existing.files = combined;
+      } else {
+        final g = TopoPlotGroup(
+          id: overallRid,
+          recId: overallRid,
+          files: List<String>.from(prep),
         );
-        if (existingIdx >= 0 && append) {
-          final existing = _groups[existingIdx];
-          final combined = {...existing.files, ...gFiles}.toList()..sort();
-          existing.files = combined;
-        } else {
-          final g = TopoPlotGroup(
-            id: rid.isNotEmpty ? rid : 'group_${_groups.length + 1}',
-            recId: rid,
-            files: List<String>.from(gFiles),
+        if (g.files.length > 8) g.disabled.addAll(g.files.skip(8));
+        _groups.add(g);
+      }
+    } else {
+      final grouped = groupByRecording(prep);
+      if (grouped.isEmpty && prep.isNotEmpty) {
+        final rid = inferRecId(prep);
+        final g = TopoPlotGroup(
+          id: rid.isNotEmpty ? rid : 'group_${_groups.length + 1}',
+          recId: rid,
+          files: List<String>.from(prep),
+        );
+        if (g.files.length > 8) g.disabled.addAll(g.files.skip(8));
+        _groups.add(g);
+      } else {
+        grouped.forEach((rid, gFiles) {
+          if (gFiles.isEmpty) return;
+          final existingIdx = _groups.indexWhere(
+            (g) => g.recId == rid || (rid.isNotEmpty && g.id == rid),
           );
-          if (g.files.length > 8) g.disabled.addAll(g.files.skip(8));
-          _groups.add(g);
-        }
-      });
+          if (existingIdx >= 0 && append) {
+            final existing = _groups[existingIdx];
+            final combined = {...existing.files, ...gFiles}.toList()..sort();
+            existing.files = combined;
+          } else {
+            final g = TopoPlotGroup(
+              id: rid.isNotEmpty ? rid : 'group_${_groups.length + 1}',
+              recId: rid,
+              files: List<String>.from(gFiles),
+            );
+            if (g.files.length > 8) g.disabled.addAll(g.files.skip(8));
+            _groups.add(g);
+          }
+        });
+      }
     }
 
     if (_selectedGroupIndex >= _groups.length) {
@@ -1447,15 +1474,17 @@ class _TopoStatsViewState extends State<TopoStatsView> {
           ),
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const Text('Width:', style: TextStyle(color: _muted, fontSize: 10)),
-                const SizedBox(width: 4),
                 for (final (label, val) in [
                   ('Compact', 0.35),
                   ('Medium', 0.5),
                   ('Wide', 0.8),
-                ]) ...[
+                ])
                   InkWell(
                     onTap: _running
                         ? null
@@ -1467,7 +1496,6 @@ class _TopoStatsViewState extends State<TopoStatsView> {
                     borderRadius: BorderRadius.circular(4),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      margin: const EdgeInsets.only(right: 4),
                       decoration: BoxDecoration(
                         color: _panel,
                         border: Border.all(
@@ -1488,7 +1516,6 @@ class _TopoStatsViewState extends State<TopoStatsView> {
                       ),
                     ),
                   ),
-                ],
               ],
             ),
           ),
@@ -1858,8 +1885,10 @@ class _TopoStatsViewState extends State<TopoStatsView> {
             Text(
               _running
                   ? _status
-                  : (_groups.isEmpty
-                      ? 'Run feature extraction first, then view results.'
+                  : (_activeFiles.isEmpty
+                      ? (_files.isEmpty
+                          ? 'Run feature extraction first, then view results.'
+                          : 'Select a recording to view its results.')
                       : 'Press "${widget.runLabel}" to compute the figure.'),
               style: const TextStyle(color: _muted, fontSize: 13),
             ),
