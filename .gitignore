@@ -58,6 +58,8 @@ parity_test/py_data_for_rust.json
 parity_test/step1/
 parity_test/step2/
 parity_test/gedai/
+parity_test/meditation_parity/
+output/
 test_python.log
 
 # ── Local scratch binaries (built from loose .rs files in root) ───────────

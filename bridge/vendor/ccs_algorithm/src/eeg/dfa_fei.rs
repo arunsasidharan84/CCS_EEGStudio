@@ -510,6 +510,7 @@ fn fei(
     dfa_threshold: f64,
     min_windows: usize,
 ) -> f64 {
+    if !dfa_value.is_finite() || dfa_value <= dfa_threshold { return f64::NAN; }
     let length_signal = signal.len();
     let window_size = (window_size_sec * srate) as i64;
     if window_size <= 0 {
@@ -560,13 +561,8 @@ fn fei(
 
     // NOTE on the comparison below: `ccstools` computes fei_outliers_removed
     // for every channel unconditionally, and only afterwards masks it to NaN
-    // via a vectorized `dfa_array <= dfa_threshold` (NumPy: a NaN comparison
-    // is always False, so a NaN `dfa_value` -- itself a legitimate "DFA not
-    // computable at this window length" outcome -- silently fails to mask,
-    // and the channel's correlation-based fE/I is returned ungated). This is
-    // reproduced faithfully here: Rust's IEEE 754 comparison has the same
-    // "NaN <= threshold is false" semantics, so simply not short-circuiting
-    // on `is_nan()` matches `ccstools` exactly, quirk included.
+    // A missing DFA cannot establish the required long-range correlations.
+    // Unlike the legacy NaN comparison loophole, reject it explicitly.
     let gesd_alpha = 0.05;
     let max_outlier_pct = 0.025;
     let max_n_outliers = ((max_outlier_pct * w_amp.len() as f64).round() as usize).max(2);
@@ -582,7 +578,7 @@ fn fei(
     let kept_amp: Vec<f64> = keep.iter().map(|&k| w_amp[k]).collect();
     let kept_dnf: Vec<f64> = keep.iter().map(|&k| w_dnf[k]).collect();
 
-    if dfa_value <= dfa_threshold {
+    if !dfa_value.is_finite() || dfa_value <= dfa_threshold {
         f64::NAN
     } else {
         1.0 - pearson_corr(&kept_amp, &kept_dnf)
@@ -667,6 +663,11 @@ pub fn compute_band_biomarkers(
     min_fit_points: usize,
     min_fei_windows: usize,
 ) -> BandBiomarkers {
+    compute_band_biomarkers_mode(signal,srate,frequency_range,overlap,compute_fei,fei_window_sec,fei_overlap,min_fit_points,min_fei_windows,false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_band_biomarkers_mode(signal:&[f64],srate:f64,frequency_range:(f64,f64),overlap:bool,compute_fei:bool,fei_window_sec:f64,fei_overlap:f64,min_fit_points:usize,min_fei_windows:usize,short:bool)->BandBiomarkers {
     let n_times = signal.len();
     let available_sec = n_times as f64 / srate;
     let nan_out = BandBiomarkers {
@@ -684,7 +685,8 @@ pub fn compute_band_biomarkers(
         return nan_out;
     }
 
-    let (lower_fit, upper_fit_default) = dfa_fitting_interval(frequency_range.0, 30.0);
+    let (standard_lower, upper_fit_default) = dfa_fitting_interval(frequency_range.0, 30.0);
+    let lower_fit = if short { (1.0/frequency_range.0).max(0.1) } else { standard_lower };
     let max_upper = max_feasible_window_sec(usable_sec, if overlap { 0.5 } else { 0.0 }, 2);
     let upper_fit = upper_fit_default.min(max_upper);
 
@@ -756,6 +758,17 @@ pub fn all(signal: &[f64], srate: f64, bands: &[(f64, f64, &str)]) -> BTreeMap<S
     out
 }
 
+/// Exploratory short-scale fits for verification; not literature-scale LRTC.
+pub fn all_short(signal:&[f64],srate:f64,bands:&[(f64,f64,&str)])->BTreeMap<String,f64> {
+    let mut out=BTreeMap::new();
+    for &(lo,hi,name) in bands {
+        let result=compute_band_biomarkers_mode(signal,srate,(lo,hi),true,true,5.0,0.8,4,4,true);
+        out.insert(format!("{name}_DFA"),result.dfa);
+        out.insert(format!("{name}_fEI"),result.fei);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -817,5 +830,30 @@ mod tests {
         let _ = all(&flat, srate, &test_bands());
         let tiny = vec![0.1, 0.2, 0.3];
         let _ = all(&tiny, srate, &test_bands());
+    }
+}
+
+#[cfg(test)]
+mod validity_tests {
+    use super::*;
+    #[test]
+    fn missing_dfa_cannot_qualify_fei() {
+        let envelope: Vec<f64> = (0..1000).map(|i|2.0+(i as f64*0.11).sin()*0.5).collect();
+        assert!(fei(&envelope,100.0,1.0,0.8,f64::NAN,0.6,4).is_nan());
+    }
+}
+
+#[cfg(test)]
+mod short_verification_tests {
+    use super::*;
+    #[test]
+    fn short_alpha_fits_are_distinct_from_standard_lrtc() {
+        let signal:Vec<f64>=(0..1000).map(|i|{
+            let t=i as f64/500.0;
+            (1.0+0.3*(2.0*std::f64::consts::PI*0.7*t).sin())*(2.0*std::f64::consts::PI*10.0*t).sin()
+        }).collect();
+        let bands=[(8.0,12.0,"Alpha")];
+        assert!(all(&signal,500.0,&bands)["Alpha_DFA"].is_nan());
+        assert!(all_short(&signal,500.0,&bands)["Alpha_DFA"].is_finite());
     }
 }

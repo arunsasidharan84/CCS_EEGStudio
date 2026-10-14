@@ -80,6 +80,10 @@ pub struct Options {
     /// (functional Excitation/Inhibition ratio) feature family.
     #[serde(default)]
     pub dfa_fei: bool,
+    #[serde(default)]
+    pub dfa_fei_window_seconds: f64,
+    #[serde(default)]
+    pub dfa_fei_short_epoch: bool,
 }
 
 impl Options {
@@ -114,6 +118,8 @@ impl Options {
             remove_non_eeg: false,
             non_eeg_channels: Vec::new(),
             dfa_fei: false,
+            dfa_fei_window_seconds: 0.0,
+            dfa_fei_short_epoch: false,
         }
     }
 }

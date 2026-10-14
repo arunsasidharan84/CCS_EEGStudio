@@ -96,7 +96,9 @@ amplitude/fluctuation relations, following Hardstone et al. (2012) and Bruining
 et al. (2020). See [`dfa_fei.rs`](../bridge/vendor/ccs_algorithm/src/eeg/dfa_fei.rs)
 for filter, fit-scale, outlier and window rules. The port's source record reports
 roughly 1e-14 agreement with the CCS Python implementation on its fixtures;
-this release runs its internal regression tests rather than repeating that
+the context/gating update deliberately diverges from the legacy NaN fE:I gate;
+see [report/context conventions](report_and_dfa_context.md). The earlier release
+ran its internal regression tests rather than repeating that
 external parity exercise. Windows are clamped for short data; bands unable to
 fit return NaN. Those adaptations cannot establish long-range correlations from
 two-second epochs or turn fE:I into a direct physiological E/I measurement.

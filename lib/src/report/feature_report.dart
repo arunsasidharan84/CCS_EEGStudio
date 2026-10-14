@@ -1,3 +1,4 @@
+import 'dart:convert';
 // lib/src/report/feature_report.dart
 //
 // Per-recording "Feature Report" PDF (replaces the hand-written dark-theme
@@ -8,9 +9,9 @@
 // Pages (A4, light theme, vector text via package:pdf):
 //   1. Summary     – recording facts, preprocessing steps + parameters,
 //                    feature families found in the CSV.
-//   2. Signal      – 10-s snapshot of the cleaned EEG, every channel on its
+//   2. Signal      – representative 10-s snapshot (all channels in detailed mode), on its
 //                    own labelled row with a common µV scale bar and 1-s
-//                    grid; the raw signal is overlaid in grey when available.
+//                    grid; raw/cleaned panels share a peak-safe scale when available.
 //   3. Topography  – channel-mean scalp maps (MNE-style interpolation) of the
 //                    band-power / aperiodic / nonlinear features.
 //   4. Time course – per-feature mean across channels over the recording
@@ -52,6 +53,7 @@ const Map<String, String> _familyTitles = {
   'nonlinear': 'Nonlinear dynamics',
   'acw': 'Autocorrelation window',
   'conn': 'Functional connectivity',
+  'dfa_fei': 'Amplitude-envelope DFA / fE:I',
   'other': 'Other',
 };
 
@@ -59,6 +61,11 @@ const Map<String, String> _familyTitles = {
 String featureFamily(String h) {
   final l = h.toLowerCase();
   if (l.startsWith('conn_')) return 'conn';
+  if (l.endsWith('_dfa') ||
+      l.endsWith('_fei') ||
+      l.endsWith('_dfa_short') ||
+      l.endsWith('_fei_short'))
+    return 'dfa_fei';
   if (l.endsWith('_psd')) return 'psd';
   if (l.endsWith('_fooof')) return 'fooof';
   if (l.endsWith('_irasa')) return 'irasa';
@@ -190,24 +197,17 @@ double signalComparisonSpan(
     final index = reference.labels.indexOf(label);
     if (index < 0) continue;
     final values = reference.preview[index];
-    final start = (startSeconds * reference.sampleRate).round().clamp(
-      0,
-      values.length,
-    );
-    final end = math.min(
-      values.length,
-      start + (10 * reference.sampleRate).round(),
-    );
+    final rate = reference.sampleRate * values.length / reference.sampleCount;
+    final start = (startSeconds * rate).round().clamp(0, values.length);
+    final end = math.min(values.length, start + (10 * rate).round());
     if (end <= start) continue;
     final segment = values.sublist(start, end).map((v) => v.toDouble()).toList()
       ..sort();
-    spans.add(_quantile(segment, 0.95) - _quantile(segment, 0.05));
+    final mean = segment.reduce((a, b) => a + b) / segment.length;
+    spans.add(2 * segment.map((v) => (v - mean).abs()).reduce(math.max));
   }
   spans.sort();
-  return math.max(
-    _quantile(spans, 0.5).isFinite ? _quantile(spans, 0.5) : 1.0,
-    1e-9,
-  );
+  return math.max(spans.isNotEmpty ? spans.reduce(math.max) : 1.0, 1e-9);
 }
 
 /// 10-s multichannel snapshot, one labelled row per channel.
@@ -221,7 +221,7 @@ Future<Uint8List?> _signalImage(
   double startSeconds = 30,
 }) async {
   if (clean.preview.isEmpty || clean.sampleRate <= 0) return null;
-  final fs = clean.sampleRate;
+  final fs = clean.sampleRate * clean.preview.first.length / clean.sampleCount;
   final n = clean.preview.first.length;
   if (n < fs) return null;
   const segSec = 10.0;
@@ -246,10 +246,14 @@ Future<Uint8List?> _signalImage(
             .map((v) => v.toDouble())
             .toList()
           ..sort();
-    spans.add(_quantile(seg, 0.95) - _quantile(seg, 0.05));
+    final mean = seg.reduce((a, b) => a + b) / seg.length;
+    spans.add(2 * seg.map((v) => (v - mean).abs()).reduce(math.max));
   }
   spans.sort();
-  final span = math.max(sharedSpan ?? _quantile(spans, 0.5), 1e-9);
+  final span = math.max(
+    math.max(sharedSpan ?? 0, spans.reduce(math.max)),
+    1e-9,
+  );
   // Scale bar: a round number close to span/2.
   final bar = _niceNumber(span / 2);
   final rawIdx = <int, int>{};
@@ -341,11 +345,13 @@ Future<Uint8List?> _signalImage(
 
       final j = rawIdx[i];
       if (raw != null && j != null) {
-        final rs = (t0 * raw.sampleRate).round();
+        final rawRate =
+            raw.sampleRate * raw.preview[j].length / raw.sampleCount;
+        final rs = (t0 * rawRate).round();
         trace(
           raw.preview[j],
           rs,
-          raw.sampleRate,
+          rawRate,
           Paint()
             ..color = const Color(0xFFB0B7C3)
             ..style = PaintingStyle.stroke
@@ -449,7 +455,9 @@ Future<Uint8List?> _topoImage(
         vals,
         vmin: lo,
         vmax: hi,
-        outlineWidth: 0.9 * pt,
+        outlineWidth: 1.2 * pt,
+        fittedHead: true,
+        contours: true,
       );
       final cb = Rect.fromLTWH(
         map.right + 4 * pt,
@@ -685,6 +693,7 @@ Future<void> writeFeatureReport({
   ExtractionOptions? options,
   double epochSeconds = 2.0,
   List<String> excludedChannels = const [],
+  bool detailed = false,
 }) async {
   // The engine respects saved epoch boundaries even when the extraction UI
   // requests a different duration. Report the duration actually used.
@@ -694,10 +703,37 @@ Future<void> writeFeatureReport({
           (raw.durationSeconds - recording.durationSeconds).abs() > 2))
     raw = null;
   if (raw != null && !recording.labels.any(raw.labels.contains)) raw = null;
+  final csvLines = await File(csvPath)
+      .openRead()
+      .transform(utf8.decoder)
+      .transform(const LineSplitter())
+      .take(2)
+      .toList();
+  String? contextNote;
+  if (csvLines.length > 1) {
+    final header = splitFeatureCsvLine(csvLines[0]);
+    final row = splitFeatureCsvLine(csvLines[1]);
+    final index = header.indexOf('dfa_fei_window_s');
+    if (index >= 0 && index < row.length && row[index].isNotEmpty) {
+      contextNote =
+          'DFA / fE:I uses ${row[index]} s source context; other features retain the analysis-epoch window. Context bounds are recorded in the CSV.';
+    }
+  }
+  final dfaHeaderColumns = csvLines.isEmpty
+      ? <String>[]
+      : splitFeatureCsvLine(
+          csvLines.first,
+        ).where((c) => featureFamily(c) == 'dfa_fei').toList();
   final channels = detectChannels(csvPath);
   final allCols = numericFeatureColumns(
     csvPath,
   ).where((h) => !kTopoMetaColumns.contains(h)).toList();
+  if (csvLines.isNotEmpty) {
+    for (final column in splitFeatureCsvLine(csvLines.first)) {
+      if (featureFamily(column) == 'dfa_fei' && !allCols.contains(column))
+        allCols.add(column);
+    }
+  }
   final parsed = parseFeatureCsv(csvPath, allCols, channels);
   final nCh = channels.length;
   final summaries = <String, _FeatureSummary>{};
@@ -726,7 +762,10 @@ Future<void> writeFeatureReport({
       if (summaries.containsKey(f)) summaries[f]!,
   ];
   if (key.isEmpty) key = summaries.values.take(16).toList();
-  key = key.where((s) => featureFamily(s.name) != 'conn').toList();
+  key = key
+      .where((s) => featureFamily(s.name) != 'conn' && s.mean.isFinite)
+      .toList();
+  if (!detailed) key = key.take(9).toList();
 
   const pageW = 595.28 - 72; // A4 minus margins (pt)
   final topos = <Uint8List>[];
@@ -739,9 +778,16 @@ Future<void> writeFeatureReport({
     if (img != null) topos.add(img);
   }
   final times = <Uint8List>[];
-  for (var i = 0; i < key.length; i += 8) {
+  for (
+    var i = 0;
+    i < (detailed ? key.length : math.min(4, key.length));
+    i += 8
+  ) {
     final img = await _timeImage(
-      key.sublist(i, math.min(i + 8, key.length)),
+      key.sublist(
+        i,
+        math.min(i + 8, detailed ? key.length : math.min(4, key.length)),
+      ),
       pageW / 72,
     );
     if (img != null) times.add(img);
@@ -753,9 +799,30 @@ Future<void> writeFeatureReport({
     0.0,
     math.min(30.0, recording.durationSeconds - 10),
   );
-  for (var i = 0; i < channels.length; i += 7) {
-    final group = channels.sublist(i, math.min(i + 7, channels.length));
-    final span = signalComparisonSpan(raw ?? recording, group, snapshotStart);
+  final representative = <String>[];
+  for (final wanted in ['Fp1', 'Fp2', 'F3', 'F4', 'Cz', 'Pz', 'O1', 'O2']) {
+    final matches = channels.where(
+      (c) => c.toLowerCase() == wanted.toLowerCase(),
+    );
+    if (matches.isNotEmpty) representative.add(matches.first);
+  }
+  if (representative.length < 4) {
+    representative.clear();
+    final step = math.max(1, (channels.length / 8).ceil());
+    for (var i = 0; i < channels.length; i += step) {
+      representative.add(channels[i]);
+    }
+  }
+  final signalChannels = detailed ? channels : representative;
+  for (var i = 0; i < signalChannels.length; i += 8) {
+    final group = signalChannels.sublist(
+      i,
+      math.min(i + 8, signalChannels.length),
+    );
+    final span = math.max(
+      signalComparisonSpan(raw ?? recording, group, snapshotStart),
+      signalComparisonSpan(recording, group, snapshotStart),
+    );
     final cleanImage = await _signalImage(
       recording,
       null,
@@ -1015,18 +1082,26 @@ Future<void> writeFeatureReport({
           _note('Excluded non-EEG channels: ${excludedChannels.join(', ')}'),
         ],
         pw.SizedBox(height: 16),
+        if (contextNote != null) _note(contextNote),
+        if (dfaHeaderColumns.isNotEmpty)
+          _note(
+            'DFA / fE:I availability: ${dfaHeaderColumns.where((c) => !summaries.containsKey(c) || summaries[c]!.missingPct >= 100).length} of ${dfaHeaderColumns.length} columns are entirely missing in this CSV; missing values are not zero.',
+          ),
         _h1('Features in this file'),
         _kv([
           for (final fam in _familyTitles.keys)
             if (byFamily[fam] != null)
               (
                 _familyTitles[fam]!,
-                '${byFamily[fam]!.length} features - detailed statistics follow',
+                '${fam == 'dfa_fei' ? dfaHeaderColumns.length : byFamily[fam]!.length} features; full values in the CSV',
               ),
         ]),
         pw.SizedBox(height: 16),
-        _h1('Channels'),
-        _note(channels.join('  ')),
+        _note(
+          detailed
+              ? channels.join('  ')
+              : '$nCh channels; full channel/parameter detail is retained in CSV and provenance.',
+        ),
       ],
     ),
   );
@@ -1052,7 +1127,7 @@ Future<void> writeFeatureReport({
             ),
             _note(
               '${snapshotStart.toStringAsFixed(0)}-${(snapshotStart + 10).toStringAsFixed(0)} s '
-              '| ${group.join(', ')} | Shared amplitude scale; traces are centred and clipped within each row.',
+              '| ${group.join(', ')} | Shared peak-safe amplitude scale; representative channels, centred traces.',
             ),
             if (rawImage != null)
               _note(
@@ -1130,7 +1205,7 @@ Future<void> writeFeatureReport({
         build: (ctx) => [
           _h1(i == 0 ? 'Scalp topography' : 'Scalp topography (continued)'),
           _note(
-            'Mean over all epochs per channel. Each map has its own colour scale (viridis, min to max).',
+            '${key.map((f) => _familyTitles[featureFamily(f.name)] ?? featureFamily(f.name)).toSet().join(', ')}. Mean over all epochs per channel. Scalp-limited maps with contour lines and sensor positions; each map has its own viridis scale.',
           ),
           pw.SizedBox(height: 8),
           pw.Image(pw.MemoryImage(topos[i]), width: pageW),
@@ -1151,69 +1226,28 @@ Future<void> writeFeatureReport({
           ),
           pw.SizedBox(height: 8),
           pw.Image(pw.MemoryImage(times[i]), width: pageW),
-        ],
-      ),
-    );
-  }
-
-  // Statistics tables
-  doc.addPage(
-    pw.MultiPage(
-      pageFormat: a4,
-      header: header,
-      footer: footer,
-      build: (ctx) => [
-        _h1('Feature statistics'),
-        _note(
-          'Across all epochs and channels. p5 / p95 = 5th / 95th percentile.',
-        ),
-        for (final fam in _familyTitles.keys)
-          if (byFamily[fam] != null) ...[
-            pw.SizedBox(height: 10),
-            pw.Text(
-              _familyTitles[fam]!,
-              style: pw.TextStyle(
-                fontSize: 10.5,
-                color: _accent,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 3),
+          if (!detailed) ...[
+            pw.SizedBox(height: 14),
+            _h1('Key statistics'),
             pw.TableHelper.fromTextArray(
-              headers: [
-                'Feature',
-                'Mean',
-                'SD',
-                'Median',
-                'p5',
-                'p95',
-                'Missing',
-              ],
+              headers: ['Feature', 'Mean', 'SD', 'Missing'],
               data: [
-                for (final s in byFamily[fam]!)
+                for (final f in key)
                   [
-                    s.name,
-                    _fmt(s.mean),
-                    _fmt(s.sd),
-                    _fmt(s.median),
-                    _fmt(s.p5),
-                    _fmt(s.p95),
-                    '${s.missingPct.toStringAsFixed(1)}%',
+                    _prettyFeature(f.name),
+                    _fmt(f.mean),
+                    _fmt(f.sd),
+                    '${f.missingPct.toStringAsFixed(1)}%',
                   ],
               ],
               headerStyle: pw.TextStyle(
-                fontSize: 8.5,
+                fontSize: 9,
                 color: PdfColors.white,
                 fontWeight: pw.FontWeight.bold,
               ),
               headerDecoration: const pw.BoxDecoration(color: _accent),
-              cellStyle: const pw.TextStyle(fontSize: 8.5, color: _ink),
+              cellStyle: const pw.TextStyle(fontSize: 9, color: _ink),
               oddRowDecoration: const pw.BoxDecoration(color: _zebra),
-              cellAlignments: {
-                0: pw.Alignment.centerLeft,
-                for (var i = 1; i < 7; i++) i: pw.Alignment.centerRight,
-              },
-              columnWidths: {0: const pw.FlexColumnWidth(2.4)},
               cellPadding: const pw.EdgeInsets.symmetric(
                 horizontal: 5,
                 vertical: 3,
@@ -1221,9 +1255,88 @@ Future<void> writeFeatureReport({
               border: null,
             ),
           ],
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
+
+  // Full statistics tables are optional; compact statistics share the time-course page.
+  if (detailed)
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: a4,
+        header: header,
+        footer: footer,
+        build: (ctx) => [
+          _h1(detailed ? 'Feature statistics' : 'Key feature statistics'),
+          if (!detailed)
+            _note(
+              'Full per-epoch values and missing-value patterns are retained in the feature CSV. This summary shows selected features only.',
+            ),
+          _note(
+            'Across all epochs and channels. p5 / p95 = 5th / 95th percentile.',
+          ),
+          for (final fam in _familyTitles.keys)
+            if (byFamily[fam] != null &&
+                (detailed || byFamily[fam]!.any(key.contains))) ...[
+              pw.SizedBox(height: 10),
+              pw.Text(
+                _familyTitles[fam]!,
+                style: pw.TextStyle(
+                  fontSize: 10.5,
+                  color: _accent,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 3),
+              pw.TableHelper.fromTextArray(
+                headers: [
+                  'Feature',
+                  'Mean',
+                  'SD',
+                  'Median',
+                  'p5',
+                  'p95',
+                  'Missing',
+                ],
+                data: [
+                  for (final s
+                      in (detailed
+                          ? byFamily[fam]!
+                          : byFamily[fam]!.where((s) => key.contains(s))))
+                    [
+                      s.name,
+                      _fmt(s.mean),
+                      _fmt(s.sd),
+                      _fmt(s.median),
+                      _fmt(s.p5),
+                      _fmt(s.p95),
+                      '${s.missingPct.toStringAsFixed(1)}%',
+                    ],
+                ],
+                headerStyle: pw.TextStyle(
+                  fontSize: 8.5,
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+                headerDecoration: const pw.BoxDecoration(color: _accent),
+                cellStyle: const pw.TextStyle(fontSize: 8.5, color: _ink),
+                oddRowDecoration: const pw.BoxDecoration(color: _zebra),
+                cellAlignments: {
+                  0: pw.Alignment.centerLeft,
+                  for (var i = 1; i < 7; i++) i: pw.Alignment.centerRight,
+                },
+                columnWidths: {0: const pw.FlexColumnWidth(2.4)},
+                cellPadding: const pw.EdgeInsets.symmetric(
+                  horizontal: 5,
+                  vertical: 3,
+                ),
+                border: null,
+              ),
+            ],
+        ],
+      ),
+    );
 
   await File(outputPath).writeAsBytes(await doc.save());
 }

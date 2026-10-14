@@ -25,9 +25,19 @@ void paintTopomap(
   bool sensors = true,
   List<bool>? highlight,
   double outlineWidth = 1.0,
+  bool fittedHead = false,
+  bool contours = false,
 }) {
   final lut = kMplColormaps[cmap] ?? kMplColormaps['viridis']!;
-  final lim = interp.outlines.axesLimits;
+  final radius = interp.outlines.clipRadius;
+  final lim = fittedHead
+      ? (
+          x0: -radius * 1.18,
+          x1: radius * 1.18,
+          y0: -radius * 1.08,
+          y1: radius * 1.22,
+        )
+      : interp.outlines.axesLimits;
   final aspect = (lim.y1 - lim.y0) / (lim.x1 - lim.x0);
   Rect ax;
   if (box.width * aspect <= box.height) {
@@ -102,6 +112,49 @@ void paintTopomap(
     Path()..addOval(Rect.fromCircle(center: Offset.zero, radius: cr)),
   );
   canvas.drawVertices(verts, BlendMode.dst, Paint());
+  if (contours && vmax > vmin) {
+    final pen = Paint()
+      ..color = const Color(0x55000000)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = .55 / k;
+    for (var level = 1; level < 7; level++) {
+      final threshold = vmin + (vmax - vmin) * level / 7;
+      for (var j = 0; j < res - 1; j++) {
+        for (var i = 0; i < res - 1; i++) {
+          final ids = [
+            j * res + i,
+            j * res + i + 1,
+            (j + 1) * res + i + 1,
+            (j + 1) * res + i,
+          ];
+          final corners = [
+            Offset(-cr + (i + .5) * dx, -cr + (j + .5) * dx),
+            Offset(-cr + (i + 1.5) * dx, -cr + (j + .5) * dx),
+            Offset(-cr + (i + 1.5) * dx, -cr + (j + 1.5) * dx),
+            Offset(-cr + (i + .5) * dx, -cr + (j + 1.5) * dx),
+          ];
+          final crossings = <Offset>[];
+          for (var e = 0; e < 4; e++) {
+            final next = (e + 1) % 4;
+            final a = z[ids[e]], b = z[ids[next]];
+            if (a.isFinite &&
+                b.isFinite &&
+                (a < threshold) != (b < threshold)) {
+              crossings.add(
+                Offset.lerp(
+                  corners[e],
+                  corners[next],
+                  (threshold - a) / (b - a),
+                )!,
+              );
+            }
+          }
+          if (crossings.length == 2)
+            canvas.drawLine(crossings[0], crossings[1], pen);
+        }
+      }
+    }
+  }
   canvas.restore();
   if (sensors) {
     final dot = Paint()..color = const Color(0xFF000000);
@@ -124,9 +177,10 @@ void paintTopomap(
     ..strokeJoin = StrokeJoin.round;
   final o = interp.outlines;
   for (final line in [o.head, o.nose, o.earLeft, o.earRight]) {
-    final p = Path()..moveTo(line.first.x, line.first.y);
+    final scale = fittedHead ? cr / o.radius : 1.0;
+    final p = Path()..moveTo(line.first.x * scale, line.first.y * scale);
     for (final pt in line.skip(1)) {
-      p.lineTo(pt.x, pt.y);
+      p.lineTo(pt.x * scale, pt.y * scale);
     }
     canvas.drawPath(p, ol);
   }

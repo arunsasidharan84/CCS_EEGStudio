@@ -13,6 +13,24 @@ void main() {
     '${Directory.current.path}/bridge/target/release/ccs-eeg-engine${Platform.isWindows ? '.exe' : ''}',
   );
   test(
+    'CSV pooling aligns different column orders and missing outcomes',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('csv_pool_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final a = File('${dir.path}/a.csv')
+        ..writeAsStringSync('filename,Alpha_PSD,Theta_PSD\na,1,2\n');
+      final b = File('${dir.path}/b.csv')
+        ..writeAsStringSync('Theta_PSD,filename,Beta1_PSD\n4,b,5\n');
+      final out = '${dir.path}/pooled.csv';
+      await ExtractionService().compileCsvFiles([a.path, b.path], out);
+      final rows = File(
+        out,
+      ).readAsLinesSync().map(splitFeatureCsvLine).toList();
+      expect(rows[0], ['filename', 'Alpha_PSD', 'Theta_PSD', 'Beta1_PSD']);
+      expect(rows[2], ['b', '', '4', '5']);
+    },
+  );
+  test(
     'preprocessing saves overlapping windows after cleaning',
     () async {
       final dir = Directory.systemTemp.createTempSync('pre_overlap_');

@@ -307,6 +307,20 @@ fn main() -> Result<(), String> {
     } else {
         groups_for_onsets(&job.options,&epoch_onsets,epoch_samples as f64/recording.rate,total_epochs)?
     };
+    if !job.options.dfa_fei_window_seconds.is_finite() || job.options.dfa_fei_window_seconds < 0.0 {
+        return Err("DFA/fE:I context must be zero (epoch only) or a positive duration".into());
+    }
+    let requested_context = if !job.options.dfa_fei_short_epoch && job.options.dfa_fei_window_seconds > 0.0 {
+        (job.options.dfa_fei_window_seconds*recording.rate).round() as usize
+    } else { epoch_samples };
+    let parent_samples = recording.source_epoch_samples;
+    let context_samples = if job.accepted_intervals.as_ref().is_some_and(|x| !x.is_empty()) || job.rejected_intervals.as_ref().is_some_and(|x| !x.is_empty()) { epoch_samples } else { requested_context.max(epoch_samples).min(parent_samples.unwrap_or(recording.channels[0].len())) };
+    let context_times: Vec<(f64,f64)> = offsets.iter().enumerate().map(|(i,&a)| {
+        let (ca,cb) = feature_context_bounds(a,a+epoch_samples,recording.channels[0].len(),parent_samples,context_samples);
+        let epoch_start = epoch_onsets.get(i).copied().unwrap_or(a as f64/recording.rate);
+        let start = epoch_start + (ca as f64-a as f64)/recording.rate;
+        (start,start+(cb-ca) as f64/recording.rate)
+    }).collect();
     let columns = columns(&job.options);
     let basename = recording_stem(job.recording_path.as_deref().unwrap_or(&job.input));
     let parts: Vec<&str> = basename.split('_').collect();
@@ -336,7 +350,8 @@ fn main() -> Result<(), String> {
                 (0..channels.len()).map(move |channel| {
                     let signal = &channels[channel];
                     let slice = &signal[a..b];
-                    let mut values = features(slice, rate, options);
+                    let (ca,cb) = feature_context_bounds(a,b,signal.len(),parent_samples,context_samples);
+                    let mut values = features(slice, rate, options, &signal[ca..cb]);
                     values.extend_from_slice(&connectivity[channel]);
                     Row {
                         values,
@@ -363,9 +378,19 @@ fn main() -> Result<(), String> {
         &job.options.mode,
         &epoch_onsets,
         epoch_samples as f64 / recording.rate,
+        if job.options.dfa_fei { &context_times } else { &[] },
     )?;
     eprintln!("PROGRESS 100 Complete");
     Ok(())
+}
+
+fn feature_context_bounds(a: usize, b: usize, total: usize, parent: Option<usize>, window: usize) -> (usize,usize) {
+    let parent = parent.unwrap_or(total).max(1);
+    let base = a/parent*parent;
+    let end = (base+parent).min(total);
+    let length = window.max(b-a).min(end-base);
+    let start = (a+(b-a)/2).saturating_sub(length/2).max(base).min(end-length);
+    (start,start+length)
 }
 
 fn analysis_offsets(total: usize, window: usize, parent: Option<usize>, overlap: f64, rate: f64) -> Result<Vec<usize>, String> {
@@ -459,7 +484,7 @@ fn psd_bands(options:&Options)->Vec<(f64,f64,&str)> {
     else { options.psd_bands.iter().map(|b|(b.low,b.high,b.label.as_str())).collect() }
 }
 
-fn features(x: &[f32], rate: f64, o: &Options) -> Vec<f64> {
+fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> {
     let signal: Vec<f64> = x.iter().map(|value| *value as f64).collect();
     let mut out = Vec::new();
     if o.psd {
@@ -518,7 +543,8 @@ fn features(x: &[f32], rate: f64, o: &Options) -> Vec<f64> {
     }
     if o.dfa_fei {
         let bands = psd_bands(o);
-        let values = dfa_fei::all(&signal, rate, &bands);
+        let context: Vec<f64> = dfa_context.iter().map(|&v|v as f64).collect();
+        let values = if o.dfa_fei_short_epoch { dfa_fei::all_short(&context,rate,&bands) } else { dfa_fei::all(&context,rate,&bands) };
         for band in &bands {
             out.push(values[&format!("{}_DFA", band.2)]);
             out.push(values[&format!("{}_fEI", band.2)]);
@@ -585,8 +611,8 @@ fn columns(o: &Options) -> Vec<String> {
     }
     if o.dfa_fei {
         for band in psd_bands(o) {
-            c.push(format!("{}_DFA", band.2));
-            c.push(format!("{}_fEI", band.2));
+            c.push(format!("{}_DFA{}", band.2, if o.dfa_fei_short_epoch {"_short"} else {""}));
+            c.push(format!("{}_fEI{}", band.2, if o.dfa_fei_short_epoch {"_short"} else {""}));
         }
     }
     if o.connectivity {
@@ -976,6 +1002,7 @@ fn write_csv(
     mode: &str,
     epoch_onsets: &[f64],
     epoch_duration:f64,
+    dfa_context_times:&[(f64,f64)],
 ) -> Result<(), String> {
     let mut w = fs::File::create(path).map_err(err)?;
     let mut h = cols.to_vec();
@@ -994,6 +1021,9 @@ fn write_csv(
             "mode",
             "epoch_start_s",
             "epoch_end_s",
+            "dfa_fei_window_s",
+            "dfa_fei_context_start_s",
+            "dfa_fei_context_end_s",
         ]
         .map(str::to_string),
     );
@@ -1025,6 +1055,9 @@ fn write_csv(
             format!("{:.6}",epoch_onsets.get(r.epoch-1).copied().unwrap_or((r.epoch-1) as f64*epoch_duration)),
             format!("{:.6}",epoch_onsets.get(r.epoch-1).copied().unwrap_or((r.epoch-1) as f64*epoch_duration)+epoch_duration),
         ]);
+        if let Some(&(start,end)) = dfa_context_times.get(r.epoch-1) {
+            v.extend([format!("{:.6}",end-start),format!("{start:.6}"),format!("{end:.6}")]);
+        } else { v.extend([String::new(),String::new(),String::new()]); }
         writeln!(w, "{}", v.join(",")).map_err(err)?
     }
     Ok(())
@@ -1085,6 +1118,8 @@ mod tests {
             remove_non_eeg: true,
             non_eeg_channels: Vec::new(),
             dfa_fei: false,
+            dfa_fei_window_seconds: 0.0,
+            dfa_fei_short_epoch: false,
         };
         assert_eq!(groups(&o, 5, 2.0).unwrap().len(), 2)
     }
@@ -1167,6 +1202,11 @@ mod tests {
 
 #[cfg(test)]
 mod overlap_tests {
+    #[test]
+    fn context_does_not_cross_trial_edges() {
+        assert_eq!(super::feature_context_bounds(8,10,20,Some(10),60),(0,10));
+        assert_eq!(super::feature_context_bounds(12,14,20,Some(10),6),(10,16));
+    }
     use super::analysis_offsets;
     #[test]
     fn sliding_windows_keep_original_trial_boundaries() {

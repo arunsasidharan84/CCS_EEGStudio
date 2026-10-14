@@ -129,9 +129,9 @@ pub fn compute_eeg_subepoch(
             }
         }
         if options.dfa_fei {
-            let db = dfa_fei::all(signal, srate, &BANDS);
+            let db = if options.dfa_fei_short_epoch { dfa_fei::all_short(signal,srate,&BANDS) } else { dfa_fei::all(signal, srate, &BANDS) };
             for (k, v) in db {
-                feats.insert(k, v);
+                feats.insert(if options.dfa_fei_short_epoch {format!("{k}_short")} else {k}, v);
             }
         }
 

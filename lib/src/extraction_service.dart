@@ -1,3 +1,4 @@
+import 'topostats/topostats_engine.dart' show splitFeatureCsvLine;
 import 'recording_transform.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -310,7 +311,8 @@ class ExtractionService {
         'Saved epoch overlap must be nonnegative and shorter than its window.',
       );
     }
-    if (outputOverlapSeconds > 0 && !recording.isEpoched) {
+    final stim = options.stimEpochs;
+    if (stim == null && outputOverlapSeconds > 0 && !recording.isEpoched) {
       // Clean original samples once, then form overlapping saved windows.
       options = PreprocessingOptions.fromJson({
         ...options.toJson(),
@@ -325,7 +327,6 @@ class ExtractionService {
     // event times).
     Map<String, dynamic>? stimJson;
     var sel = selection;
-    final stim = options.stimEpochs;
     if (stim != null && !recording.isEpoched) {
       final events = stim.selectEvents(recording.markers, selection: selection);
       if (events.length < 2) {
@@ -595,7 +596,7 @@ class ExtractionService {
         }),
       );
       var cleaned = await RecordingLoader().load(outputPath);
-      if (outputOverlapSeconds > 0) {
+      if (stim == null && outputOverlapSeconds > 0) {
         cleaned = RecordingTransform.subepoch(
           cleaned,
           outputWindowSeconds ?? options.gedaiEpochSeconds,
@@ -631,20 +632,55 @@ class ExtractionService {
   }
 
   Future<void> compileCsvFiles(List<String> inputs, String outputPath) async {
+    final headers = <String, List<String>>{};
+    final columns = <String>{};
+    for (final path in inputs.toSet()) {
+      if (File(path).absolute.path == File(outputPath).absolute.path) continue;
+      final line = await File(path)
+          .openRead()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .first;
+      final header = splitFeatureCsvLine(line);
+      if (header.toSet().length != header.length)
+        throw FormatException('Duplicate CSV columns in $path');
+      headers[path] = header;
+      columns.addAll(header);
+    }
+    if (headers.isEmpty)
+      throw ArgumentError(
+        'Choose recording CSVs, not the pooled destination itself.',
+      );
+    String quote(String value) => value.contains(RegExp('[,"\n]'))
+        ? '"${value.replaceAll('"', '""')}"'
+        : value;
     final sink = File(outputPath).openWrite();
     try {
-      var wroteHeader = false;
-      for (final path in inputs) {
+      final outputCols = columns.toList();
+      sink.writeln(outputCols.map(quote).join(','));
+      for (final entry in headers.entries) {
+        final indices = [
+          for (final col in outputCols) entry.value.indexOf(col),
+        ];
         var first = true;
         await for (final line in File(
-          path,
+          entry.key,
         ).openRead().transform(utf8.decoder).transform(const LineSplitter())) {
           if (first) {
             first = false;
-            if (wroteHeader) continue;
-            wroteHeader = true;
+            continue;
           }
-          sink.writeln(line);
+          if (line.trim().isEmpty) continue;
+          final cells = splitFeatureCsvLine(line);
+          if (cells.length != entry.value.length)
+            throw FormatException(
+              'CSV row does not match its header in ${entry.key}',
+            );
+          sink.writeln(
+            indices
+                .map((index) => quote(index < 0 ? '' : cells[index]))
+                .join(','),
+          );
         }
       }
     } finally {

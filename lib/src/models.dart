@@ -385,6 +385,8 @@ class ExtractionOptions {
     required this.gcTr,
     this.gcContrast = false,
     this.dfaFei = false,
+    this.dfaFeiWindowSeconds = 0,
+    this.dfaFeiShortEpoch = false,
     this.psdWindowSeconds = 1,
     this.psdAverage = 'median',
     this.psdBands = const [],
@@ -417,6 +419,8 @@ class ExtractionOptions {
   final bool gcTr;
   final bool gcContrast;
   final bool dfaFei;
+  final double dfaFeiWindowSeconds;
+  final bool dfaFeiShortEpoch;
   final double psdWindowSeconds;
   final String psdAverage;
   final List<Map<String, dynamic>> psdBands;
@@ -459,6 +463,8 @@ class ExtractionOptions {
     'gc_tr': gcTr,
     'gc_contrast': gcContrast,
     'dfa_fei': dfaFei,
+    'dfa_fei_window_seconds': dfaFeiWindowSeconds,
+    'dfa_fei_short_epoch': dfaFeiShortEpoch,
     'coh': coh,
     'plv': plv,
     'ciplv': ciplv,
@@ -590,6 +596,9 @@ class AnalysisConfig {
   bool gcTr = false;
   bool gcContrast = false;
   bool dfaFei = false;
+  double dfaFeiWindowSeconds = 60;
+  bool dfaFeiShortEpoch = false;
+  bool detailedReport = false;
 
   // Bivariate connectivity
   bool coh = true;
@@ -744,6 +753,8 @@ class AnalysisConfig {
     irasa: irasa,
     nonlinear: nonlinear,
     dfaFei: dfaFei,
+    dfaFeiWindowSeconds: dfaFeiWindowSeconds,
+    dfaFeiShortEpoch: dfaFeiShortEpoch,
     acw: acw,
     connectivity: anyConnectivity,
     mic: mic,

@@ -121,11 +121,11 @@ SUBJECT_CANDIDATE_NAMES = [
 ]
 
 GROUP_CANDIDATE_NAMES = [
-    "group", "groupid", "group_id", "status", "psgtype", "task", "condition",
+    "group", "groupid", "group_id", "status", "psgtype", "task", "condn", "condition",
     "cohort", "arm", "treatment", "diagnosis", "dx", "slept_well"
 ]
 
-SUBGROUP_CANDIDATE_NAMES = ["epoch_condition", "state",
+SUBGROUP_CANDIDATE_NAMES = ["epoch_condition", "state", "session", "sessn",
     "chan", "channel", "electrode", "derivation", "eeg channel", "ageid", "age_id",
     "session", "session_id", "visit", "time_point", "timepoint", "epoch"
 ]
@@ -203,13 +203,17 @@ def check_topoplot_suitability(channels: list[str]) -> tuple[bool, dict[str, tup
 
 def recording_key(value):
     value = Path(str(value)).name.lower()
-    value = re.sub(r"\.(features\.csv|ccseeg\.json|edf|set|fif|vhdr|csv)$", "", value)
+    value = re.sub(r"\.(features\.csv|ccseeg\.json|edf|set|fif|vhdr|mat|orb|signal|csv)$", "", value)
     return re.sub(r"(_clean|_preprocessed|_prepared|_cropped|_subepochs|_epoched)+$", "", value)
 
 
 def prepare_eeg_table(df, metadata_path=None, metadata_key=None):
+    df = df.copy()
     if metadata_path:
-        metadata = pd.read_csv(metadata_path) if str(metadata_path).lower().endswith(".csv") else pd.read_excel(metadata_path)
+        csv_metadata = str(metadata_path).lower().endswith('.csv')
+        metadata_columns = pd.read_csv(metadata_path,nrows=0).columns if csv_metadata else pd.read_excel(metadata_path,nrows=0).columns
+        join_column = metadata_key or metadata_columns[0]
+        metadata = pd.read_csv(metadata_path,dtype={join_column:str}) if csv_metadata else pd.read_excel(metadata_path,dtype={join_column:str})
         key = metadata_key or metadata.columns[0]
         if key not in metadata.columns:
             raise ValueError(f"Metadata key {key!r} is not present")
@@ -217,8 +221,12 @@ def prepare_eeg_table(df, metadata_path=None, metadata_key=None):
         if source_key is None:
             raise ValueError("No filename or subject key in feature CSV")
         df = df.copy(); metadata = metadata.copy()
-        df["__join_key"] = df[source_key].map(recording_key)
-        metadata["__join_key"] = metadata[key].map(recording_key)
+        subject_join = source_key.lower() in ('subject','subject_id','subject code','subj','subjid','participant_id')
+        def normalize_join(value):
+            result=recording_key(value)
+            return re.sub(r'^sub-', '', result) if subject_join else result
+        df["__join_key"] = df[source_key].map(normalize_join)
+        metadata["__join_key"] = metadata[key].map(normalize_join)
         if metadata["__join_key"].duplicated().any():
             raise ValueError("Metadata key is ambiguous: each recording/subject must match exactly one row")
         df = df.merge(metadata, on="__join_key", how="left", validate="many_to_one", indicator=True, suffixes=("", "_metadata"))
@@ -231,13 +239,48 @@ def prepare_eeg_table(df, metadata_path=None, metadata_key=None):
             valid=~labels.str.match(r"(?i)^(NA|nan|none|epoch\s*\d+|trial\s*\d+)$")
             if valid.any(): df["epoch_condition"]=labels.where(valid,"unlabeled")
         keys = ["filename"] + (["epoch_condition"] if "epoch_condition" in df.columns else []) + (["Chan"] if "Chan" in df.columns else [])
-        ignored = {"Epoch", "Bin", "Start_s", "End_s", "EpochStart_s", "EpochEnd_s", "bin_idx", "bin_start_s", "bin_end_s", "epoch_label", "mode", "epoch_start_s", "epoch_end_s"}
+        ignored = {"Epoch", "Bin", "Start_s", "End_s", "EpochStart_s", "EpochEnd_s", "bin_idx", "bin_start_s", "bin_end_s", "epoch_label", "mode", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s"}
         metrics = [c for c in df.columns if c not in ignored and (
-            c.lower().endswith(("_psd", "_fooof", "_irasa", "_nonlinear")) or c.lower().startswith(("conn_", "acw")))]
+            c.lower().endswith(("_psd", "_fooof", "_irasa", "_nonlinear", "_dfa", "_fei", "_dfa_short", "_fei_short")) or c.lower().startswith(("conn_", "acw")))]
         if not metrics: raise ValueError("No EEG feature columns found")
+        for column in metrics:
+            converted = pd.to_numeric(df[column], errors="coerce")
+            invalid = df[column].notna() & converted.isna() & df[column].astype(str).str.strip().ne("")
+            if invalid.any():
+                example = df.loc[invalid, column].astype(str).iloc[0]
+                raise ValueError(f"Non-numeric feature value in {column}: {example!r}. Check CSV column alignment.")
+            df[column] = converted.replace([np.inf, -np.inf], np.nan)
+        masked_fei = 0
+        lookup={c.lower():c for c in df}
+        for column in metrics:
+            lower=column.lower()
+            if lower.endswith(('_fei','_fei_short')):
+                partner=re.sub(r'_fei(_short)?$',r'_dfa\1',lower)
+                if partner in lookup:
+                    dfa=df[lookup[partner]].to_numpy(dtype=float,na_value=np.nan)
+                    invalid=pd.Series(~np.isfinite(dfa) | (dfa <= .6),index=df.index)
+                    masked_fei += int((invalid & df[column].notna()).sum())
+                    df.loc[invalid,column]=np.nan
         aggregation = {c: "mean" if c in metrics else "first" for c in df.columns if c not in keys and c not in ignored}
         df = df.groupby(keys, dropna=False, sort=False).agg(aggregation).reset_index()
+        df.attrs['excluded_unqualified_fei']=masked_fei
     return df
+
+
+def apply_channel_scope(df, scope="all"):
+    if scope == "all" or "Chan" not in df: return df
+    if scope != "mean":
+        selected = df[df["Chan"].astype(str).str.lower() == str(scope).lower()].copy()
+        if selected.empty: raise ValueError(f"Channel {scope!r} is not present")
+        return selected
+    if "filename" not in df: raise ValueError("Channel averaging needs a recording filename column")
+    keys=["filename"]+(["epoch_condition"] if "epoch_condition" in df else [])
+    metrics=[c for c in df if c.lower().endswith(("_psd","_fooof","_irasa","_nonlinear","_dfa","_fei","_dfa_short","_fei_short")) or c.lower().startswith(("conn_","acw"))]
+    agg={c:"mean" if c in metrics else "first" for c in df if c not in keys and c!="Chan"}
+    result=df.groupby(keys,dropna=False,sort=False).agg(agg).reset_index()
+    result["Chan"]="Mean"
+    result.attrs.update(df.attrs)
+    return result
 
 
 def detect_columns(df: pd.DataFrame) -> dict[str, Any]:
@@ -313,7 +356,7 @@ def detect_columns(df: pd.DataFrame) -> dict[str, Any]:
     metric_cols = []
     for c in cols:
         if cols_clean[c] in SUBJECT_CANDIDATE_NAMES: continue
-        if c in (subject_id, group_col, subgroup_col, "source_file", "source_path", "filename", "Chan", "Epoch", "Bin", "Start_s", "End_s", "subjid", "sessn", "condn", "bin_idx", "bin_start_s", "bin_end_s", "epoch_start_s", "epoch_end_s"):
+        if c in (subject_id, group_col, subgroup_col, "source_file", "source_path", "filename", "Chan", "Epoch", "Bin", "Start_s", "End_s", "subjid", "sessn", "condn", "bin_idx", "bin_start_s", "bin_end_s", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s"):
             continue
         if c in covariates:
             continue
@@ -331,6 +374,9 @@ def detect_columns(df: pd.DataFrame) -> dict[str, Any]:
         "total_rows": len(df),
         "total_columns": len(cols),
         "unique_subjects": int(df[subject_id].nunique(dropna=True)) if subject_id else len(df),
+        "excluded_unqualified_fei": int(df.attrs.get('excluded_unqualified_fei',0)),
+        "recording_count": int(df['filename'].nunique()) if 'filename' in df else len(df),
+        "channel_count": int(df['Chan'].nunique()) if 'Chan' in df else 0,
     }
 
 
@@ -379,6 +425,12 @@ def categorize_metrics(metrics: list[str]) -> dict[str, list[str]]:
 
     for m in metrics:
         ml = m.lower()
+        if ml.endswith(('_dfa_short','_fei_short')):
+            categories.setdefault('Exploratory short-scale DFA / fE:I',[]).append(m)
+            continue
+        if ml.endswith(('_dfa','_fei')):
+            categories.setdefault('Amplitude-envelope DFA / fE:I',[]).append(m)
+            continue
         if "cap_" in ml or ml.startswith("cap") or "cyclic" in ml:
             categories["CAP (Cyclic Alternating Pattern)"].append(m)
         elif "cyc" in ml or "cycle" in ml or re.match(r"^c[1-5]_.*cycle", ml):
@@ -1509,14 +1561,15 @@ def run_group_analysis(
     preferred_model: str = "auto",
     posthoc_method: str = "fdr",
     report_format: str = "both",  # 'docx', 'pdf', 'both'
+    channel_scope: str = "all",
     emit_json: bool = True,
 ) -> dict[str, Any]:
     """Runs the complete group-level analysis pipeline."""
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, low_memory=False)
     if df.columns.duplicated().any(): raise ValueError("Feature table contains duplicate column names")
     df = df.copy()
 
-    df = prepare_eeg_table(df, metadata_csv_path, metadata_key_col)
+    df = apply_channel_scope(prepare_eeg_table(df, metadata_csv_path, metadata_key_col), channel_scope)
     if sm is None:
         raise RuntimeError("Group modeling requires statsmodels. Install numpy pandas scipy matplotlib statsmodels python-docx reportlab openpyxl.")
 
@@ -1656,6 +1709,7 @@ def run_group_analysis(
         "total_rows": len(df),
         "unique_subjects": int(df[final_subject_id].nunique(dropna=True)) if final_subject_id else len(df),
         "metrics_analyzed": len(analysis_results),
+        "channel_scope": channel_scope,
     }
 
     # Generate Reports
@@ -1708,6 +1762,7 @@ def main() -> None:
     parser.add_argument("--posthoc", choices=["fdr", "bonferroni"], default="fdr")
     parser.add_argument("--report-format", choices=["docx", "pdf", "both"], default="both")
     parser.add_argument("--inspect-only", action="store_true", help="Only inspect columns and return JSON")
+    parser.add_argument("--channel", default="all", help="all, mean, or a channel name")
     parser.add_argument("--config", help="Path to JSON configuration file")
 
     args = parser.parse_args()
@@ -1751,7 +1806,7 @@ def main() -> None:
         sys.exit(1)
 
     if inspect_only:
-        df = prepare_eeg_table(pd.read_csv(csv_file), meta_csv, meta_key)
+        df = prepare_eeg_table(pd.read_csv(csv_file, low_memory=False), meta_csv, meta_key)
         detected = detect_columns(df)
         categorized = categorize_metrics(detected["metric_columns"])
         detected["categorized_metrics"] = categorized
@@ -1771,6 +1826,7 @@ def main() -> None:
         preferred_model=model,
         posthoc_method=posthoc,
         report_format=rep_fmt,
+        channel_scope=args.channel,
         emit_json=True,
     )
     print(json.dumps(payload, indent=2))

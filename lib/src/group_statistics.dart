@@ -1,3 +1,5 @@
+import 'extraction_service.dart';
+import 'topostats/topostats_batch.dart' show preferSessionFeatureCsvs;
 import 'filename_metadata.dart';
 import 'topostats/topostats_engine.dart' show splitFeatureCsvLine;
 import 'dart:convert';
@@ -44,6 +46,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
   final Set<String> _selectedMetrics = {};
 
   // Modelling preferences
+  String _channelScope = 'mean';
   String _preferredModel = 'auto'; // 'auto', 'lmm', 'glm'
   String _posthocMethod = 'fdr'; // 'fdr', 'tukey', 'bonferroni'
   String _reportFormat = 'both'; // 'both', 'docx', 'pdf'
@@ -140,14 +143,54 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
       context,
       type: FileType.custom,
       allowedExtensions: ['csv'],
-      dialogTitle: 'Select Master Analysis Sheet CSV',
+      allowMultiple: true,
+      dialogTitle: 'Choose feature CSV files',
     );
-    if (result != null && result.files.single.path != null) {
+    if (result != null) {
+      final files = preferSessionFeatureCsvs(
+        result.files.map((f) => f.path).whereType<String>().toList(),
+      );
+      if (files.isEmpty) return;
+      String path = files.first;
+      if (files.length > 1) {
+        final dir = Directory(
+          '${File(files.first).parent.path}/Group_Statistics',
+        );
+        await dir.create(recursive: true);
+        path = '${dir.path}/group_input.features.csv';
+        await ExtractionService().compileCsvFiles(files, path);
+      }
       setState(() {
-        _csvPathController.text = result.files.single.path!;
+        _csvPathController.text = path;
       });
       await _inspectCsv();
     }
+  }
+
+  Future<void> _pickFeatureFolder() async {
+    final path = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose a feature-results folder',
+    );
+    if (path == null) return;
+    final files =
+        Directory(path)
+            .listSync()
+            .whereType<File>()
+            .map((f) => f.path)
+            .where((p) => p.endsWith('.features.csv'))
+            .toList()
+          ..sort();
+    if (files.isEmpty) {
+      _showSnack('No recording feature CSVs in this folder.');
+      return;
+    }
+    final dir = Directory('$path/Group_Statistics');
+    await dir.create(recursive: true);
+    final pooled = '${dir.path}/group_input.features.csv';
+    await ExtractionService().compileCsvFiles(files, pooled);
+    if (!mounted) return;
+    setState(() => _csvPathController.text = pooled);
+    await _inspectCsv();
   }
 
   Future<void> _inferMetadata() async {
@@ -336,44 +379,21 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
         _selectedSubgroupCol = jsonMap['subgroup_col'] as String? ?? 'None';
         _selectedSubjectIdCol = jsonMap['subject_id'] as String?;
         _selectedCovariates.clear();
-        final detectedCovs = (jsonMap['covariates'] as List<dynamic>? ?? [])
-            .cast<String>();
-        _selectedCovariates.addAll(
-          detectedCovs.take(2),
-        ); // default to age, gender
+        // Covariates are an explicit design choice, not an automatic default.
 
         _selectedMetrics.clear();
         // Default selection: priority metrics
-        final prioritized = [
-          'Sleep_efficiency',
-          'TST',
-          'WASO',
-          'SOL',
-          'N3_percentage',
-          'R_percentage',
-          'sp_Count',
-          'sp_Duration',
-          'sp_Amplitude',
-          'sp_Frequency',
-          'sw_Count',
-          'sw_Density',
-          'sw_Duration',
-          'sw_Amplitude',
-          'N3_Sigma_PSD',
-          'N3_Delta_PSD',
-          'N3_Theta_PSD',
-          'CAP_rate',
-          'CAP_A_index',
-        ];
+        final prioritized = ['Alpha_PSD', 'Alpha_Irasa', 'Alpha_FOOOF'];
         final availMetrics = (jsonMap['metric_columns'] as List<dynamic>? ?? [])
             .cast<String>();
         for (final m in prioritized) {
           if (availMetrics.contains(m)) {
             _selectedMetrics.add(m);
+            break;
           }
         }
         if (_selectedMetrics.isEmpty) {
-          _selectedMetrics.addAll(availMetrics.take(8));
+          _selectedMetrics.addAll(availMetrics.take(1));
         }
 
         _statusMessage =
@@ -382,7 +402,9 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
     } catch (e) {
       _showSnack('Error inspecting file: $e');
       setState(() {
-        _statusMessage = 'Error: $e';
+        _consoleLogs.add('$e');
+        _statusMessage =
+            'Could not inspect the feature table. Check feature values and retry; details are in the activity log.';
       });
     } finally {
       setState(() {
@@ -439,6 +461,8 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
           '--covariates',
           _selectedCovariates.join(','),
         ],
+        '--channel',
+        _channelScope,
         '--metrics',
         _selectedMetrics.join(','),
         '--model',
@@ -546,26 +570,59 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildHeaderCard(),
-        const SizedBox(height: 12),
-        _buildDataSourceCard(),
-        const SizedBox(height: 12),
-        if (_inspectionData != null) ...[
-          _buildConfigurationCard(),
+    return Theme(
+      data: ThemeData.light(useMaterial3: true).copyWith(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F4E79)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHeaderCard(),
           const SizedBox(height: 12),
-          _buildMetricsSelectionCard(),
+          _buildDataSourceCard(),
           const SizedBox(height: 12),
-          _buildActionRunCard(),
-          const SizedBox(height: 12),
+          if (_inspectionData != null) ...[
+            if (_selectedMetrics.isEmpty)
+              const Text(
+                'Choose the subject/group fields and select outcomes below to enable Run.',
+                style: TextStyle(color: Color(0xFF334155)),
+              ),
+            _buildActionRunCard(),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _channelScope,
+              decoration: const InputDecoration(
+                labelText: 'Channel scope',
+                helperText:
+                    'Mean produces one observation per recording/condition; all channels retains separate channel rows.',
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'mean',
+                  child: Text('Average EEG channels per recording'),
+                ),
+                DropdownMenuItem(
+                  value: 'all',
+                  child: Text(
+                    'Analyze channels separately (choose Chan as a factor)',
+                  ),
+                ),
+              ],
+              onChanged: (v) => setState(() => _channelScope = v ?? 'mean'),
+            ),
+            _buildConfigurationCard(),
+            const SizedBox(height: 12),
+            _buildMetricsSelectionCard(),
+            const SizedBox(height: 12),
+            _buildActionRunCard(),
+            const SizedBox(height: 12),
+          ],
+          if (_analysisResults != null) ...[
+            _buildResultsCard(),
+            const SizedBox(height: 12),
+          ],
         ],
-        if (_analysisResults != null) ...[
-          _buildResultsCard(),
-          const SizedBox(height: 12),
-        ],
-      ],
+      ),
     );
   }
 
@@ -600,7 +657,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Group-Level Statistical Analysis & Publishing Workbench',
+                    'Group analysis · choose data, define groups, run',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -609,7 +666,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Perform state-of-the-art Linear Mixed-Effects Models (LMM) for multi-channel repeated measures and GLM for sleep architecture. Generates publication plots with post-hoc significance markers, datastamped CSV tables, and Word (DOCX) / PDF reports.',
+                    '1. Load feature files or a results folder. 2. Review metadata and subject/state factors. 3. Select outcomes and run. Plots, tables and reports are saved together.',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                   ),
                 ],
@@ -643,7 +700,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
                 ),
                 const SizedBox(width: 8),
                 const Text(
-                  'Data Source',
+                  '1. Feature data and metadata',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                 ),
                 const Spacer(),
@@ -659,7 +716,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
                       border: Border.all(color: Colors.green.shade200),
                     ),
                     child: Text(
-                      '${_inspectionData!['total_rows']} rows · ${_inspectionData!['unique_subjects']} subjects · ${_inspectionData!['total_columns']} columns',
+                      '${_inspectionData!['recording_count'] ?? _inspectionData!['total_rows']} recordings · ${_inspectionData!['unique_subjects']} subjects · ${_inspectionData!['channel_count'] ?? 0} channels',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.green.shade800,
@@ -670,6 +727,26 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
               ],
             ),
             const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _isInspecting || _isAnalyzing
+                      ? null
+                      : _pickCsvFile,
+                  icon: const Icon(Icons.file_open),
+                  label: const Text('Choose feature files'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _isInspecting || _isAnalyzing
+                      ? null
+                      : _pickFeatureFolder,
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Load results folder'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
@@ -747,6 +824,25 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
                 ),
               ],
             ),
+            if (_metadataPathController.text.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _metadataKeyController,
+                decoration: const InputDecoration(
+                  labelText: 'Metadata join column (blank = first column)',
+                  hintText: 'filename or Subject',
+                  helperText:
+                      'After changing the join column, press Inspect Data again.',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+            if ((_inspectionData?['excluded_unqualified_fei'] as num? ?? 0) > 0)
+              Text(
+                '${_inspectionData!['excluded_unqualified_fei']} stored fE:I values lacked qualifying DFA and were excluded. Re-extract old short-window files for corrected/context-aware estimates.',
+                style: const TextStyle(color: Color(0xFF9A3412)),
+              ),
             if (_statusMessage.isNotEmpty) ...[
               const SizedBox(height: 10),
               Text(

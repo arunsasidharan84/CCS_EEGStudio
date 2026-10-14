@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.13</b> ·
+  <b>Current version: 1.2.14</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -110,12 +110,12 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## 🌟 What's New in Version 1.2.5
+## 🌟 What's New in Version 1.2.14
 
-- **Synchronized microstate explorer** with aligned sequence, EEG, and state-similarity timelines; selectable waveform density; and toggleable state traces.
-- **ERP scalp maps** at a selected time point or averaged time window, including A, B, B−A, Welch-t, and FDR-corrected electrode significance views.
-- **Safer recording tabs** for long filenames and clearer percentage-form microstate transition matrices.
-- **Reproducible multi-platform releases** built by GitHub Actions with pinned Flutter SDK, cryptographic checksums, and version notes.
+- **Stacked Multi-Group Plots & Reports**: Compare multiple recordings, subjects, or experimental days stacked vertically in the TopoStats view. Includes `+ Add group` folder/CSV actions, active group sidebar selection, synchronized zoom, and multi-page PDF reporting.
+- **MMN ERP Stimulus Epoching Fix**: Preserved stimulus-locked trials (`source_epoch_samples > 0`) during preprocessing by preventing continuous sliding-window overlap slicing on epoched datasets. Re-verified multi-session MMN analysis parity across all recording days.
+- **Lateral Spread Reduction & Width Controls**: Quick width presets (`Compact 0.35"`, `Medium 0.5"`, `Wide 0.8"`) and responsive layout recalculation to easily compress wide plots for long recordings without re-running statistical permutations.
+- **Group Statistics & Mixed Model Workbench**: Aligned pooled CSV columns by name, robust numeric imports, searchable bounded recording lists, and advisory short-window DFA/fE:I checks.
 
 > 📜 See the complete **[CHANGELOG.md](CHANGELOG.md)** for detailed feature notes across all releases.
 
@@ -181,6 +181,23 @@ folder imports by subject count, create overlapping analysis windows and hand th
 successful outputs to Stage 4 group statistics. Filename metadata inference has a
 review/save preview and custom named-group patterns. See the
 [psiconnect workflow and pilot checks](docs/psiconnect_batch_workflow.md).
+
+### Easier results selection
+
+Plotting has a results-folder button, a bounded searchable recording list and
+bulk comparison controls. Group Statistics accepts a folder or multiple feature
+CSVs, aligns pooled columns, normalizes numeric imports, and shows a clear run
+control after inspection. The Continuous EEG sidebar includes Group Statistics.
+See the [results workflow](docs/intuitive_results_workflow.md) for channel-scope
+choices, where reports are saved, and the separately labeled short-epoch
+### Adjusting Plots and Reducing Lateral Spread
+
+When analyzing recordings with long durations (e.g. 60–90 minute sessions) or many sessions, plotting topomaps for every 2-minute window can create a very wide horizontal aspect ratio (e.g., 50+ inches). You can easily adjust and compress the lateral spread:
+
+1. **Width Presets (`Topo width`)**: Under **TOPOMAPS** in the sidebar, click the **`Compact (0.35")`** or **`Medium (0.5")`** preset pills (or enter a custom value such as `0.3` and press Enter). This instantly scales down the width of every topomap column without having to re-run the permutation statistics.
+2. **Window Duration (`Window`)**: Under **WINDOWS & LINE PLOT**, increase **`Window`** from `2.0 min` to `5.0 min` or `10.0 min`. This decreases the number of topomap columns by 2.5× to 5×, yielding a balanced, publication-ready figure width.
+3. **Fit View in Canvas**: Click **`Fit`** in the top toolbar to automatically fit the entire figure width into the current window, eliminating horizontal scrolling.
+4. **Stacked Multi-Group Display**: When comparing multiple days or recordings, use **`Add group`** to load them as separate stacked plot groups rather than stringing all sessions into a single wide plot.
 
 ### Metadata and group statistics
 
@@ -267,6 +284,19 @@ for parameter conventions, evidence and limits.
 ### Nonlinear Metrics
 Eight epoch-wise nonlinear complexity and entropy metrics per channel:
 - Sample Entropy (SampEn), Approximate Entropy (ApEn), Hurst Exponent, Lempel-Ziv Complexity, Autocorrelation Window (ACW), Detrended Fluctuation Analysis (DFA) exponent, Higuchi Fractal Dimension, Katz Fractal Dimension.
+
+### Compact reports and DFA/fE:I context
+
+Analysis PDFs now default to a compact summary, one representative waveform page,
+scalp maps with fitted head outlines/contours, selected time courses and key statistics.
+Detailed reports remain selectable. Waveform scaling accounts for decimated previews
+and keeps shown peaks inside their rows on shared raw/cleaned scales.
+
+DFA/fE:I can use a separate source context (UI default 60 s; zero means epoch only)
+without enlarging PSD or other feature epochs. Context cannot cross saved trial
+boundaries. Its actual bounds are written to CSV metadata. Missing DFA no longer
+passes the fE:I qualification gate. See the [report/context guide](docs/report_and_dfa_context.md)
+for method references, the five-second-data explanation and scoped validation.
 
 ### Feature windows and output defaults
 

@@ -20,6 +20,39 @@ class GroupStatsTests(unittest.TestCase):
                 for epoch in range(6):
                     rows.append({'filename':name+'_clean','subjid':f'S{subject:02}','Chan':channel,'Epoch':epoch+1,'bin_idx':0,'bin_start_s':0,'bin_end_s':12,'Alpha_PSD':4*(group=='B')+offset+.5*(channel=='F4')+rng.normal(0,.2)})
         return pd.DataFrame(rows),pd.DataFrame(metadata)
+    def test_nullable_missing_dfa_does_not_qualify_fei(self):
+        frame=pd.DataFrame({'filename':['a','a'],'Chan':['Fz','Fz'],'Epoch':[1,2],
+            'Alpha_DFA':pd.Series([pd.NA,.8],dtype='Float64'),'Alpha_fEI':[.8,1.2]})
+        prepared=g.prepare_eeg_table(frame)
+        self.assertAlmostEqual(prepared.iloc[0]['Alpha_fEI'],1.2)
+        self.assertEqual(prepared.attrs['excluded_unqualified_fei'],1)
+
+    def test_fei_qualification_is_applied_before_epoch_averages(self):
+        frame=pd.DataFrame({'filename':['a','a'],'Chan':['Fz','Fz'],'Epoch':[1,2],
+            'Alpha_DFA':[.3,.8],'Alpha_fEI':[.8,1.2]})
+        prepared=g.prepare_eeg_table(frame)
+        self.assertAlmostEqual(prepared.iloc[0]['Alpha_fEI'],1.2)
+        self.assertEqual(prepared.attrs['excluded_unqualified_fei'],1)
+
+    def test_subject_join_preserves_zeroes_and_accepts_bids_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'metadata.csv';path.write_text('Subject,Group\n001,A\n')
+            frame=pd.DataFrame({'filename':['a'],'subjid':['sub-001'],'Chan':['Fz'],'Epoch':[1],'Alpha_PSD':[1.0]})
+            merged=g.prepare_eeg_table(frame,path,'Subject')
+            self.assertEqual(merged.iloc[0]['Subject'],'001')
+
+    def test_string_metrics_are_numeric_before_recording_means(self):
+        raw=pd.DataFrame({'filename':['a','a'],'Chan':['Fz','Fz'],'Epoch':[1,2],
+            'Alpha_PSD':['1.0','3.0'],'Alpha_DFA_short':['.7','.9']})
+        prepared=g.prepare_eeg_table(raw)
+        self.assertAlmostEqual(prepared.iloc[0]['Alpha_PSD'],2)
+        self.assertAlmostEqual(prepared.iloc[0]['Alpha_DFA_short'],.8)
+        mean=g.apply_channel_scope(prepared,'mean')
+        self.assertEqual(mean.iloc[0]['Chan'],'Mean')
+        raw.loc[0,'Alpha_PSD']='not-a-number'
+        with self.assertRaisesRegex(ValueError,'Non-numeric feature value'):
+            g.prepare_eeg_table(raw)
+
     def test_numeric_categorical_factors_have_matching_contrast_levels(self):
         rng=np.random.default_rng(11)
         rows=[]

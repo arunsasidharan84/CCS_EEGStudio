@@ -13,9 +13,24 @@ List<String> featureWindowWarnings(AnalysisConfig config, EegRecording rec) {
   }
   final gcLags = (config.featureParameters['gc_lags'] as num?)?.toInt() ?? 25;
   final warnings = <String>[];
-  if (config.dfaFei && seconds < 60) {
+  if (config.dfaFei &&
+      (!config.dfaFeiWindowSeconds.isFinite ||
+          config.dfaFeiWindowSeconds < 0)) {
+    return [
+      'DFA / fE:I context must be zero (epoch only) or a positive duration.',
+    ];
+  }
+  final requestedContext = config.dfaFeiWindowSeconds == 0
+      ? seconds
+      : config.dfaFeiWindowSeconds;
+  final context = rec.isEpoched
+      ? seconds
+      : (requestedContext < rec.durationSeconds
+            ? requestedContext
+            : rec.durationSeconds);
+  if (config.dfaFei && !config.dfaFeiShortEpoch && context < 60) {
     warnings.add(
-      'DFA / fE:I: ${seconds.toStringAsFixed(2)} s windows are shorter '
+      'DFA / fE:I: ${context.toStringAsFixed(2)} s context is shorter '
       'than the recommended 60 s for the full band range. Lower-frequency '
       'bands can be empty; fE:I can also be missing when its validity criteria '
       'are not met. Use longer continuous windows or prepare longer parent '

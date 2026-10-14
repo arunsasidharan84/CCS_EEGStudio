@@ -73,6 +73,9 @@ const Set<String> kTopoMetaColumns = {
   'mode',
   'epoch_start_s',
   'epoch_end_s',
+  'dfa_fei_window_s',
+  'dfa_fei_context_start_s',
+  'dfa_fei_context_end_s',
 };
 
 /// User settings -- names and defaults follow the script's USER SETTINGS.

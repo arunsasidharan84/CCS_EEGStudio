@@ -9,7 +9,7 @@ void main() {
     sampleRate: 250,
     labels: const ['Fz'],
     preview: [Float32List(250)],
-    sampleCount: 250,
+    sampleCount: 15000,
     format: 'ccseeg',
     pointsPerEpoch: points,
   );

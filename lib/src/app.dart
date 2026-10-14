@@ -89,6 +89,7 @@ const _presets = <String, _PipelinePreset>{
       _Module.sourceSpace,
       _Module.featureExtraction,
       _Module.plotsReport,
+      _Module.groupStatistics,
     ],
   ),
   'erp': _PipelinePreset(
@@ -270,6 +271,7 @@ class _FeatureHomeState extends State<FeatureHome>
   final _bin = TextEditingController(text: '60');
   final _epoch = TextEditingController(text: '2');
   final _epochOverlap = TextEditingController(text: '0');
+  final _dfaWindow = TextEditingController(text: '60');
   final _prepOverlap = TextEditingController(text: '0');
   bool _batchPreprocessedInput = false;
   String? _groupInputCsv;
@@ -409,6 +411,7 @@ class _FeatureHomeState extends State<FeatureHome>
     _preDownsample.addListener(_syncConfigFromControllers);
     _epoch.addListener(_syncConfigFromControllers);
     _epochOverlap.addListener(_syncConfigFromControllers);
+    _dfaWindow.addListener(_syncConfigFromControllers);
     _prepOverlap.addListener(_syncConfigFromControllers);
     _gedaiEpoch.addListener(_syncConfigFromControllers);
     _gedaiThreshold.addListener(_syncConfigFromControllers);
@@ -435,6 +438,7 @@ class _FeatureHomeState extends State<FeatureHome>
       ..notchHz = double.tryParse(_preNotch.text) ?? _cfg.notchHz
       ..downsampleFreq =
           double.tryParse(_preDownsample.text) ?? _cfg.downsampleFreq
+      ..dfaFeiWindowSeconds = double.tryParse(_dfaWindow.text) ?? 60
       ..epochSeconds = double.tryParse(_epoch.text) ?? _cfg.epochSeconds
       ..epochOverlapSeconds = double.tryParse(_epochOverlap.text) ?? 0
       ..preprocessingOverlapSeconds = double.tryParse(_prepOverlap.text) ?? 0
@@ -482,6 +486,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _bin,
       _epoch,
       _epochOverlap,
+      _dfaWindow,
       _prepOverlap,
       _batchSubjectLimit,
       _gedaiEpoch,
@@ -751,7 +756,8 @@ class _FeatureHomeState extends State<FeatureHome>
         recording: input,
         outputPath: path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json',
         selection: _selection,
-        outputOverlapSeconds: _cfg.preprocessingOverlapSeconds,
+        outputOverlapSeconds:
+            _cfg.stimEpochs ? 0 : _cfg.preprocessingOverlapSeconds,
         outputWindowSeconds: _cfg.gedaiEpochSeconds,
         options: _cfg.toPreprocessingOptions(
           nonEegChannels: _channels.nonEegChannels,
@@ -1033,6 +1039,7 @@ class _FeatureHomeState extends State<FeatureHome>
         prep: reportPrep,
         options: options,
         epochSeconds: _cfg.epochSeconds,
+        detailed: _cfg.detailedReport,
         excludedChannels: excludedChannels,
       );
       _log('✓ PDF report: $reportPath');
@@ -2757,7 +2764,7 @@ class _FeatureHomeState extends State<FeatureHome>
                 error: _gedaiEpochError,
               ),
             ),
-          if (!_usesExistingEpochs)
+          if (!_usesExistingEpochs && !_cfg.stimEpochs)
             _field(
               _prepOverlap,
               'Saved epoch overlap after cleaning (s)',
@@ -2791,6 +2798,11 @@ class _FeatureHomeState extends State<FeatureHome>
       children: [
         _subLabel('EPOCH & DURATION'),
         const SizedBox(height: 6),
+        _check(
+          'Detailed PDF (all channels and feature tables)',
+          _cfg.detailedReport,
+          (v) => _cfg.detailedReport = v,
+        ),
         _field(_epoch, 'Epoch length (s)', suffix: 's'),
         _field(_epochOverlap, 'Epoch overlap (s)', suffix: 's'),
         _check(
@@ -2876,6 +2888,25 @@ class _FeatureHomeState extends State<FeatureHome>
             _cfg.dfaFei,
             (v) => _cfg.dfaFei = v,
           ),
+          if (_cfg.dfaFei)
+            _check(
+              'Short-epoch verification (exploratory)',
+              _cfg.dfaFeiShortEpoch,
+              (v) {
+                _cfg.dfaFeiShortEpoch = v;
+                if (v) _dfaWindow.text = '0';
+              },
+            ),
+          if (_cfg.dfaFeiShortEpoch)
+            const Text(
+              'Short-scale estimates use _short columns; they do not establish long-range correlations.',
+            ),
+          if (_cfg.dfaFei)
+            _field(
+              _dfaWindow,
+              'DFA / fE:I context (s; 0 = epoch only)',
+              suffix: 's',
+            ),
           const SizedBox(height: 6),
           _subLabel('MULTIVARIATE CONNECTIVITY'),
           _check('MIC', _cfg.mic, (v) => _cfg.mic = v),
@@ -3250,7 +3281,7 @@ class _FeatureHomeState extends State<FeatureHome>
                                 ? null
                                 : _openBatchGroupStatistics,
                             icon: const Icon(Icons.groups),
-                            label: const Text('Configure group analysis'),
+                            label: const Text('Open group analysis'),
                           ),
                         ],
                       ),
@@ -4052,7 +4083,8 @@ class _FeatureHomeState extends State<FeatureHome>
           options: _cfg.toPreprocessingOptions(
             nonEegChannels: channels.nonEegChannels,
           ),
-          outputOverlapSeconds: _cfg.preprocessingOverlapSeconds,
+          outputOverlapSeconds:
+              _cfg.stimEpochs ? 0 : _cfg.preprocessingOverlapSeconds,
           outputWindowSeconds: _cfg.gedaiEpochSeconds,
           onProgress: (p, msg) {
             _updateBatchFile(path, 'Running', progress: p);

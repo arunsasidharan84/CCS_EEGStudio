@@ -4,6 +4,36 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.14]
+
+### Stacked Multi-Group TopoStats Display & Lateral Spread Controls
+
+- **Stacked Multi-Group Figures**: Added first-class support in "Plots & Report" (TopoStats) for displaying multiple recordings, subjects, or experimental sessions stacked vertically one below the other.
+- **Group Management**: Automatically partitions sessions by recording ID (`groupByRecording`) and provides sidebar actions to append additional folders or CSV sets (`+ Add group`).
+- **Active Group Editing**: Active group dropdown in the sidebar lets you reorder sessions, select custom baseline sessions, and adjust session colors independently per group.
+- **Synchronized Inspection & Zoom**: Hover tooltips, click-to-inspect topomap dialogs, and smooth zoom (`Cmd+Scroll` / toolbar buttons) work seamlessly across all stacked figure cards.
+- **Multi-Group Export**: Export PDF generates a high-resolution multi-page PDF document with one page per plot group; Export PNG and CSV exports batch results for all active groups.
+- **Lateral Spread Reduction & Width Presets**: Added quick width pills (`Compact (0.35")`, `Medium (0.5")`, `Wide (0.8")`) and responsive recalculation (`onSubmitted`) for `Topo width` to instantly compress wide figures across long timelines without recomputing permutation statistics.
+
+### MMN ERP Stimulus Epoching Parity
+
+- **Epoch Preservation**: Prevented continuous sliding-window overlap slicing (`RecordingTransform.subepoch()`) from modifying stimulus-locked epoched files during preprocessing.
+- **Stimulus Epoch Configuration**: Automatically zeroed and hid continuous window overlap settings in the UI when stimulus-locked epoching is enabled.
+- **Dataset Parity Verification**: Re-generated and verified MMN epoched files for Day 3 (`20260922`), matching the 750-epoch structure and cluster permutation tests of Day 1 (`20260709`) and Day 2 (`20260710`).
+
+### Group Statistics & Workspace
+
+- Repaired group-statistics numeric imports, including mixed CSV types and DFA/fE:I numeric aggregation. Aligned pooled CSVs by column names instead of row position.
+- Added consistent readable group-workbench theming, folder/multi-file loading, visible run controls, channel scope, and simpler EEG-focused defaults.
+- Added searchable bounded plot recording lists and bulk selection; initially select up to eight records while keeping all files available.
+- Added explicit exploratory short-epoch DFA/fE:I verification with separate `_short` columns. Published-scale estimators are not silently redefined.
+- Defaulted analysis PDFs to compact summaries with representative channels, limited maps/time courses, and key tables. Detailed mode retains all channels/features.
+- Rendered waveforms using preview sampling rate and a shared peak-safe amplitude scale; avoid row clipping of shown peaks. Added fitted scalp outlines and contours.
+- Added configurable DFA/fE:I source context (UI default 60 s; zero = epoch only), retaining shorter epochs for other features and respecting saved trial boundaries.
+- Recorded actual context duration/start/end in CSV metadata and provenance.
+- Rejected fE:I when DFA is missing, closing the legacy NaN-comparison qualification loophole.
+- Validated four-page PC001 report visually and full-band computation on five representative channels with five-second cadence and 60-second context.
+
 ## [1.2.13]
 
 ### FieldTrip loading and extraction
