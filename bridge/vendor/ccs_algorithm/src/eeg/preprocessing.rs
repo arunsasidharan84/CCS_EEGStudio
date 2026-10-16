@@ -323,9 +323,13 @@ pub fn run(
             "PROGRESS 30 Downsampling from {} Hz to {} Hz...",
             rec.rate, options.downsample_freq
         );
-        let scale = options.downsample_freq / rec.rate;
-        let up = (options.downsample_freq * scale as f64).round().max(1.0) as usize;
-        let down = (rec.rate * scale as f64).round().max(1.0) as usize;
+        // Represent the rates in millihertz before forming the rational ratio.
+        // Multiplying by target/source and rounding each side independently
+        // changes the ratio (256 -> 250 became 244/250), causing event drift.
+        let scale = 1000.0;
+        let up = (options.downsample_freq * scale).round().max(1.0) as usize;
+        let down = (rec.rate * scale).round().max(1.0) as usize;
+        let output_rate = rec.rate * up as f64 / down as f64;
         let pts_per_epoch = rec.source_epoch_samples;
         f64_channels.par_iter_mut().for_each(|ch| {
             if let Some(pts) = pts_per_epoch {
@@ -344,9 +348,11 @@ pub fn run(
         });
         if let Some(pts) = rec.source_epoch_samples {
             rec.source_epoch_samples =
-                Some((pts as f64 * (options.downsample_freq / rec.rate)).round() as usize);
+                Some((pts * up).div_ceil(down));
         }
-        rec.rate = options.downsample_freq;
+        // Label the samples with their actual generated rate, including when
+        // an unusual requested rate is rounded to millihertz precision.
+        rec.rate = output_rate;
     }
     if options.filter {
         eprintln!("PROGRESS 40 Applying {} bandpass / FIR notch filters...",options.filter_type);

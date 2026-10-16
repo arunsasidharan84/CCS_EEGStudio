@@ -403,6 +403,7 @@ pub struct Options {
     pub deconvolution: bool,
     pub decoding: bool,
     pub temporal_generalization: bool,
+    pub export_trial_measurements: bool,
     pub folds: usize,
     pub profile_override: Option<Profile>,
     pub profile_overrides: BTreeMap<String, Profile>,
@@ -428,6 +429,7 @@ impl Default for Options {
             deconvolution: false,
             decoding: false,
             temporal_generalization: false,
+            export_trial_measurements: false,
             folds: 5,
             profile_override: None,
             profile_overrides: BTreeMap::new(),
@@ -1034,13 +1036,17 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
             for t in 0..points {
                 roi_a[t] += ra[t];
             }
-            trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Ipsilateral"}else{&p.a_name},"metrics":math::measure(&times,&ra,p.window,p.polarity)?}));
+            if o.export_trial_measurements {
+                trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Ipsilateral"}else{&p.a_name},"metrics":math::measure(&times,&ra,p.window,p.polarity)?}));
+            }
         }
         if !rb.is_empty() {
             for t in 0..points {
                 roi_b[t] += rb[t];
             }
-            trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Contralateral"}else{&p.b_name},"metrics":math::measure(&times,&rb,p.window,p.polarity)?}));
+            if o.export_trial_measurements {
+                trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Contralateral"}else{&p.b_name},"metrics":math::measure(&times,&rb,p.window,p.polarity)?}));
+            }
         }
         if o.regression || o.decoding {
             binned.push(
@@ -1924,11 +1930,13 @@ where
             ));
         }
     }
-    fs::write(
-        Path::new(&job.output).join("erp_trial_measurements.csv"),
-        trial_csv,
-    )
-    .map_err(|e| e.to_string())?;
+    if job.options.export_trial_measurements {
+        fs::write(
+            Path::new(&job.output).join("erp_trial_measurements.csv"),
+            trial_csv,
+        )
+        .map_err(|e| e.to_string())?;
+    }
     fs::write(Path::new(&job.output).join("erp_waveforms.csv"), wave_csv)
         .map_err(|e| e.to_string())?;
     let mut model_csv = String::from("subject,task,file,model,predictor,channel,time_s,beta\n");

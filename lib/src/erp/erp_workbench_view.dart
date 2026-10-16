@@ -79,6 +79,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       _deconvolution = false,
       _decoding = false,
       _generalization = false,
+      _exportTrials = false,
       _negativeUp = true,
       _significantOnly = true;
   double _progress = 0;
@@ -268,6 +269,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       'deconvolution': _deconvolution,
       'decoding': _decoding,
       'temporal_generalization': _generalization,
+      'export_trial_measurements': _exportTrials,
       'trial_metadata_path': _metadata.text.trim(),
       'profile_overrides': _profiles,
       'response_min': (double.tryParse(_rtMin.text) ?? 200) / 1000,
@@ -330,6 +332,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
     _deconvolution = options['deconvolution'] == true;
     _decoding = options['decoding'] == true;
     _generalization = options['temporal_generalization'] == true;
+    _exportTrials = options['export_trial_measurements'] == true;
     for (final pair in <String, TextEditingController>{
       'bin_ms': _bin,
       'reject_uv': _reject,
@@ -989,6 +992,14 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
 
               const Text(
                 'Always: mean, peak amplitude/latency, signed and positive/negative AUC, fractional-area/peak latency, GFP, paired subject statistics, corrected topography and TANOVA.',
+              ),
+              _check(
+                'Export individual-trial measurements (advanced)',
+                _exportTrials,
+                (v) => _exportTrials = v,
+              ),
+              const Text(
+                'Standard ERP measurements use participant/condition averages (erp_measurements.csv). Trial exports are optional for trial-level models; individual-trial peaks are noise-sensitive.',
               ),
               const SizedBox(height: 9),
               _field(

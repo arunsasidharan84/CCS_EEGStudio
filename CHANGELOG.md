@@ -4,6 +4,39 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.16]
+
+### Critical resampling/event-alignment correction
+
+- Fixed rational resampling ratios in preprocessing: 256→250 Hz previously used 244/250 while labelling output as 250 Hz, shifting samples relative to unchanged event times. The corrected ratio is 125/128. Rates are formed at millihertz precision and the actual generated sample rate is retained.
+- Fixed saved-trial sample counts to use the resampler's actual ceiling length rather than rounding, preventing boundaries from slipping across resampled trials.
+- Added late-impulse alignment and independent-trial resampling regression tests. Reconstructed the supplied ERN stage by stage: the earlier sign reversal appears at downsampling alone; corrected downsampling preserves the negative response. Previously affected epoched files must be regenerated from the original input; changing labels or display polarity cannot repair them.
+- Made `erp_trial_measurements.csv` an optional advanced export, disabled by default. `erp_measurements.csv` remains the conventional participant/condition-average measurement export. Existing files are retained.
+
+### ERP reconstruction and validation
+
+For the supplied already-cleaned ERN recording, using identical correct/error classes (319/82 trials), FCz, baseline −400…−200 ms and measurement window 0…100 ms:
+
+| Processing route | Incorrect − Correct mean |
+|---|---:|
+| Epoch-only, original 256 Hz signal | −9.68 µV |
+| Old 256→250 Hz resampling, no filter or cleaner | +12.16 µV |
+| Corrected 256→250 Hz resampling, no filter or cleaner | −9.65 µV |
+| Corrected resampling + filtering | −10.47 µV |
+| Corrected complete GEDAI/interpolation configuration | −5.50 µV |
+
+The sign reversal was caused by sample/event misalignment, not display orientation or swapping condition labels. GEDAI still attenuates the response on this already-cleaned input; epoch-only avoids additional processing. Existing outputs are retained for audit and must be regenerated where affected.
+
+- Regression validation: **178 Flutter tests passed, 5 skipped**; **26 affected native tests passed**, including late-event alignment, per-trial output length, all-seven ERP reuse, optional CSV output, preprocessing and ICA/ASR tests.
+- Independent MNE/SciPy reconstruction validates the corrected real-data resampling ratio and condition waveforms. Diagnostic scripts and output descriptions are in [the ERP guide](docs/erp_workbench.md#resampling-correction-and-existing-results).
+- Version metadata is aligned across the app, engine and installer. The release supplies macOS, Windows, Debian and RPM update packages with checksums.
+
+### Which ERP export to use
+
+- **Conventional ERP:** `erp_measurements.csv` measures the participant/recording condition averages and their difference. Use the interactive review's participant-level CSV for chosen windows, parameters and cohort labels.
+- **Optional trial-level work:** enable **Advanced analyses → Export individual-trial measurements** for `erp_trial_measurements.csv`. Rows contain per-event ROI measurements, not averaged ERPs and not complete trial waveforms. Trial-level models need participant-aware inference. Averaging trial peaks does not equal measuring the peak of the average ERP.
+- The checkbox is off by default and saved in reusable analysis protocols. Disabling it does not delete previously exported trial files.
+
 ## [1.2.15]
 
 ### ERP waveform review and measurement export

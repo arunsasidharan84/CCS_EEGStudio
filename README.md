@@ -23,10 +23,12 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.15</b> ·
+  <b>Current version: 1.2.16</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
+
+> **Important in 1.2.16:** corrected preprocessing resampling/event alignment, including 256→250 Hz. Version 1.2.15 used an incorrect rate ratio that can shift response-locked samples and reverse an ERP contrast. Regenerate affected outputs from their original inputs; an application update cannot repair already-misaligned epochs. See [the diagnosis, validation and recovery guidance](docs/erp_workbench.md#resampling-correction-and-existing-results). Individual-trial measurement CSV export is now optional and off by default; use `erp_measurements.csv` for conventional ERP condition averages.
 
 ### ERP analysis and interactive batch review — 1.2.15
 

@@ -239,6 +239,7 @@ fn all_seven_tasks_reuse_saved_trials_without_re_epoching() {
         fs::write(&path,serde_json::json!({"sample_rate":rate,"source_epoch_samples":n,"epoch_tmin":p.epoch[0],"epoch_tmax":p.epoch[1],"epoch_labels":groups,"epoch_onsets":(0..8).map(|i|10.+i as f64*3.).collect::<Vec<_>>()} ).to_string()).unwrap();
         let mut options = Options::default();
         options.task = task.into();
+        options.export_trial_measurements = task == "MMN";
         let job = Job {
             inputs: vec![Input {
                 path: path.to_string_lossy().into(),
@@ -265,6 +266,12 @@ fn all_seven_tasks_reuse_saved_trials_without_re_epoching() {
         let f = &result["files"][0];
         assert_eq!(f["n_a"], 4);
         assert_eq!(f["n_b"], 4);
+        let trial_csv = std::path::Path::new(&job.output).join("erp_trial_measurements.csv");
+        assert_eq!(trial_csv.exists(), task == "MMN");
+        if task == "MMN" {
+            assert_eq!(fs::read_to_string(trial_csv).unwrap().lines().count(), 9);
+        }
+
         assert_eq!(f["times"].as_array().unwrap().len(), n);
         assert_eq!(f["rejected_behavior"], 0);
         assert_eq!(f["accepted_events"][0]["onset_s"], 10.);

@@ -85,7 +85,7 @@ ERP CORE's derived `(uncorr) HEOG` and `(uncorr) VEOG` channels are now recogniz
 | `erp_report.pdf` | Compact overview plus a waveform/topography/statistics page per component; optional advanced-model pages when models are selected |
 | `erp_results.json` | Reopenable configuration, marker/timing audit, trial counts, accepted events, curves, maps, models, solver/CV diagnostics and failures |
 | `erp_measurements.csv` | Participant/recording A, B and difference-wave measurements |
-| `erp_trial_measurements.csv` | Event-indexed trial measurement audit |
+| `erp_trial_measurements.csv` | Optional advanced event-indexed trial measurements; default off from 1.2.16 |
 | `erp_group_statistics.csv` | Participant-level paired measurement statistics and FDR |
 | `erp_waveforms.csv` | Recording and grand-average ROI waveforms |
 | `erp_model_coefficients.csv` | Optional channel/predictor/time coefficients for rERP and FIR models |
@@ -140,3 +140,18 @@ Adjust the measurement window with the range slider or millisecond endpoints. De
 **Label groups** assigns between-participant cohort labels without changing the within-participant A/B condition labels. Choose metrics under **CSV parameters**, then **Export CSV** or **Group statistics**. Exports contain one row per participant/condition (A, B, B−A), the cohort label, ROI, window endpoints, recording count and selected raw-waveform metrics: mean amplitude, signed/positive/negative AUC, peak amplitude/latency and 50% area/peak latencies. Latencies are in milliseconds; amplitudes in µV and AUC in µV·s. Cohort labels travel in the CSV.
 
 For externally cleaned data, use **Epoch only (keep existing cleaning)** in Preprocess or the waveform **Epoch Events** action. This cuts trials and applies the chosen baseline without adding filters or artifact cleaning. **Clean + epoch** is a separate choice. Existing outputs are not rewritten.
+
+
+## Condition-average versus single-trial measurements
+
+`erp_measurements.csv` measures each participant's condition-average waveform, including the B−A average difference. This is the usual export for conventional ERP comparisons.
+
+`erp_trial_measurements.csv` instead describes each accepted event's individual trial within the chosen ROI and time window. Enable **Advanced analyses → Export individual-trial measurements** only for trial-level questions (for example amplitude versus reaction time or trial order). This export is disabled by default from 1.2.16. Individual-trial peak/latency estimates are noise-sensitive. Averaging trial peaks does not reproduce the peak of the averaged ERP. Trial rows are repeated observations within a participant, not additional independent participants. These derived measurements are not substitutes for full waveforms in rERP/FIR/deconvolution or decoding; those native analyses use the waveform data separately. Reaction time may be absent in prepared trials when it cannot be recovered reliably. Existing exports are not deleted when the option is turned off.
+
+## Resampling correction and existing results
+
+A stage-by-stage reconstruction of the supplied 256 Hz ERN input identified an incorrect preprocessing ratio: 244/250 instead of 125/128 for 256→250 Hz. The resulting signal rate was 249.856 Hz while metadata stated 250 Hz. By the end of a 13.5-minute recording this shifts response-locked samples by roughly 0.47 s. The negative ERN became positive before any artifact cleaner ran. The 1.2.16 correction uses a rate-preserving rational conversion and consistent per-trial output lengths.
+
+With unchanged response classes, FCz, baseline −400…−200 ms and window 0…100 ms, Error−Correct was −9.68 µV without downsampling, +12.16 µV after the old downsampling, and −9.65 µV after corrected downsampling. With corrected resampling, filtering gave −10.47 µV and the complete saved GEDAI/interpolation configuration gave approximately −5.50 µV. This also documents substantial additional attenuation by GEDAI on an input already cleaned upstream; epoch-only remains the direct signal-preserving route for that input.
+
+The correction is included in 1.2.16 and is absent from 1.2.15. Regenerate affected outputs from original recordings using the corrected build. The epoch-only/no-downsampling route also avoids this resampling error. Previously misaligned epochs cannot be repaired by flipping signs or exchanging condition labels.
