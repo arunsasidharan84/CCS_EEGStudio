@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'models.dart';
@@ -25,6 +26,8 @@ Future<bool> showProcessingSettings(
   final featureRefs = TextEditingController(
     text: config.featureReferenceChannels.join(', '),
   );
+  final sourceModel = TextEditingController(text: config.sourceModelPath);
+  var sourceMethod = config.sourceMethod;
   var featureReference = config.featureReferenceMode;
   final order = TextEditingController(text: '${config.iirOrder}');
   var filterType = config.filterType,
@@ -216,13 +219,15 @@ Future<bool> showProcessingSettings(
                     field(
                       icaEye,
                       'Blink detection channel',
-                      help: 'Empty = Fp1, Fp2, AFz, Fz, F7, F8, AF3 or AF4, whichever exists.',
+                      help:
+                          'Empty = Fp1, Fp2, AFz, Fz, F7, F8, AF3 or AF4, whichever exists.',
                     ),
                     field(icaEpochs, 'Blink epochs for the decomposition'),
                     field(
                       icaBlinkHi,
                       'Eye component threshold (start)',
-                      help: 'ICLabel probability; lowered stepwise to the floor below.',
+                      help:
+                          'ICLabel probability; lowered stepwise to the floor below.',
                     ),
                     field(icaBlinkLo, 'Eye component threshold (floor)'),
                     CheckboxListTile(
@@ -246,14 +251,16 @@ Future<bool> showProcessingSettings(
                     field(
                       icaArtefacts,
                       'ICLabel classes to remove',
-                      help: 'Comma-separated; empty = Muscle, Line Noise, Channel Noise.',
+                      help:
+                          'Comma-separated; empty = Muscle, Line Noise, Channel Noise.',
                     ),
                     field(icaOtherHi, 'Component threshold (start)'),
                     field(icaOtherLo, 'Component threshold (floor)'),
                     field(
                       icaFitCutoff,
                       'ASR cutoff for the ICA fit copy (SD)',
-                      help: 'MATLAB ica2_BurstCriterion (default 15); burst and window rejection apply to this copy only.',
+                      help:
+                          'MATLAB ica2_BurstCriterion (default 15); burst and window rejection apply to this copy only.',
                     ),
                     CheckboxListTile(
                       dense: true,
@@ -275,71 +282,150 @@ Future<bool> showProcessingSettings(
                   field(
                     asrCutoff,
                     'ASR burst cutoff (SD)',
-                    help: 'clean_rawdata BurstCriterion: 5 aggressive, 20 conservative (default).',
+                    help:
+                        'clean_rawdata BurstCriterion: 5 aggressive, 20 conservative (default).',
                   ),
                   if (config.asrVariant == 'adaptive')
                     field(
                       asrAlpha,
                       'Adaptive ASR update rate (0-1)',
-                      help: 'Weight of each clean block in the running calibration; 0 = static ASR.',
+                      help:
+                          'Weight of each clean block in the running calibration; 0 = static ASR.',
                     ),
                   if (config.asrVariant == 'easr') ...[
-                    field(asrEmbedDim, 'E-ASR embedding dimension', help: 'Pseudo-channels per channel (2-32).'),
+                    field(
+                      asrEmbedDim,
+                      'E-ASR embedding dimension',
+                      help: 'Pseudo-channels per channel (2-32).',
+                    ),
                     field(asrEmbedTau, 'E-ASR delay (samples)', help: '1-50.'),
                   ],
                   if (config.asrVariant == 'vmd' || config.asrVariant == 'emd')
-                    field(asrModes, 'Number of modes', help: 'VMD modes / EMD components used as ASR channels (2-12).'),
+                    field(
+                      asrModes,
+                      'Number of modes',
+                      help:
+                          'VMD modes / EMD components used as ASR channels (2-12).',
+                    ),
                   if (config.muscleMethod == 'bss_cca')
-                    field(bsscaN, 'BSS-CCA sources removed', help: 'Lowest-autocorrelation sources dropped (1+; typical 1-10% of channels).'),
+                    field(
+                      bsscaN,
+                      'BSS-CCA sources removed',
+                      help:
+                          'Lowest-autocorrelation sources dropped (1+; typical 1-10% of channels).',
+                    ),
                   if (config.muscleMethod == 'icanclean')
-                    field(iccThr, 'iCanClean R² threshold', help: 'Canonical components with R² above this are removed (default 0.7).'),
+                    field(
+                      iccThr,
+                      'iCanClean R² threshold',
+                      help:
+                          'Canonical components with R² above this are removed (default 0.7).',
+                    ),
                   if (config.muscleMethod == 'wica')
-                    field(wicaLevels, 'wICA wavelet levels', help: 'HAPPE wICA: coif5 SWT levels, soft threshold (default 5).'),
+                    field(
+                      wicaLevels,
+                      'wICA wavelet levels',
+                      help:
+                          'HAPPE wICA: coif5 SWT levels, soft threshold (default 5).',
+                    ),
                 ],
                 if (stage == 'Source Space') ...[
+                  DropdownButtonFormField<String>(
+                    initialValue: sourceMethod,
+                    decoration: const InputDecoration(
+                      labelText: 'Inverse method',
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'mne',
+                        child: Text('Minimum norm (MNE)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'dspm',
+                        child: Text('dSPM (noise-normalized)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'sloreta',
+                        child: Text('sLORETA (resolution-normalized)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'lcmv',
+                        child: Text(
+                          'LCMV (unit gain; 5% covariance regularization)',
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => sourceMethod = v!),
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Choose forward + atlas model…'),
+                    onPressed: () async {
+                      final picked = await FilePicker.pickFiles(
+                        type: FileType.custom,
+                        allowedExtensions: ['json', 'gz'],
+                      );
+                      if (picked != null &&
+                          picked.files.single.path != null &&
+                          context.mounted) {
+                        setState(() {
+                          sourceModel.text = picked.files.single.path!;
+                          regions.clear();
+                        });
+                      }
+                    },
+                  ),
+                  field(
+                    sourceModel,
+                    'Custom forward + atlas JSON path (empty = bundled fsaverage)',
+                    help:
+                        'Fixed-orientation channels × sources leadfield and ROI source indices; HCPex requires a matching source grid. Identity noise covariance.',
+                  ),
+
                   field(
                     snr,
-                    'eLORETA assumed SNR',
+                    'Inverse regularization SNR',
                     help: 'Positive value; default 3.',
                   ),
-                  ExpansionTile(
-                    title: const Text('Choose source regions'),
-                    children: [
-                      for (final name in sourceNames)
-                        CheckboxListTile(
-                          dense: true,
-                          title: Text(name),
-                          value:
-                              regions.text.trim().isEmpty ||
-                              regions.text
-                                  .split(',')
-                                  .map((s) => s.trim())
-                                  .contains(name),
-                          onChanged: (v) => setState(() {
-                            final selected = regions.text.trim().isEmpty
-                                ? sourceNames.toSet()
-                                : regions.text
-                                      .split(',')
-                                      .map((s) => s.trim())
-                                      .where((s) => s.isNotEmpty)
-                                      .toSet();
-                            if (v == true) {
-                              selected.add(name);
-                            } else {
-                              if (selected.length == 1) return;
-                              selected.remove(name);
-                            }
-                            regions.text = selected.join(', ');
-                          }),
-                        ),
-                    ],
-                  ),
+                  if (sourceModel.text.trim().isEmpty)
+                    ExpansionTile(
+                      title: const Text('Choose bundled source regions'),
+                      children: [
+                        for (final name in sourceNames)
+                          CheckboxListTile(
+                            dense: true,
+                            title: Text(name),
+                            value:
+                                regions.text.trim().isEmpty ||
+                                regions.text
+                                    .split(',')
+                                    .map((s) => s.trim())
+                                    .contains(name),
+                            onChanged: (v) => setState(() {
+                              final selected = regions.text.trim().isEmpty
+                                  ? sourceNames.toSet()
+                                  : regions.text
+                                        .split(',')
+                                        .map((s) => s.trim())
+                                        .where((s) => s.isNotEmpty)
+                                        .toSet();
+                              if (v == true) {
+                                selected.add(name);
+                              } else {
+                                if (selected.length == 1) return;
+                                selected.remove(name);
+                              }
+                              regions.text = selected.join(', ');
+                            }),
+                          ),
+                      ],
+                    ),
                   field(
                     regions,
-                    'Source region labels (empty = all 68)',
+                    'Source region labels (empty = all model regions)',
                     lines: 3,
                     help:
-                        'Comma-separated fsaverage atlas labels; unknown names are rejected.',
+                        'Comma-separated labels from the selected atlas; unknown names are rejected.',
                   ),
                 ],
                 if (stage == 'Feature Extraction') ...[
@@ -492,15 +578,23 @@ Future<bool> showProcessingSettings(
                       it = double.parse(iccThr.text),
                       wl = int.parse(wicaLevels.text);
                   if (!aa.isFinite || aa < 0 || aa > 1)
-                    throw const FormatException('Adaptive ASR rate must be in [0, 1].');
+                    throw const FormatException(
+                      'Adaptive ASR rate must be in [0, 1].',
+                    );
                   if (ed < 2 || ed > 32 || et < 1 || et > 50)
-                    throw const FormatException('E-ASR dimension must be 2-32 and delay 1-50.');
+                    throw const FormatException(
+                      'E-ASR dimension must be 2-32 and delay 1-50.',
+                    );
                   if (am < 2 || am > 12)
                     throw const FormatException('Mode count must be 2-12.');
                   if (bn < 1)
-                    throw const FormatException('BSS-CCA must remove at least 1 source.');
+                    throw const FormatException(
+                      'BSS-CCA must remove at least 1 source.',
+                    );
                   if (!it.isFinite || it <= 0 || it >= 1)
-                    throw const FormatException('iCanClean R² threshold must be in (0, 1).');
+                    throw const FormatException(
+                      'iCanClean R² threshold must be in (0, 1).',
+                    );
                   if (wl < 1 || wl > 12)
                     throw const FormatException('wICA levels must be 1-12.');
                   config
@@ -549,6 +643,8 @@ Future<bool> showProcessingSettings(
                   if (!value.isFinite || value <= 0)
                     throw const FormatException('SNR must be positive.');
                   config
+                    ..sourceMethod = sourceMethod
+                    ..sourceModelPath = sourceModel.text.trim()
                     ..sourceSnr = value
                     ..sourceRegions = regions.text
                         .split(',')
@@ -648,6 +744,7 @@ Future<bool> showProcessingSettings(
     transition,
     references,
     snr,
+    sourceModel,
     regions,
     window,
     bands,

@@ -1,9 +1,11 @@
 import 'dart:typed_data';
 import 'models.dart';
+import 'erp/erp_engine.dart' show ErpCondition;
 
 class EpochOptions {
   const EpochOptions({
     required this.targetEvents,
+    this.markerGroups = const {},
     this.tmin = -0.5,
     this.tmax = 1.2,
     this.applyBaseline = true,
@@ -13,6 +15,7 @@ class EpochOptions {
 
   /// Event descriptions to epoch on (e.g. ['S 51', 'S 52']).
   final List<String> targetEvents;
+  final Map<String, List<String>> markerGroups;
 
   /// Start time relative to event in seconds (e.g. -0.5).
   final double tmin;
@@ -35,22 +38,21 @@ class EpochService {
   EegRecording generateEpochs({
     required EegRecording recording,
     required EpochOptions options,
+    List<EegMarker>? selectedMarkers,
   }) {
     if (recording.preview.isEmpty || recording.sampleRate <= 0) {
       throw ArgumentError('Recording contains no valid data or sample rate.');
     }
 
-    final targetSet = options.targetEvents
-        .map((e) => e.trim().toLowerCase())
-        .toSet();
-    final matchingMarkers = recording.markers.where((m) {
-      final desc = m.description.trim().toLowerCase();
-      final type = m.type.trim().toLowerCase();
-      if (targetSet.isEmpty) return true;
-      return targetSet.contains(desc) ||
-          targetSet.contains(type) ||
-          targetSet.any((t) => desc.contains(t));
-    }).toList();
+    final matcher = ErpCondition(name: 'events', markers: options.targetEvents);
+    final matchingMarkers = (selectedMarkers ?? recording.markers)
+        .where(
+          (m) =>
+              options.targetEvents.isEmpty ||
+              matcher.matches(StimEpochSpec.eventLabel(m)) ||
+              matcher.matches(m.description),
+        )
+        .toList();
 
     matchingMarkers.sort((a, b) => a.startSeconds.compareTo(b.startSeconds));
 
@@ -88,6 +90,7 @@ class EpochService {
     );
     final epochLabels = <String>[];
     final retainedMarkers = <EegMarker>[];
+    final sourceOnsets = <double>[];
 
     int epochIdx = 0;
     for (final marker in matchingMarkers) {
@@ -122,13 +125,28 @@ class EpochService {
       }
 
       final evLabel = StimEpochSpec.eventLabel(marker);
-      epochLabels.add(evLabel.isNotEmpty ? evLabel : 'Epoch ${epochIdx + 1}');
+      var namedLabel = evLabel;
+      for (final group in options.markerGroups.entries) {
+        final condition = ErpCondition(name: group.key, markers: group.value);
+        if (condition.matches(StimEpochSpec.eventLabel(marker)) ||
+            condition.matches(marker.description)) {
+          namedLabel = group.key;
+          break;
+        }
+      }
+      epochLabels.add(
+        namedLabel.isNotEmpty ? namedLabel : 'Epoch ${epochIdx + 1}',
+      );
 
+      sourceOnsets.add(epochStartSample / rate);
       // Extract all markers from continuous recording that fall within this epoch's window
       for (final m in recording.markers) {
         final mSample = (m.startSeconds * rate).round();
-        if (mSample >= epochStartSample && mSample < epochEndSample) {
-          final relSec = (mSample - epochStartSample) / rate;
+        if (mSample < epochEndSample &&
+            (m.durationSeconds > 0
+                ? mSample + m.durationSeconds * rate > epochStartSample
+                : mSample >= epochStartSample)) {
+          final relSec = m.startSeconds - epochStartSample / rate;
           retainedMarkers.add(
             EegMarker(
               type: m.type,
@@ -158,7 +176,9 @@ class EpochService {
     ];
 
     return EegRecording(
-      path: '${recording.path}_epoched',
+      path:
+          '${recording.path.replaceFirst(RegExp(r"(?:\.ccseeg)?\.json$"), "")}-epo.ccseeg.json',
+      completedStages: recording.completedStages,
       dataPath: recording.dataPath,
       sampleRate: rate,
       labels: recording.labels,
@@ -169,6 +189,9 @@ class EpochService {
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
       markers: retainedMarkers,
+      epochStartSeconds: sourceOnsets,
+      sourceDurationSeconds:
+          recording.sourceDurationSeconds ?? recording.durationSeconds,
       epochTmin: tminSamples / rate,
     );
   }

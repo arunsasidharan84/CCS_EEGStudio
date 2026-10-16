@@ -17,11 +17,11 @@ pub fn column_names(options: &Options) -> Vec<String> {
         (options.gc, "gc"),
         (options.gc_tr, "gc_tr"),
         (options.gc_contrast, "gc_contrast"),
-        (options.coh, "coh"),
-        (options.plv, "plv"),
-        (options.ciplv, "ciplv"),
-        (options.pli, "pli"),
-        (options.wpli, "wpli"),
+        (options.coh && !options.information.spectral_graph, "coh"),
+        (options.plv && !options.information.spectral_graph, "plv"),
+        (options.ciplv && !options.information.spectral_graph, "ciplv"),
+        (options.pli && !options.information.spectral_graph, "pli"),
+        (options.wpli && !options.information.spectral_graph, "wpli"),
     ] {
         if enabled {
             names.extend(
@@ -43,7 +43,7 @@ pub fn compute_epoch(
 ) -> Vec<Vec<f64>> {
     let n_channels = channels.len();
     let mut output = vec![Vec::new(); n_channels];
-    if !options.connectivity || start >= end {
+    if !options.connectivity || start >= end || column_names(options).is_empty() {
         return output;
     }
     let data: Vec<Vec<f64>> = channels
@@ -228,11 +228,11 @@ fn imaginary_coherency(csd: &DMatrix<Complex64>, n_seeds: usize) -> DMatrix<f64>
 
 fn bivariate_scores(coefficients: &[Vec<Vec<Complex64>>], options: &Options) -> Vec<Vec<Vec<f64>>> {
     let enabled = [
-        options.coh,
-        options.plv,
-        options.ciplv,
-        options.pli,
-        options.wpli,
+        options.coh && !options.information.spectral_graph,
+        options.plv && !options.information.spectral_graph,
+        options.ciplv && !options.information.spectral_graph,
+        options.pli && !options.information.spectral_graph,
+        options.wpli && !options.information.spectral_graph,
     ];
     let metric_count = enabled.iter().filter(|value| **value).count();
     let n = coefficients.len();
@@ -811,3 +811,27 @@ mod tests {
         }
     }
 }
+
+/// Explicit undirected pair matrices for graph/pair export. Legacy node means
+/// above are preserved separately for compatibility.
+pub fn spectral_networks(channels:&[Vec<f32>],start:usize,end:usize,sfreq:f64,options:&Options)->Vec<(String,Vec<Vec<f64>>)> {
+    let enabled=[(options.coh,"coh"),(options.plv,"plv"),(options.ciplv,"ciplv"),(options.pli,"pli"),(options.wpli,"wpli")];
+    let bands=connectivity_bands(options);
+    let names:Vec<_>=enabled.iter().filter(|e|e.0).flat_map(|e|bands.iter().map(move |b|format!("{}_{}",e.1,b.2))).collect();
+    let n=channels.len();if names.is_empty(){return Vec::new();}
+    let data:Vec<Vec<f64>>=channels.iter().map(|c|c[start..end].iter().map(|&v|v as f64).collect()).collect();
+    let frequencies=logspace(4.,40.,N_FREQS);let cycles:Vec<f64>=logspace(3.,20.,N_FREQS).into_iter().map(|v|v as usize as f64).collect();
+    let coeff=morlet_coefficients(&data,sfreq,&frequencies,&cycles);
+    let mut networks:Vec<_>=names.into_iter().map(|name|(name,vec![vec![0.;n];n])).collect();
+    for i in 0..n {for j in 0..i {
+        let mut values=vec![Vec::new();5];
+        for f in 0..N_FREQS {let mut cross=Complex64::new(0.,0.);let(mut px,mut py)=(0.,0.);let mut phase=Complex64::new(0.,0.);let(mut sign,mut im,mut abs_im)=(0.,0.,0.);
+            for (x,y) in coeff[i][f].iter().zip(&coeff[j][f]){let c=*x*y.conj();cross+=c;px+=x.norm_sqr();py+=y.norm_sqr();if c.norm()>0.{phase+=c/c.norm();}sign+=c.im.signum();im+=c.im;abs_im+=c.im.abs();}
+            phase/=coeff[i][f].len() as f64;
+            let v=[cross.norm()/(px*py).sqrt().max(f64::MIN_POSITIVE),phase.norm(),phase.im.abs()/(1.-phase.re.powi(2)).max(0.).sqrt(),(sign/coeff[i][f].len() as f64).abs(),im.abs()/abs_im.max(f64::MIN_POSITIVE)];
+            for k in 0..5{values[k].push(v[k]);}
+        }
+        let mut index=0;for (k,(on,_)) in enabled.iter().enumerate(){if !on{continue;}for value in band_means_configured(&values[k],&frequencies,&bands){networks[index].1[i][j]=value;networks[index].1[j][i]=value;index+=1;}}
+    }}networks
+}
+pub fn spectral_network_names(options:&Options)->Vec<String>{let bands=connectivity_bands(options);[(options.coh,"coh"),(options.plv,"plv"),(options.ciplv,"ciplv"),(options.pli,"pli"),(options.wpli,"wpli")].iter().filter(|e|e.0).flat_map(|e|bands.iter().map(move |b|format!("{}_{}",e.1,b.2))).collect()}

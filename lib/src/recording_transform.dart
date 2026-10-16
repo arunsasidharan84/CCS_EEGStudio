@@ -189,16 +189,16 @@ class RecordingTransform {
           if (input.pointsPerEpoch != null && marker.epochIndex != parent)
             continue;
           final sample = (marker.startSeconds * input.sampleRate).round();
-          if (sample >= offset && sample < offset + window)
+          if (sample < offset + window &&
+              (marker.durationSeconds > 0
+                  ? sample + marker.durationSeconds * input.sampleRate > offset
+                  : sample >= offset))
             markers.add(
               EegMarker(
                 type: marker.type,
                 description: marker.description,
-                startSeconds: (sample - offset) / input.sampleRate,
-                durationSeconds: math.min(
-                  marker.durationSeconds,
-                  (offset + window - sample) / input.sampleRate,
-                ),
+                startSeconds: marker.startSeconds - offset / input.sampleRate,
+                durationSeconds: marker.durationSeconds,
                 channelIndex: marker.channelIndex,
                 epochIndex: epoch,
               ),
@@ -269,6 +269,11 @@ class RecordingTransform {
         'markers': [for (final marker in input.markers) marker.toJson()],
         'completed_stages': input.completedStages,
         'epoch_start_seconds': input.epochStartSeconds,
+        if (input.epochTmin != null)
+          'epoch_onsets': [
+            for (final start in input.epochStartSeconds)
+              start - input.epochTmin!,
+          ],
         'source_duration_seconds': input.sourceDurationSeconds,
         if (input.epochTmin != null) 'epoch_tmin': input.epochTmin,
       }),

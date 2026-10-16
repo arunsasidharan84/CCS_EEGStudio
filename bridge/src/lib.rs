@@ -6,6 +6,9 @@ pub use ccs_algorithm::{cardiac, coupled, sqi};
 
 pub mod fieldtrip_loader;
 mod mat_v5;
-pub mod mne_fif;
 pub mod microstates;
+pub mod mne_fif;
 pub mod stats;
+
+pub mod erp_math;
+pub mod erp_workbench;

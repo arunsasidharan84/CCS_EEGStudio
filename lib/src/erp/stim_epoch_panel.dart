@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import 'stim_epochs.dart';
+import 'event_group_editor.dart';
 
 const _textMuted = Color(0xFF94A3B8);
 const _accent = Color(0xFFA855F7);
@@ -53,6 +54,31 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
   );
 
   @override
+  void didUpdateWidget(covariant StimEpochPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final text = widget.config.stimMarkers.join(', ');
+    if (_markers.text != text) _markers.text = text;
+    if (_pattern.text != widget.config.stimPattern)
+      _pattern.text = widget.config.stimPattern;
+    final c = widget.config;
+    for (final entry in <TextEditingController, String>{
+      _tmin: '${c.stimTmin}',
+      _tmax: '${c.stimTmax}',
+      _b0: '${c.stimBaselineStart}',
+      _b1: '${c.stimBaselineEnd}',
+      _crop: c.stimCropMarker,
+      _cropMin: c.stimCropMinutes > 0 ? '${c.stimCropMinutes}' : '',
+    }.entries) {
+      // Do not overwrite partially typed numbers while the panel itself edits.
+      final parsed = double.tryParse(entry.key.text);
+      final desired = double.tryParse(entry.value);
+      if (parsed != desired ||
+          (parsed == null && entry.key.text != entry.value))
+        entry.key.text = entry.value;
+    }
+  }
+
+  @override
   void dispose() {
     for (final c in [
       _markers,
@@ -84,6 +110,12 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
       ..stimBaselineEnd = double.tryParse(_b1.text) ?? c.stimBaselineEnd
       ..stimCropMarker = _crop.text.trim()
       ..stimCropMinutes = double.tryParse(_cropMin.text) ?? 0;
+    c.stimMarkerGroups = {
+      for (final e in c.stimMarkerGroups.entries)
+        e.key: e.value
+            .where((code) => markerListContains(c.stimMarkers, code))
+            .toList(),
+    }..removeWhere((_, v) => v.isEmpty);
     widget.onChanged?.call();
     setState(() {});
   }
@@ -97,6 +129,12 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
               if (!markerListContains([m], label)) m,
           ]
         : [...list, short];
+    if (markerListContains(list, label)) {
+      widget.config.stimMarkerGroups = {
+        for (final e in widget.config.stimMarkerGroups.entries)
+          e.key: e.value.where((m) => !markerListContains([m], label)).toList(),
+      }..removeWhere((_, v) => v.isEmpty);
+    }
     _markers.text = next.join(', ');
     _sync();
   }
@@ -142,16 +180,17 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
           onChanged: widget.enabled
               ? (v) {
                   c.stimEpochs = v ?? false;
+                  if (c.stimEpochs) c.epochBeforeGedai = false;
                   widget.onChanged?.call();
                   setState(() {});
                 }
               : null,
           title: const Text(
-            'Stimulus-locked epochs (ERP)',
+            'Event-based trials (ERP)',
             style: TextStyle(fontSize: 12, color: Colors.white),
           ),
           subtitle: const Text(
-            'Cut after filtering, before GEDAI (one trial per GEDAI window)',
+            'Choose events and labels first. Each event becomes one trial after filtering; GEDAI uses these same trials.',
             style: TextStyle(fontSize: 10, color: _textMuted),
           ),
         ),
@@ -206,17 +245,42 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                TextField(
-                  controller: _pattern,
+                EventGroupEditor(
+                  groups: c.stimMarkerGroups,
+                  markers: {
+                    for (final e in inv.keys) markerShortName(e),
+                    ...c.stimMarkers,
+                  }.toList()..sort(),
                   enabled: widget.enabled,
-                  onChanged: (_) => _sync(),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                  decoration: const InputDecoration(
-                    labelText: 'or regular expression (optional)',
-                    helperText: r'e.g. \bS\s*5[12]\b',
-                    helperStyle: TextStyle(color: _textMuted, fontSize: 10),
-                    isDense: true,
+                  onChanged: (groups) {
+                    c.stimMarkerGroups = groups;
+                    _markers.text = {
+                      ...c.stimMarkers,
+                      ...groups.values.expand((v) => v),
+                    }.join(', ');
+                    _sync();
+                  },
+                ),
+                ExpansionTile(
+                  title: const Text(
+                    'Advanced marker matching',
+                    style: TextStyle(fontSize: 12),
                   ),
+                  tilePadding: EdgeInsets.zero,
+                  children: [
+                    TextField(
+                      controller: _pattern,
+                      enabled: widget.enabled,
+                      onChanged: (_) => _sync(),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      decoration: const InputDecoration(
+                        labelText: 'or regular expression (optional)',
+                        helperText: r'e.g. \bS\s*5[12]\b',
+                        helperStyle: TextStyle(color: _textMuted, fontSize: 10),
+                        isDense: true,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 Row(

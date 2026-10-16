@@ -239,9 +239,9 @@ def prepare_eeg_table(df, metadata_path=None, metadata_key=None):
             valid=~labels.str.match(r"(?i)^(NA|nan|none|epoch\s*\d+|trial\s*\d+)$")
             if valid.any(): df["epoch_condition"]=labels.where(valid,"unlabeled")
         keys = ["filename"] + (["epoch_condition"] if "epoch_condition" in df.columns else []) + (["Chan"] if "Chan" in df.columns else [])
-        ignored = {"Epoch", "Bin", "Start_s", "End_s", "EpochStart_s", "EpochEnd_s", "bin_idx", "bin_start_s", "bin_end_s", "epoch_label", "mode", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s"}
+        ignored = {"Epoch", "Bin", "Start_s", "End_s", "EpochStart_s", "EpochEnd_s", "bin_idx", "bin_start_s", "bin_end_s", "epoch_label", "mode", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s", "event_markers", "connectivity_settings"}
         metrics = [c for c in df.columns if c not in ignored and (
-            c.lower().endswith(("_psd", "_fooof", "_irasa", "_nonlinear", "_dfa", "_fei", "_dfa_short", "_fei_short")) or c.lower().startswith(("conn_", "acw")))]
+            c.lower().endswith(("_psd", "_fooof", "_irasa", "_nonlinear", "_dfa", "_fei", "_dfa_short", "_fei_short", "_erp")) or c.lower().startswith(("conn_", "graph_", "acw")))]
         if not metrics: raise ValueError("No EEG feature columns found")
         for column in metrics:
             converted = pd.to_numeric(df[column], errors="coerce")
@@ -275,7 +275,7 @@ def apply_channel_scope(df, scope="all"):
         return selected
     if "filename" not in df: raise ValueError("Channel averaging needs a recording filename column")
     keys=["filename"]+(["epoch_condition"] if "epoch_condition" in df else [])
-    metrics=[c for c in df if c.lower().endswith(("_psd","_fooof","_irasa","_nonlinear","_dfa","_fei","_dfa_short","_fei_short")) or c.lower().startswith(("conn_","acw"))]
+    metrics=[c for c in df if c.lower().endswith(("_psd","_fooof","_irasa","_nonlinear","_dfa","_fei","_dfa_short","_fei_short", "_erp")) or c.lower().startswith(("conn_","graph_","acw"))]
     agg={c:"mean" if c in metrics else "first" for c in df if c not in keys and c!="Chan"}
     result=df.groupby(keys,dropna=False,sort=False).agg(agg).reset_index()
     result["Chan"]="Mean"
@@ -321,22 +321,24 @@ def detect_columns(df: pd.DataFrame) -> dict[str, Any]:
             if df[c].dtype == "object" or (1 < nunique <= 12 and nunique < len(df) * 0.5):
                 categorical_cols.append(c)
 
+    # Require actual varying factors; recording IDs and constant task labels are not group contrasts.
+    factors=[c for c in categorical_cols if c not in (subject_id,"filename","source_file","source_path") and df[c].nunique(dropna=True)>=2]
     # Primary group
     group_col = None
     for cand in GROUP_CANDIDATE_NAMES:
-        for c in categorical_cols:
+        for c in factors:
             if cols_clean[c] == cand:
                 group_col = c
                 break
         if group_col:
             break
-    if not group_col and categorical_cols:
-        group_col = categorical_cols[0]
+    if not group_col:
+        group_col=next((c for c in factors if cols_clean[c] in ("epoch_condition","state")),factors[0] if factors else None)
 
     # Subgroup / Factor 2
     subgroup_col = None
     for cand in SUBGROUP_CANDIDATE_NAMES:
-        for c in categorical_cols:
+        for c in factors:
             if c != group_col and cols_clean[c] == cand:
                 subgroup_col = c
                 break
@@ -356,7 +358,7 @@ def detect_columns(df: pd.DataFrame) -> dict[str, Any]:
     metric_cols = []
     for c in cols:
         if cols_clean[c] in SUBJECT_CANDIDATE_NAMES: continue
-        if c in (subject_id, group_col, subgroup_col, "source_file", "source_path", "filename", "Chan", "Epoch", "Bin", "Start_s", "End_s", "subjid", "sessn", "condn", "bin_idx", "bin_start_s", "bin_end_s", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s"):
+        if c in (subject_id, group_col, subgroup_col, "source_file", "source_path", "filename", "Chan", "Epoch", "Bin", "Start_s", "End_s", "subjid", "sessn", "condn", "bin_idx", "bin_start_s", "bin_end_s", "epoch_start_s", "epoch_end_s", "dfa_fei_window_s", "dfa_fei_context_start_s", "dfa_fei_context_end_s", "event_markers", "connectivity_settings"):
             continue
         if c in covariates:
             continue
@@ -425,6 +427,9 @@ def categorize_metrics(metrics: list[str]) -> dict[str, list[str]]:
 
     for m in metrics:
         ml = m.lower()
+        if ml.endswith("_erp"):
+            categories.setdefault("ERP component measurements",[]).append(m)
+            continue
         if ml.endswith(('_dfa_short','_fei_short')):
             categories.setdefault('Exploratory short-scale DFA / fE:I',[]).append(m)
             continue

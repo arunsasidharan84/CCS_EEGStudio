@@ -70,24 +70,25 @@ void main() {
     expect(find.text('Run Preprocessing'), findsOneWidget);
   });
 
-  testWidgets('preprocessing exposes an independent GEDAI epoch size', (
-    tester,
-  ) async {
-    await pumpApp(tester);
+  testWidgets(
+    'preprocessing distinguishes saved windows from internal GEDAI windows',
+    (tester) async {
+      await pumpApp(tester);
 
-    await tester.tap(find.text('Preprocess'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Preprocessing Options'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Preprocess'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Preprocessing Options'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('GEDAI epoch size'), findsOneWidget);
-    expect(
-      find.text(
-        'Window length used by GEDAI; also used when epoching before GEDAI.',
-      ),
-      findsOneWidget,
-    );
-  });
+      expect(find.text('Fixed window length'), findsOneWidget);
+      expect(
+        find.text(
+          'Length of each saved fixed window. Event-based trials use their own event window.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 
   test('GEDAI epoch size is independent of feature epoch length', () {
     final config = AnalysisConfig()
@@ -289,7 +290,7 @@ void main() {
     );
   });
 
-  testWidgets('microstates module exposes interactive and batch analysis', (
+  testWidgets('microstates batch analysis is centralized in Batch Workspace', (
     tester,
   ) async {
     await pumpApp(tester);
@@ -305,12 +306,23 @@ void main() {
     expect(find.text('Input'), findsWidgets);
     expect(find.text('Configure'), findsWidgets);
     expect(find.text('Results'), findsWidgets);
-    expect(find.text('Interactive'), findsOneWidget);
-    expect(find.text('Batch'), findsWidgets);
+    expect(
+      find.textContaining('Active recording · use Batch Workspace'),
+      findsOneWidget,
+    );
+    expect(find.text('Batch'), findsNothing);
     expect(find.text('Run Microstate Analysis'), findsOneWidget);
 
-    await tester.tap(find.text('Batch').last);
+    await tester.tap(find.text('Batch Workspace'));
     await tester.pumpAndSettle();
     expect(find.text('Add recordings'), findsOneWidget);
+    expect(find.text('ERP'), findsOneWidget);
+    await tester.tap(find.text('ERP'));
+    await tester.pumpAndSettle();
+    expect(find.text('1  Batch inputs'), findsOneWidget);
+    await tester.tap(find.text('Microstates'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add recordings'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

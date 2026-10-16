@@ -4,6 +4,83 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [1.2.15]
+
+### ERP waveform review and measurement export
+
+- Added interactive batch review with searchable participant selection, individual recording/participant views, difference overlays, cohort labels and equal-participant grand averages with ±1 SEM for A/B and paired differences.
+- Added optional display smoothing without changing exported measurements, live measurement-window controls and full-resolution channel difference outputs for exact scalp-map updates.
+- Added selectable participant-level CSV metrics and a handoff to group statistics with cohort labels and reviewed window metadata.
+- Made subtraction direction and display polarity explicit; added an epoch-only route for already-cleaned data.
+- Restored continuous portable ERP event loading from preprocessing sidecars only when original timing was preserved.
+
+### Connected ERP preparation and reusable protocols
+
+- Connected waveform event epoching and preprocessing through shared event/group, baseline and timing settings; direct epoching now saves a real portable trial file before opening ERP analysis.
+- Added reusable epoching/averaging protocol JSON import/export in interactive preprocessing, ERP analysis and the ERP Batch Workspace; compatible sidecars restore epoch settings on reopen.
+- Distinguished new `-epo` and `-epo_clean` outputs, retained original event onsets and cleaning history, and prevented repeated derived-name suffixes.
+- Preserved processed recordings when switching to raw; added an explicit saved-trial handoff, averaging action, contextual tooltips and trial-fitted waveform displays.
+
+### Unified batch profiles and saved-trial ERP workflow
+
+- Consolidated multi-recording entry points in Batch Workspace with EEG, ERP and Microstates profiles; removed the competing guided/legacy ERP selector and Microstates batch toggle from interactive analysis.
+- Interactive ERP automatically loads the active prepared trial file and compares saved condition groups. Existing epoch boundaries/onsets are reused, and task-specific guides cover all seven ERP CORE components.
+- Extended the native ERP engine to saved epochs, preserving trial layout rather than cutting around markers again. Behavioral response selection is not silently repeated on prepared trials; continuous FIR deconvolution is omitted for saved epochs.
+- Added optional task-comparison reconstruction from original saved locking codes, allowing a different factor to be compared without re-epoching. The supplied ERN file's Congruent/Incongruent labels can thus produce the correct/error comparison (319/82 trials).
+- Recognized ERP CORE `(uncorr) HEOG/VEOG` labels as auxiliary eye channels, preventing them from entering GEDAI montage lookup on future preprocessing runs. Existing outputs are not rewritten.
+- Added all-seven-task saved-trial regression coverage and an independent NumPy waveform check for the user's prepared ERN recording.
+
+
+### Event epoching and waveform navigation
+
+- Compacted the waveform toolbar, collapsed full controls by default, reduced overview height and sized event lanes to occupied rows. Added independent panel toggles and a waveform focus/restore button; panel choices and navigation time survive collapsing.
+
+- Added named event groups in preprocessing and the direct Epoch Events dialog: combine codes under editable condition labels while preserving original annotations and source times.
+- Moved regex matching into an advanced section, removed implicit MMN marker defaults and synchronized shared panel controls. Direct epoching now matches normalized codes exactly (12 does not select 112).
+- Added a clickable/draggable whole-recording amplitude/event overview with time ticks and viewport highlighting, plus separate collision-free event label lanes and full-label/time tooltips.
+- Moved event/fixed-window choices before cleaning controls. Event trials suppress fixed-window epoching and its overlap; GEDAI's internal processing window is shown only where applicable. Added a preflight prompt for unmatched event selections.
+
+### Guided ERP workbench
+
+- Added single-recording and batch ERP workflows with recursive folder discovery, cleaned/raw duplicate preference, participant pilot limits and reviewable file lists.
+- Added editable ERP CORE presets for MMN, N170, N2pc, N400, P3, LRP and ERN, searchable marker assignment, custom component definitions and saved per-task settings for mixed batches.
+- Preserved supplied seconds-based event sidecars; audited source timing against EDF Status events and exposed sidecar markers in the raw viewer.
+- Added native Rust peak, mean, signed/positive/negative AUC, fractional-area latency and fractional-peak onset measurements, with participant/condition and event-indexed trial exports.
+- Added native multichannel rERP, sparse continuous FIR overlap correction with solver diagnostics, and training-fold-only shrinkage LDA with purged blocked CV and optional temporal generalization. The FIR implementation is a linear Unfold-style subset, not the entire toolbox.
+- Added participant-level paired tests/FDR, channel and channel×time max-|t| FWER inference, paired normalized-map TANOVA-style testing, GFP exports and rERP class-beta inference. Single-participant outputs remain descriptive.
+- Added channel/predictor model inspection, corrected-map masking, reopenable results, metadata/group-model handoff, compact PDF reports and tidy waveform/model CSVs. Optional-model failures retain conventional ERP results.
+- Validated all seven paradigms in 14 cleaned ERP CORE recordings against an independent MNE/NumPy reconstruction; checked numerical kernels and real-data OLS/FIR coefficients against NumPy/SciPy. See `docs/erp_workbench.md` for exact methods, scope and references.
+
+
+### Source, temporal information connectivity and graph summaries
+
+- Corrected the former eLORETA label to the actual minimum-norm method; added MNE, dSPM, sLORETA and LCMV operators under the documented fixed-orientation assumptions.
+- Added imported JSON/gzip forward-plus-atlas models and a coordinate-aware atlas conversion tool. HCPex is supported through a compatible user-provided mixed/volumetric forward and atlas; HCPex data and Rust BEM/FEM solvers are not bundled.
+- Added Gaussian-copula MI and lagged-time conditional-information TE within each epoch, with configurable temporal embeddings. This is time-sample directed connectivity, not across-trial TE.
+- Added configurable connectivity pair/graph-summary output choices and graph metrics. Estimator conventions, rank/tie behavior, graph definitions and attribution are documented in `docs/source_information_graph.md`; full toolbox parity is not claimed.
+
+### Event-preserving feature plots and robustness
+
+- Feature CSVs carry time-aligned `event_markers` JSON through retained preprocessing timelines and overlapping subepochs. Feature plots deduplicate repeated annotations and display onset labels and duration spans.
+- Updated report/topography and group-statistics handling alongside the expanded analysis settings. Existing feature CSVs require re-extraction to obtain event annotations.
+
+### Upgrade and workflow notes
+
+- Use **Updates** in the toolbar for the platform package, or download the macOS ZIP, Windows installer, Debian package or RPM below. Versioned packages include SHA-256 checksums.
+- All multi-recording EEG, ERP and Microstates entry points are under **Batch Workspace**; interactive ERP uses the active saved trials.
+- For already-cleaned recordings, choose **Epoch only** to retain the supplied signal rather than applying the cleaners again. Original and derived recordings remain available when switching.
+- Smoothing is display-only. Grand averages give participants equal weight after averaging their repeated recordings; uncertainty shadows are ±1 SEM across participants and are omitted for a single participant.
+- Use **Interactive batch review → Label groups → CSV parameters → Export CSV / Group statistics**. CSV rows contain participant/condition measurements, cohort labels, ROI/window metadata and selected metrics. Live measurement-window changes do not silently recalculate inferential p-values.
+- New results retain full-resolution channel differences for live scalp maps. Re-average older results for arbitrary-window topographies. Previously generated data are not overwritten by installing this update.
+- macOS packages are ad-hoc signed, as in prior releases; initial launch may require the documented Gatekeeper steps. The macOS artifact targets the CI runner architecture, currently Apple Silicon.
+
+### Validation, methods and limitations
+
+- Local validation: **178 Flutter tests passed, 5 skipped**; **12 native ERP parity/regression tests passed**. Static analysis was clean and the macOS release bundle compiled and passed signature verification.
+- Independent MNE/NumPy reconstruction matched the supplied cleaned EDF's 319 Correct / 82 Incorrect ERN waveforms with **0 µV discrepancy**. Independent NumPy reconstruction of the saved processed epochs also matched with **0 µV discrepancy**. An epoch-only preservation test matched the original cleaned EDF within 0.00001 µV.
+- A prior 14-recording ERP CORE pilot covered all seven components; native numerical fixtures exercise measurements, regression, FIR solving, decoding and permutation logic. Source/information-connectivity fixtures check their documented supported formulas/subsets. Tests do not establish full parity with every upstream toolbox option or universal scientific validity for every dataset.
+- Full workflow, measurement definitions, numerical checks and method references: [ERP workbench](docs/erp_workbench.md), [source/information/graph methods](docs/source_information_graph.md), [feature event timing](docs/feature_event_markers.md), and the [README method references](README.md#-method-references).
+
 ## [1.2.14]
 
 ### Stacked Multi-Group TopoStats Display & Lateral Spread Controls
@@ -497,3 +574,16 @@ its matching section is missing.
 [1.1.1]: https://github.com/arunsasidharan84/CCS_EEGStudio/releases/tag/v1.1.1
 [1.1.0]: https://github.com/arunsasidharan84/CCS_EEGStudio/releases/tag/v1.1.0
 [1.0.0]: https://github.com/arunsasidharan84/CCS_EEGStudio/releases/tag/v1.0.0
+
+### Event-aligned feature plots (unreleased)
+- Export raw annotations as structured `event_markers` metadata with exact source onsets and durations.
+- Preserve duration annotations through overlapping subepochs, including annotations starting before a window.
+- Draw deduplicated onset labels and shaded annotation intervals on feature line plots; exclude marker metadata from numeric outcomes.
+
+### Source models and connectivity graphs (unreleased)
+- Correct the former eLORETA label to MNE; add fixed-orientation dSPM, sLORETA, and unit-gain LCMV inverse choices.
+- Import validated custom forward/atlas models; provide an explicit MNI-grid mapping utility for supplied HCPex or other volumetric atlases. No cortical-only model is presented as a complete HCPex reconstruction.
+- Add native univariate GCMI and within-epoch temporal Gaussian-copula TE with configurable lag/history embedding, finite-sample bias correction and pinned Frites CMI numerical fixtures. Overlapping windows are supported; no across-trial estimator is exposed.
+- Export raw node pairs, graph summaries, or both for GCMI, TE, coherence, PLV, ciPLV, PLI, and wPLI; support electrode and ROI inputs.
+- Add positive-density thresholding, in/out strength, degree, weighted clustering, nodal/global efficiency, and realized density; document directed and symmetric-graph conventions.
+- Recognize graph outcomes in group statistics, stop source processing on invalid model imports, and document supported mathematical parity separately from unimplemented full-toolbox options.

@@ -50,6 +50,8 @@ pub struct Options {
     pub acw: bool,
     pub connectivity: bool,
     #[serde(default)]
+    pub information: information::InformationOptions,
+    #[serde(default)]
     pub mic: bool,
     #[serde(default)]
     pub mim: bool,
@@ -105,6 +107,7 @@ impl Options {
             nonlinear: false,
             acw: false,
             connectivity: true,
+            information: information::InformationOptions::default(),
             mic: true,
             mim: true,
             gc: true,
@@ -144,6 +147,7 @@ pub struct Row {
 }
 
 pub mod connectivity;
+pub mod information;
 pub mod dfa_fei;
 pub mod features;
 pub mod fif_loader;

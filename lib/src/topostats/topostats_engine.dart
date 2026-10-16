@@ -1,3 +1,4 @@
+import '../feature_events.dart' show readFeatureEvents;
 // lib/src/topostats/topostats_engine.dart
 //
 // Data + statistics pipeline of PlotFeaturesTopoStats_20260801.py, ported
@@ -60,6 +61,8 @@ const List<String> kReferenceFeatureList = [
 
 /// Metadata columns that are never features.
 const Set<String> kTopoMetaColumns = {
+  'event_markers',
+  'connectivity_settings',
   'Chan',
   'Epoch',
   'epoch_label',
@@ -285,9 +288,11 @@ class TopoSession {
     required this.band,
     required this.repr,
     required this.windows,
+    this.events = const [],
     required this.matrix,
   });
 
+  final List<Map<String, dynamic>> events;
   final String name;
   final String path;
   final Float64List tMin;
@@ -1080,6 +1085,7 @@ TopoStatsResult computeTopoStats({
   final sessions = <TopoSession>[
     for (var i = 0; i < files.length; i++)
       TopoSession(
+        events: readFeatureEvents(files[i]),
         name: segNames[i],
         path: files[i],
         tMin: sessT[i],

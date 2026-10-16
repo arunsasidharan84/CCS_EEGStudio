@@ -2,10 +2,15 @@
 //! Numerical parity with MATLAB/EEGLAB is validated in `ccs_toolbox/rust_ica/validation`.
 use ccs_eeg_engine::{preprocessing, Recording};
 
-const LABELS: [&str; 16] = ["Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "C3", "Cz", "C4", "P3", "Pz", "P4", "O1", "O2", "T7"];
+const LABELS: [&str; 16] = [
+    "Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "C3", "Cz", "C4", "P3", "Pz", "P4", "O1", "O2",
+    "T7",
+];
 
 fn lcg(state: &mut u64) -> f64 {
-    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     ((*state >> 11) as f64 / (1u64 << 53) as f64) - 0.5
 }
 
@@ -35,7 +40,13 @@ fn synthetic(seconds: usize, rate: f64) -> Recording {
         }
         b += 3.0;
     }
-    Recording { rate, labels: LABELS.iter().map(|l| l.to_string()).collect(), channels: ch, source_epoch_samples: None, epoch_labels: None }
+    Recording {
+        rate,
+        labels: LABELS.iter().map(|l| l.to_string()).collect(),
+        channels: ch,
+        source_epoch_samples: None,
+        epoch_labels: None,
+    }
 }
 
 fn options(extra: serde_json::Value) -> preprocessing::PreprocessOptions {
@@ -69,11 +80,23 @@ fn asr_reject_shortens_and_correct_keeps_length() {
     let mut rec = synthetic(60, 250.0);
     let n = rec.channels[0].len();
     let out = std::env::temp_dir().join("ccs_asr_test.ccseeg.json");
-    let s = preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"asr_mode": "correct", "asr_cutoff": 5.0}))).unwrap();
+    let s = preprocessing::run(
+        &mut rec,
+        "synthetic",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"asr_mode": "correct", "asr_cutoff": 5.0})),
+    )
+    .unwrap();
     assert_eq!(s.samples, n);
     assert!(s.ica.unwrap()["asr"]["samples_changed"].as_u64().unwrap() > 0);
     let mut rec = synthetic(60, 250.0);
-    let s = preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"asr_mode": "reject", "asr_cutoff": 5.0}))).unwrap();
+    let s = preprocessing::run(
+        &mut rec,
+        "synthetic",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"asr_mode": "reject", "asr_cutoff": 5.0})),
+    )
+    .unwrap();
     assert!(s.samples < n);
 }
 
@@ -81,7 +104,13 @@ fn asr_reject_shortens_and_correct_keeps_length() {
 fn invalid_ica_method_is_rejected() {
     let mut rec = synthetic(30, 250.0);
     let out = std::env::temp_dir().join("ccs_bad_test.ccseeg.json");
-    assert!(preprocessing::run(&mut rec, "x", out.to_str().unwrap(), &options(serde_json::json!({"ica_method": "fastica"}))).is_err());
+    assert!(preprocessing::run(
+        &mut rec,
+        "x",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"ica_method": "fastica"}))
+    )
+    .is_err());
 }
 
 #[test]
@@ -89,11 +118,29 @@ fn gedai_with_unknown_labels_warns_instead_of_silently_using_identity() {
     let mut rec = synthetic(30, 250.0);
     rec.labels = (0..LABELS.len()).map(|i| format!("PATCH{i}")).collect();
     let out = std::env::temp_dir().join("ccs_gedai_warn.ccseeg.json");
-    let s = preprocessing::run(&mut rec, "x", out.to_str().unwrap(), &options(serde_json::json!({"gedai": true}))).unwrap();
+    let s = preprocessing::run(
+        &mut rec,
+        "x",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"gedai": true})),
+    )
+    .unwrap();
     assert_eq!(s.gedai_reference.as_deref(), Some("identity"));
-    assert!(s.warnings.iter().any(|w| w.contains("WITHOUT its leadfield reference")), "{:?}", s.warnings);
+    assert!(
+        s.warnings
+            .iter()
+            .any(|w| w.contains("WITHOUT its leadfield reference")),
+        "{:?}",
+        s.warnings
+    );
     let mut rec = synthetic(30, 250.0);
-    let s = preprocessing::run(&mut rec, "x", out.to_str().unwrap(), &options(serde_json::json!({"gedai": true}))).unwrap();
+    let s = preprocessing::run(
+        &mut rec,
+        "x",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"gedai": true})),
+    )
+    .unwrap();
     assert_eq!(s.gedai_reference.as_deref(), Some("leadfield"));
 }
 
@@ -119,8 +166,20 @@ fn asr_variants_run_and_report_variant() {
 fn single_channel_variants_refuse_many_channels() {
     let mut rec = synthetic(60, 250.0);
     let out = std::env::temp_dir().join("ccs_asr_variant_test2.ccseeg.json");
-    let s = preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"asr_mode": "correct", "asr_variant": "easr"}))).unwrap();
-    assert!(s.warnings.iter().any(|w| w.contains("single / low channel")), "{:?}", s.warnings);
+    let s = preprocessing::run(
+        &mut rec,
+        "synthetic",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"asr_mode": "correct", "asr_variant": "easr"})),
+    )
+    .unwrap();
+    assert!(
+        s.warnings
+            .iter()
+            .any(|w| w.contains("single / low channel")),
+        "{:?}",
+        s.warnings
+    );
 }
 
 #[test]
@@ -128,8 +187,13 @@ fn muscle_cleaners_run() {
     for method in ["bss_cca", "icanclean", "wica"] {
         let mut rec = synthetic(40, 250.0);
         let out = std::env::temp_dir().join("ccs_muscle_test.ccseeg.json");
-        let s = preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"muscle_method": method})))
-            .unwrap_or_else(|e| panic!("{method}: {e}"));
+        let s = preprocessing::run(
+            &mut rec,
+            "synthetic",
+            out.to_str().unwrap(),
+            &options(serde_json::json!({"muscle_method": method})),
+        )
+        .unwrap_or_else(|e| panic!("{method}: {e}"));
         let rep = s.ica.expect("report");
         assert_eq!(rep["muscle"]["method"], method, "{:?}", s.warnings);
     }
@@ -139,6 +203,18 @@ fn muscle_cleaners_run() {
 fn invalid_variant_options_rejected() {
     let mut rec = synthetic(30, 250.0);
     let out = std::env::temp_dir().join("ccs_variant_bad.ccseeg.json");
-    assert!(preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"asr_variant": "nonsense"}))).is_err());
-    assert!(preprocessing::run(&mut rec, "synthetic", out.to_str().unwrap(), &options(serde_json::json!({"muscle_method": "magic"}))).is_err());
+    assert!(preprocessing::run(
+        &mut rec,
+        "synthetic",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"asr_variant": "nonsense"}))
+    )
+    .is_err());
+    assert!(preprocessing::run(
+        &mut rec,
+        "synthetic",
+        out.to_str().unwrap(),
+        &options(serde_json::json!({"muscle_method": "magic"}))
+    )
+    .is_err());
 }

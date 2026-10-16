@@ -950,7 +950,7 @@ Future<void> writeFeatureReport({
       (
         'Source localisation',
         p.sourceLocalization,
-        p.sourceLocalization ? 'eLORETA' : '',
+        p.sourceLocalization ? p.sourceMethod : '',
       ),
     ],
     (

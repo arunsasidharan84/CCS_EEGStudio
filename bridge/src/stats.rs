@@ -1,14 +1,13 @@
-use serde::{Deserialize, Serialize};
+use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
-use rand::rngs::StdRng;
+use serde::{Deserialize, Serialize};
 
 // ── 10-20 Standard Montage Channel Positions & Adjacency ─────────────────
 pub const STANDARD_1020_CHANNELS: &[&str] = &[
-    "Fp1", "Fz", "F3", "F7", "FT9", "FC5", "FC1", "C3", "T7", "TP9",
-    "CP5", "CP1", "Pz", "P3", "P7", "O1", "Oz", "O2", "P4", "P8",
-    "TP10", "CP6", "CP2", "Cz", "C4", "T8", "FT10", "FC6", "FC2",
-    "F4", "F8", "Fp2",
+    "Fp1", "Fz", "F3", "F7", "FT9", "FC5", "FC1", "C3", "T7", "TP9", "CP5", "CP1", "Pz", "P3",
+    "P7", "O1", "Oz", "O2", "P4", "P8", "TP10", "CP6", "CP2", "Cz", "C4", "T8", "FT10", "FC6",
+    "FC2", "F4", "F8", "Fp2",
 ];
 
 /// Returns 2D coordinates (x, y) for 10-20 channels normalized to [-1, 1]
@@ -16,37 +15,37 @@ pub fn get_channel_coords_2d(ch_name: &str) -> (f64, f64) {
     match ch_name.to_uppercase().as_str() {
         "FP1" => (-0.3, 0.85),
         "FP2" => (0.3, 0.85),
-        "FZ"  => (0.0, 0.60),
-        "F3"  => (-0.45, 0.55),
-        "F4"  => (0.45, 0.55),
-        "F7"  => (-0.80, 0.60),
-        "F8"  => (0.80, 0.60),
+        "FZ" => (0.0, 0.60),
+        "F3" => (-0.45, 0.55),
+        "F4" => (0.45, 0.55),
+        "F7" => (-0.80, 0.60),
+        "F8" => (0.80, 0.60),
         "FT9" => (-0.95, 0.35),
         "FT10" => (0.95, 0.35),
         "FC5" => (-0.65, 0.35),
         "FC1" => (-0.25, 0.35),
         "FC2" => (0.25, 0.35),
         "FC6" => (0.65, 0.35),
-        "CZ"  => (0.0, 0.0),
-        "C3"  => (-0.50, 0.0),
-        "C4"  => (0.50, 0.0),
-        "T7"  => (-0.85, 0.0),
-        "T8"  => (0.85, 0.0),
+        "CZ" => (0.0, 0.0),
+        "C3" => (-0.50, 0.0),
+        "C4" => (0.50, 0.0),
+        "T7" => (-0.85, 0.0),
+        "T8" => (0.85, 0.0),
         "TP9" => (-0.95, -0.35),
         "TP10" => (0.95, -0.35),
         "CP5" => (-0.65, -0.35),
         "CP1" => (-0.25, -0.35),
         "CP2" => (0.25, -0.35),
         "CP6" => (0.65, -0.35),
-        "PZ"  => (0.0, -0.60),
-        "P3"  => (-0.45, -0.55),
-        "P4"  => (0.45, -0.55),
-        "P7"  => (-0.80, -0.60),
-        "P8"  => (0.80, -0.60),
-        "O1"  => (-0.35, -0.85),
-        "OZ"  => (0.0, -0.90),
-        "O2"  => (0.35, -0.85),
-        _     => (0.0, 0.0),
+        "PZ" => (0.0, -0.60),
+        "P3" => (-0.45, -0.55),
+        "P4" => (0.45, -0.55),
+        "P7" => (-0.80, -0.60),
+        "P8" => (0.80, -0.60),
+        "O1" => (-0.35, -0.85),
+        "OZ" => (0.0, -0.90),
+        "O2" => (0.35, -0.85),
+        _ => (0.0, 0.0),
     }
 }
 
@@ -62,7 +61,8 @@ pub fn get_channel_adjacency(labels: &[String]) -> Vec<Vec<usize>> {
                 let dx = coords[i].0 - coords[j].0;
                 let dy = coords[i].1 - coords[j].1;
                 let dist = (dx * dx + dy * dy).sqrt();
-                if dist < 0.48 { // neighbor distance threshold
+                if dist < 0.48 {
+                    // neighbor distance threshold
                     adj[i].push(j);
                 }
             }
@@ -73,47 +73,64 @@ pub fn get_channel_adjacency(labels: &[String]) -> Vec<Vec<usize>> {
 
 // ── Basic Statistics Utilities ───────────────────────────────────────────
 pub fn mean(xs: &[f64]) -> f64 {
-    if xs.is_empty() { return 0.0; }
+    if xs.is_empty() {
+        return 0.0;
+    }
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
 pub fn std_dev(xs: &[f64], ddof: usize) -> f64 {
-    if xs.len() <= ddof { return 0.0; }
+    if xs.len() <= ddof {
+        return 0.0;
+    }
     let m = mean(xs);
     let var = xs.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (xs.len() - ddof) as f64;
     var.sqrt()
 }
 
 pub fn sem(xs: &[f64]) -> f64 {
-    if xs.is_empty() { return 0.0; }
+    if xs.is_empty() {
+        return 0.0;
+    }
     std_dev(xs, 1) / (xs.len() as f64).sqrt()
 }
 
 pub fn cohens_d(a: &[f64], b: &[f64]) -> f64 {
     let n1 = a.len();
     let n2 = b.len();
-    if n1 < 2 || n2 < 2 { return 0.0; }
+    if n1 < 2 || n2 < 2 {
+        return 0.0;
+    }
     let m1 = mean(a);
     let m2 = mean(b);
     let s1 = std_dev(a, 1);
     let s2 = std_dev(b, 1);
-    let pooled_var = (((n1 - 1) as f64 * s1.powi(2)) + ((n2 - 1) as f64 * s2.powi(2))) / (n1 + n2 - 2) as f64;
-    if pooled_var <= 0.0 { return 0.0; }
+    let pooled_var =
+        (((n1 - 1) as f64 * s1.powi(2)) + ((n2 - 1) as f64 * s2.powi(2))) / (n1 + n2 - 2) as f64;
+    if pooled_var <= 0.0 {
+        return 0.0;
+    }
     (m1 - m2) / pooled_var.sqrt()
 }
 
-pub fn welch_t_test(a: &[f64], b: &[f64]) -> (f64, f64, f64) { // (t, p, df)
+pub fn welch_t_test(a: &[f64], b: &[f64]) -> (f64, f64, f64) {
+    // (t, p, df)
     let n1 = a.len() as f64;
     let n2 = b.len() as f64;
-    if n1 < 2.0 || n2 < 2.0 { return (0.0, 1.0, 1.0); }
+    if n1 < 2.0 || n2 < 2.0 {
+        return (0.0, 1.0, 1.0);
+    }
     let m1 = mean(a);
     let m2 = mean(b);
     let v1 = std_dev(a, 1).powi(2);
     let v2 = std_dev(b, 1).powi(2);
     let se = (v1 / n1 + v2 / n2).sqrt();
-    if se <= 0.0 { return (0.0, 1.0, 1.0); }
+    if se <= 0.0 {
+        return (0.0, 1.0, 1.0);
+    }
     let t = (m1 - m2) / se;
-    let df = (v1 / n1 + v2 / n2).powi(2) / ((v1 / n1).powi(2) / (n1 - 1.0) + (v2 / n2).powi(2) / (n2 - 1.0));
+    let df = (v1 / n1 + v2 / n2).powi(2)
+        / ((v1 / n1).powi(2) / (n1 - 1.0) + (v2 / n2).powi(2) / (n2 - 1.0));
 
     // Approximate two-tailed p-value using Student's t approximation
     let p = approx_t_pvalue(t.abs(), df);
@@ -134,19 +151,25 @@ fn erfc(x: f64) -> f64 {
     let a3 = 1.421413741;
     let a4 = -1.453152027;
     let a5 = 1.061405429;
-    let p  = 0.3275911;
+    let p = 0.3275911;
 
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let abs_x = x.abs();
     let t = 1.0 / (1.0 + p * abs_x);
     let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-abs_x * abs_x).exp();
-    if sign < 0.0 { 2.0 - (1.0 - y) } else { 1.0 - y }
+    if sign < 0.0 {
+        2.0 - (1.0 - y)
+    } else {
+        1.0 - y
+    }
 }
 
 // ── Benjamini-Hochberg FDR ──────────────────────────────────────────────
 pub fn fdr_bh(pvals: &[f64], alpha: f64) -> (Vec<bool>, Vec<f64>) {
     let n = pvals.len();
-    if n == 0 { return (Vec::new(), Vec::new()); }
+    if n == 0 {
+        return (Vec::new(), Vec::new());
+    }
     let mut indexed: Vec<(usize, f64)> = pvals.iter().cloned().enumerate().collect();
     indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -251,8 +274,14 @@ pub fn cluster_permutation_test_1d(
         let mut perm_indices: Vec<usize> = (0..pooled.len()).collect();
         perm_indices.shuffle(&mut rng);
 
-        let perm_a: Vec<Vec<f64>> = perm_indices[0..n_a].iter().map(|&i| pooled[i].clone()).collect();
-        let perm_b: Vec<Vec<f64>> = perm_indices[n_a..].iter().map(|&i| pooled[i].clone()).collect();
+        let perm_a: Vec<Vec<f64>> = perm_indices[0..n_a]
+            .iter()
+            .map(|&i| pooled[i].clone())
+            .collect();
+        let perm_b: Vec<Vec<f64>> = perm_indices[n_a..]
+            .iter()
+            .map(|&i| pooled[i].clone())
+            .collect();
 
         let t_perm = calc_t(&perm_a, &perm_b);
         let perm_clusters = find_clusters(&t_perm);
@@ -284,7 +313,8 @@ pub fn etfce_channel_stats(
     adjacency: &[Vec<usize>],
     n_perm: usize,
     seed: u64,
-) -> (Vec<f64>, Vec<f64>) { // (t_obs, raw_pvals)
+) -> (Vec<f64>, Vec<f64>) {
+    // (t_obs, raw_pvals)
     let n_ch = base_matrix[0].len();
     let mut t_obs = vec![0.0; n_ch];
 
@@ -335,8 +365,14 @@ pub fn etfce_channel_stats(
         let mut perm_indices: Vec<usize> = (0..pooled.len()).collect();
         perm_indices.shuffle(&mut rng);
 
-        let perm_base: Vec<Vec<f64>> = perm_indices[0..n_base].iter().map(|&i| pooled[i].clone()).collect();
-        let perm_test: Vec<Vec<f64>> = perm_indices[n_base..].iter().map(|&i| pooled[i].clone()).collect();
+        let perm_base: Vec<Vec<f64>> = perm_indices[0..n_base]
+            .iter()
+            .map(|&i| pooled[i].clone())
+            .collect();
+        let perm_test: Vec<Vec<f64>> = perm_indices[n_base..]
+            .iter()
+            .map(|&i| pooled[i].clone())
+            .collect();
 
         let mut perm_t = vec![0.0; n_ch];
         for c in 0..n_ch {
@@ -352,7 +388,10 @@ pub fn etfce_channel_stats(
 
     let mut p_vals = vec![1.0; n_ch];
     for c in 0..n_ch {
-        let ge_count = max_null_scores.iter().filter(|&&s| s >= obs_scores[c]).count();
+        let ge_count = max_null_scores
+            .iter()
+            .filter(|&&s| s >= obs_scores[c])
+            .count();
         p_vals[c] = (ge_count as f64 + 1.0) / (n_perm as f64 + 1.0);
     }
 

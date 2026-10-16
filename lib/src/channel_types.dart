@@ -114,8 +114,19 @@ const List<_Rule> _rules = [
   _Rule(
     ChannelKind.resp,
     [
-      'RESP', 'RESPIRATION', 'THOR', 'THORAX', 'ABDO', 'ABDOMEN',
-      'FLOW', 'AIRFLOW', 'NASAL', 'THERM', 'SNORE', 'CO2', 'ETCO2',
+      'RESP',
+      'RESPIRATION',
+      'THOR',
+      'THORAX',
+      'ABDO',
+      'ABDOMEN',
+      'FLOW',
+      'AIRFLOW',
+      'NASAL',
+      'THERM',
+      'SNORE',
+      'CO2',
+      'ETCO2',
     ],
     prefixes: ['RESP', 'THOR', 'ABDO'],
   ),
@@ -127,9 +138,23 @@ const List<_Rule> _rules = [
   _Rule(
     ChannelKind.motion,
     [
-      'ACC', 'ACCX', 'ACCY', 'ACCZ', 'ACC_X', 'ACC_Y', 'ACC_Z',
-      'GYRO', 'GYROX', 'GYROY', 'GYROZ',
-      'X_DIR', 'Y_DIR', 'Z_DIR', 'POSITION', 'ACTIVITY', 'PIEZO',
+      'ACC',
+      'ACCX',
+      'ACCY',
+      'ACCZ',
+      'ACC_X',
+      'ACC_Y',
+      'ACC_Z',
+      'GYRO',
+      'GYROX',
+      'GYROY',
+      'GYROZ',
+      'X_DIR',
+      'Y_DIR',
+      'Z_DIR',
+      'POSITION',
+      'ACTIVITY',
+      'PIEZO',
     ],
     prefixes: ['ACC', 'GYRO', 'MAG'],
   ),
@@ -141,15 +166,27 @@ const List<_Rule> _rules = [
   _Rule(
     ChannelKind.trigger,
     [
-      'STATUS', 'TRIGGER', 'TRIG', 'MARKER', 'EVENT', 'STI', 'STI014',
-      'ANNOTATIONS', 'EDF ANNOTATIONS', 'DC1', 'DC2', 'DC3', 'DC4',
+      'STATUS',
+      'TRIGGER',
+      'TRIG',
+      'MARKER',
+      'EVENT',
+      'STI',
+      'STI014',
+      'ANNOTATIONS',
+      'EDF ANNOTATIONS',
+      'DC1',
+      'DC2',
+      'DC3',
+      'DC4',
     ],
     prefixes: ['STI', 'TRIG', 'DC'],
   ),
 ];
 
-final RegExp _modalityPrefix =
-    RegExp(r'^(EEG|EOG|ECG|EKG|EMG|RESP|PPG|MISC)\s+(.+)$');
+final RegExp _modalityPrefix = RegExp(
+  r'^(EEG|EOG|ECG|EKG|EMG|RESP|PPG|MISC)\s+(.+)$',
+);
 
 /// The modality word an EDF-style label declares about itself, if any.
 ///
@@ -174,6 +211,7 @@ ChannelKind? _declaredModality(String raw) {
 /// "-REF"/"-LE"/"-A1" referencing suffix that EDF headers carry.
 String normaliseLabel(String raw) {
   var s = raw.trim().toUpperCase();
+  s = s.replaceFirst(RegExp(r'^\((?:UNCORR|CORR)\)\s*'), '');
   final m = _modalityPrefix.firstMatch(s);
   final prefixWord = m?.group(1);
   if (m != null) s = m.group(2)!;
@@ -206,7 +244,8 @@ ChannelKind classifyChannel(String rawLabel) {
       // matches but "ACCELERATION_OF_ALPHA" style custom EEG names do not.
       if (norm.startsWith(p)) {
         final rest = norm.substring(p.length);
-        if (rest.isEmpty || RegExp(r'^[0-9]+$').hasMatch(rest)) return rule.kind;
+        if (rest.isEmpty || RegExp(r'^[0-9]+$').hasMatch(rest))
+          return rule.kind;
       }
     }
   }
@@ -267,24 +306,19 @@ class ChannelTypeMap {
   }
 
   /// True when the user has overridden at least one auto-detected assignment.
-  bool get hasOverrides =>
-      labels.any((l) => kindOf(l) != classifyChannel(l));
+  bool get hasOverrides => labels.any((l) => kindOf(l) != classifyChannel(l));
 
   /// Re-applies the current assignments onto a new channel list (e.g. after
   /// preprocessing dropped channels).  Unknown labels are auto-detected.
-  ChannelTypeMap rebaseOnto(List<String> newLabels) => ChannelTypeMap(
-    List.of(newLabels),
-    {
-      for (final l in newLabels)
-        l: _kinds.containsKey(l) ? _kinds[l]! : classifyChannel(l),
-    },
-  );
+  ChannelTypeMap rebaseOnto(List<String> newLabels) =>
+      ChannelTypeMap(List.of(newLabels), {
+        for (final l in newLabels)
+          l: _kinds.containsKey(l) ? _kinds[l]! : classifyChannel(l),
+      });
 
   /// Serialised form sent to the Rust engine.
   Map<String, dynamic> toJson() => {
     'non_eeg_channels': nonEegChannels,
-    'channel_kinds': {
-      for (final l in labels) l: kindOf(l).name,
-    },
+    'channel_kinds': {for (final l in labels) l: kindOf(l).name},
   };
 }

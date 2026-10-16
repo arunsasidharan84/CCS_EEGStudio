@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "ccs_eeg_engine"
-version = "1.2.14"
+version = "1.2.15"
 dependencies = [
  "approx",
  "ccs_algorithm",
@@ -81,6 +81,7 @@ dependencies = [
  "rustfft",
  "serde",
  "serde_json",
+ "statrs",
 ]
 
 [[package]]

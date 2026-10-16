@@ -10,21 +10,63 @@ import 'package:ccs_eeg_app/src/channel_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('ERP CORE derived eye channels remain auxiliary', () {
+    expect(classifyChannel('(uncorr) HEOG'), ChannelKind.eog);
+    expect(classifyChannel('(uncorr) VEOG'), ChannelKind.eog);
+    expect(classifyChannel('FCz'), ChannelKind.eeg);
+  });
+
   group('classifyChannel — EEG labels stay EEG', () {
     const eegLabels = [
-      'Fp1', 'Fp2', 'Fpz', 'AF3', 'AF4', 'AF7', 'AF8',
-      'F1', 'F2', 'F3', 'F4', 'F7', 'F8', 'Fz',
-      'FC1', 'FC5', 'FT7', 'FT9', 'FT10',
-      'C1', 'C3', 'C4', 'Cz', 'T7', 'T8',
-      'CP1', 'CP5', 'TP7', 'TP9', 'TP10',
-      'P1', 'P3', 'P7', 'Pz', 'PO3', 'PO7', 'POz',
-      'O1', 'O2', 'Oz',
+      'Fp1',
+      'Fp2',
+      'Fpz',
+      'AF3',
+      'AF4',
+      'AF7',
+      'AF8',
+      'F1',
+      'F2',
+      'F3',
+      'F4',
+      'F7',
+      'F8',
+      'Fz',
+      'FC1',
+      'FC5',
+      'FT7',
+      'FT9',
+      'FT10',
+      'C1',
+      'C3',
+      'C4',
+      'Cz',
+      'T7',
+      'T8',
+      'CP1',
+      'CP5',
+      'TP7',
+      'TP9',
+      'TP10',
+      'P1',
+      'P3',
+      'P7',
+      'Pz',
+      'PO3',
+      'PO7',
+      'POz',
+      'O1',
+      'O2',
+      'Oz',
     ];
 
     for (final label in eegLabels) {
       test('$label → eeg', () {
-        expect(classifyChannel(label), ChannelKind.eeg,
-            reason: '$label is a standard 10-10 EEG position');
+        expect(
+          classifyChannel(label),
+          ChannelKind.eeg,
+          reason: '$label is a standard 10-10 EEG position',
+        );
       });
     }
   });

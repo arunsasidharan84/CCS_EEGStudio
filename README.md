@@ -23,10 +23,30 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.14</b> ·
+  <b>Current version: 1.2.15</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
+
+### ERP analysis and interactive batch review — 1.2.15
+
+The ERP workspace now supports single-recording and batch ERP CORE analysis for **MMN, N170, N2pc, N400, P3, LRP and ERN**. Import a folder, inspect proposed marker assignments, review task-specific windows/ROIs, and run to obtain waveforms, peaks/mean amplitudes/AUC, participant-level statistics, topographical inference and a compact PDF. Custom event classes and per-task settings are editable. Interactive ERP uses the active saved trial file and asks for condition groups; all multi-recording work is under Batch Workspace profiles for EEG, ERP and Microstates.
+
+Optional native Rust analyses include multichannel rERP, sparse continuous FIR overlap correction, shrinkage-LDA decoding and temporal generalization. Metadata-driven group models accept condition or difference-wave measurements. The FIR model implements a defined linear subset of Unfold; complete toolbox parity is not claimed. A 14-recording ERP CORE pilot matched independently reconstructed MNE/NumPy trial counts and ROI waveforms.
+
+**Recommended ERP workflow:**
+
+1. Open a recording and choose locking events, named condition groups, trial limits and baseline. **Epoch Events** and Preprocess share the same protocol.
+2. For already-cleaned data, choose **Epoch only (keep existing cleaning)**; otherwise review the cleaners and run **Clean + epoch**. Saved files distinguish `-epo` from `-epo_clean`.
+3. Select saved A/B conditions, component, ROI and measurement window, then **Average & analyse ERP**. Trials are reused, not cut a second time.
+4. For multiple recordings, use **Batch Workspace → ERP**. Open **Interactive batch review** to select participants or individual recordings, overlay differences, adjust the measurement window, inspect scalp maps and view equal-participant grand averages with ±1 SEM.
+5. Label participant cohorts, select CSV parameters, and export or open group statistics. Exported measurements use unsmoothed waveforms. Save/load protocols to reuse event definitions and analysis settings.
+
+**Interpretation:** negative-up is a display convention; component polarity selects a peak and never flips voltages. The difference is always B−A. Conventional ERN comparison is A=Correct, B=Incorrect. Additional cleaning can change an ERP that was already cleaned upstream. Existing files are not silently repaired or inverted. Live window changes update descriptive measurements/maps; inferential tests require a new group-statistics run. Older ERP results need re-averaging for arbitrary-window scalp maps.
+
+**Additional native methods:** MNE, dSPM, sLORETA and LCMV inverse operators, imported fixed-orientation forward/atlas models, Gaussian-copula MI, within-epoch lagged-time transfer entropy, and configurable graph summaries. HCPex requires a compatible user-supplied atlas/forward model; atlas data are not bundled. See [source methods, graph definitions, estimator scope and references](docs/source_information_graph.md) and [event-preserving feature exports](docs/feature_event_markers.md).
+
+See [ERP workflow, methods, references, numerical validation and limitations](docs/erp_workbench.md). Version 1.2.15 includes these workflows. Open **Updates** to download the release for your platform.
 
 <p align="center">
   <a href="#-quick-download"><b>📥 Download App</b></a> &nbsp;•&nbsp;
@@ -138,7 +158,7 @@ Both modes bind to the **same** analysis configuration object. Every option (pre
 
 ### Pipeline Stages
 1. **Preprocessing** — downsampling, zero-phase filtering, bad-channel detection, GEDAI artifact removal, interpolation.
-2. **Source Space** *(optional)* — eLORETA cortical projection to 68 Desikan-Killiany ROIs.
+2. **Source Space** *(optional)* — MNE, dSPM, sLORETA, or LCMV projection using bundled fsaverage/Desikan–Killiany or an imported forward/atlas model.
 3. **Feature Extraction** — epoching, multi-domain feature families, CSV outputs.
 4. **Plots & Reports** — topoplots, time-series plots, group overlays, publication-grade PDF report.
 
@@ -342,6 +362,28 @@ provenance companions, optional exports and short-window warnings.
 - **Publication-grade PDF reports & Scalp Maps**: High-resolution vector visualizations and executive summaries.
 
 ---
+
+### Time-aligned feature annotations
+
+Feature CSVs now retain time-aligned annotations in `event_markers`; feature line plots display event labels and duration shading, including exports made with overlapping epochs. See [event marker format and timeline support](docs/feature_event_markers.md).
+
+### Source, information connectivity, and graphs
+
+Source settings now select **MNE, dSPM, sLORETA, or LCMV**, with a bundled fsaverage model or an imported fixed-orientation forward/atlas model. HCPex grid-mapping tooling supports compatible supplied volumetric models. The old “eLORETA” label described a minimum-norm implementation and has been corrected.
+
+Features add **GCMI**, **within-epoch temporal TE**, and **pair / graph / combined exports** for information and selected spectral connectivity. Graph summaries work on electrode or ROI inputs. See [methods, reference tests, atlas import, and supported parity scope](docs/source_information_graph.md) before interpreting these measures.
+
+### ERP preparation and protocol reuse
+
+**Epoch Events** and Preprocess share event groups, trial windows and baseline settings. Direct epoching saves `-epo.ccseeg.json`; preprocessing saves `-epo_clean.ccseeg.json` when the output contains trials. Continue with **Next: average and analyse saved trials**, select saved A/B conditions, review the component/ROI/window, then **Average & analyse ERP**. Original and processed recordings remain available when switching.
+
+Use **Save protocol / Load protocol** to reuse epoching and averaging settings interactively or in the ERP Batch Workspace. Hover over the protocol help icon for the sequence. Review event/group matches on each dataset. See the [ERP workflow and protocol guide](docs/erp_workbench.md#reusable-epoching-and-averaging-protocols).
+
+### Interactive ERP batch comparisons
+
+After averaging, open **Interactive batch review** to search/select participants, inspect individual recordings or participant averages, overlay differences, and view equal-participant grand averages with ±1 SEM shading. Adjust measurement windows to update descriptive measurements and scalp maps live. Optional smoothing affects display only. Label participant cohorts and export selected ERP metrics to CSV or open group statistics. See the [review guide](docs/erp_workbench.md#interactive-batch-review-smoothing-and-cohort-labels).
+
+For already-cleaned recordings, **Epoch only (keep existing cleaning)** preserves the supplied signal while preparing trials. A/B subtraction and negative-up display are labelled explicitly; unexpected ERP polarity is not automatically inverted.
 
 ## 🖥️ Application Screenshots
 

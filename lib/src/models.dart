@@ -150,6 +150,8 @@ class PreprocessingOptions {
     this.iirOrder = 4,
     this.notchWidthHz = 1,
     this.notchTransitionHz = 2,
+    this.sourceMethod = 'mne',
+    this.sourceModelPath = '',
     this.sourceSnr = 3,
     this.sourceRegions = const [],
     this.epochBeforeGedai = false,
@@ -204,11 +206,18 @@ class PreprocessingOptions {
     iirOrder: (json['iir_order'] as num?)?.toInt() ?? 4,
     notchWidthHz: (json['notch_width_hz'] as num?)?.toDouble() ?? 1,
     notchTransitionHz: (json['notch_transition_hz'] as num?)?.toDouble() ?? 2,
+    sourceMethod: json['source_method'] as String? ?? 'mne',
+    sourceModelPath: json['source_model_path'] as String? ?? '',
     sourceSnr: (json['source_snr'] as num?)?.toDouble() ?? 3,
     sourceRegions:
         (json['source_regions'] as List?)?.cast<String>() ?? const [],
     sourceLocalization: json['source_localization'] as bool? ?? false,
     epochBeforeGedai: json['epoch_before_gedai'] as bool? ?? false,
+    stimEpochs: json['stim_epochs_spec'] is Map
+        ? StimEpochSpec.fromJson(
+            Map<String, dynamic>.from(json['stim_epochs_spec'] as Map),
+          )
+        : null,
     nonEegChannels:
         (json['non_eeg_channels'] as List?)?.cast<String>() ?? const [],
     icaMethod: json['ica_method'] as String? ?? 'none',
@@ -265,6 +274,7 @@ class PreprocessingOptions {
   final int splineStiffness;
   final String filterType;
   final int iirOrder;
+  final String sourceMethod, sourceModelPath;
   final double notchWidthHz, notchTransitionHz, sourceSnr;
   final List<String> sourceRegions;
   final bool epochBeforeGedai;
@@ -335,6 +345,8 @@ class PreprocessingOptions {
     'notch_width_hz': notchWidthHz,
     'notch_transition_hz': notchTransitionHz,
     'source_snr': sourceSnr,
+    'source_method': sourceMethod,
+    'source_model_path': sourceModelPath,
     'source_regions': sourceRegions,
     'epoch_before_gedai': epochBeforeGedai,
     'non_eeg_channels': nonEegChannels,
@@ -384,6 +396,7 @@ class ExtractionOptions {
     required this.gc,
     required this.gcTr,
     this.gcContrast = false,
+    this.information = const {},
     this.dfaFei = false,
     this.dfaFeiWindowSeconds = 0,
     this.dfaFeiShortEpoch = false,
@@ -418,6 +431,7 @@ class ExtractionOptions {
   final bool gc;
   final bool gcTr;
   final bool gcContrast;
+  final Map<String, dynamic> information;
   final bool dfaFei;
   final double dfaFeiWindowSeconds;
   final bool dfaFeiShortEpoch;
@@ -462,6 +476,7 @@ class ExtractionOptions {
     'gc': gc,
     'gc_tr': gcTr,
     'gc_contrast': gcContrast,
+    'information': information,
     'dfa_fei': dfaFei,
     'dfa_fei_window_seconds': dfaFeiWindowSeconds,
     'dfa_fei_short_epoch': dfaFeiShortEpoch,
@@ -485,6 +500,7 @@ class ExtractionOptions {
 /// of the flags inline and silently omitted connectivity, duration mode and
 /// source localisation.
 class AnalysisConfig {
+  Map<String, dynamic> erpAnalysisProtocol = {};
   // ── Preprocessing ────────────────────────────────────────────────────────
   bool downsample = true;
   double downsampleFreq = 250;
@@ -531,13 +547,15 @@ class AnalysisConfig {
   int splineStiffness = 4;
   String filterType = 'fir';
   int iirOrder = 4;
+  String sourceMethod = 'mne', sourceModelPath = '';
   double notchWidthHz = 1, notchTransitionHz = 2, sourceSnr = 3;
   List<String> sourceRegions = [];
 
   // ── Stimulus-locked epochs (ERP) ────────────────────────────────────────
   bool stimEpochs = false;
-  List<String> stimMarkers = const ['S 51', 'S 52'];
+  List<String> stimMarkers = const [];
   String stimPattern = '';
+  Map<String, List<String>> stimMarkerGroups = {};
   double stimTmin = -0.5;
   double stimTmax = 1.2;
   bool stimBaseline = true;
@@ -549,7 +567,11 @@ class AnalysisConfig {
   StimEpochSpec? get stimEpochSpec => !stimEpochs
       ? null
       : StimEpochSpec(
-          markers: stimMarkers,
+          markers: {
+            ...stimMarkers,
+            ...stimMarkerGroups.values.expand((v) => v),
+          }.toList(),
+          markerGroups: stimMarkerGroups,
           pattern: stimPattern,
           tmin: stimTmin,
           tmax: stimTmax,
@@ -595,6 +617,12 @@ class AnalysisConfig {
   bool gc = false;
   bool gcTr = false;
   bool gcContrast = false;
+  bool spectralGraph = false;
+  bool gcmi = false, transferEntropy = false;
+  String connectivityOutput = 'both';
+  double graphDensity = 0.2;
+  int teMinDelay = 0, teMaxDelay = 1, teStep = 1;
+  int teSourceHistory = 1, teTargetHistory = 1, teHistoryStep = 1;
   bool dfaFei = false;
   double dfaFeiWindowSeconds = 60;
   bool dfaFeiShortEpoch = false;
@@ -608,6 +636,8 @@ class AnalysisConfig {
   bool wpli = false;
 
   bool get anyConnectivity =>
+      gcmi ||
+      transferEntropy ||
       mic ||
       mim ||
       gc ||
@@ -677,6 +707,8 @@ class AnalysisConfig {
         iirOrder: iirOrder,
         notchWidthHz: notchWidthHz,
         notchTransitionHz: notchTransitionHz,
+        sourceMethod: sourceMethod,
+        sourceModelPath: sourceModelPath,
         sourceSnr: sourceSnr,
         sourceRegions: sourceRegions,
         sourceLocalization: true,
@@ -706,10 +738,12 @@ class AnalysisConfig {
       iirOrder: iirOrder,
       notchWidthHz: notchWidthHz,
       notchTransitionHz: notchTransitionHz,
+      sourceMethod: sourceMethod,
+      sourceModelPath: sourceModelPath,
       sourceSnr: sourceSnr,
       sourceRegions: sourceRegions,
       sourceLocalization: false,
-      epochBeforeGedai: epochBeforeGedai,
+      epochBeforeGedai: stimEpochs ? false : epochBeforeGedai,
       nonEegChannels: nonEegChannels,
       stimEpochs: stimEpochSpec,
       icaMethod: icaMethod,
@@ -762,6 +796,20 @@ class AnalysisConfig {
     gc: gc,
     gcTr: gcTr,
     gcContrast: gcContrast,
+    information: {
+      'spectral_graph': spectralGraph,
+      'gcmi': gcmi,
+      'te': transferEntropy,
+      'output': connectivityOutput,
+      'graph_density': graphDensity,
+      'te_min_delay': teMinDelay,
+      'te_max_delay': teMaxDelay,
+      'te_step': teStep,
+      'te_source_history': teSourceHistory,
+      'te_target_history': teTargetHistory,
+      'te_history_step': teHistoryStep,
+      'te_estimator': 'time_copula_cmi',
+    },
     psdWindowSeconds: psdWindowSeconds,
     psdAverage: psdAverage,
     psdBands: psdBands,

@@ -12,6 +12,7 @@ class StimEpochSpec {
   const StimEpochSpec({
     this.markers = const ['S 51', 'S 52'],
     this.pattern = '',
+    this.markerGroups = const {},
     this.tmin = -0.5,
     this.tmax = 1.2,
     this.baseline = true,
@@ -21,11 +22,31 @@ class StimEpochSpec {
     this.cropMinutes = 0,
   });
 
+  factory StimEpochSpec.fromJson(Map<String, dynamic> json) {
+    final baseline = (json['baseline'] as List?)?.cast<num>();
+    return StimEpochSpec(
+      markers: (json['markers'] as List? ?? []).cast<String>(),
+      pattern: json['pattern'] as String? ?? '',
+      markerGroups: {
+        for (final e in (json['marker_groups'] as Map? ?? {}).entries)
+          e.key.toString(): (e.value as List).cast<String>(),
+      },
+      tmin: (json['tmin'] as num?)?.toDouble() ?? -.5,
+      tmax: (json['tmax'] as num?)?.toDouble() ?? 1.2,
+      baseline: baseline != null,
+      baselineStart: baseline?.first.toDouble() ?? -.2,
+      baselineEnd: baseline?.last.toDouble() ?? 0,
+      cropStartMarker: json['crop_start_marker'] as String? ?? '',
+      cropMinutes: (json['crop_minutes'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
   /// Markers to epoch on (e.g. "S 51", "Stimulus/S 52").
   final List<String> markers;
 
   /// Optional extra regular expression over the marker label.
   final String pattern;
+  final Map<String, List<String>> markerGroups;
   final double tmin, tmax;
   final bool baseline;
   final double baselineStart, baselineEnd;
@@ -36,8 +57,11 @@ class StimEpochSpec {
   final String cropStartMarker;
   final double cropMinutes;
 
-  ErpCondition get _matcher =>
-      ErpCondition(name: 'events', markers: markers, pattern: pattern);
+  ErpCondition get _matcher => ErpCondition(
+    name: 'events',
+    markers: {...markers, ...markerGroups.values.expand((v) => v)}.toList(),
+    pattern: pattern,
+  );
 
   /// Label written to epoch_labels: "Stimulus/S 51" (MNE annotation style).
   static String eventLabel(EegMarker m) {
@@ -88,7 +112,21 @@ class StimEpochSpec {
           !inside(t, selection.acceptedIntervals))
         continue;
       if (inside(t, selection.rejectedIntervals)) continue;
-      out.add((t, eventLabel(m)));
+      var label = eventLabel(m);
+      for (final group in markerGroups.entries) {
+        if (ErpCondition(
+              name: group.key,
+              markers: group.value,
+            ).matches(label) ||
+            ErpCondition(
+              name: group.key,
+              markers: group.value,
+            ).matches(m.description)) {
+          label = group.key;
+          break;
+        }
+      }
+      out.add((t, label));
     }
     out.sort((a, b) => a.$1.compareTo(b.$1));
     return out;
@@ -106,6 +144,7 @@ class StimEpochSpec {
   Map<String, dynamic> toJson() => {
     'markers': markers,
     'pattern': pattern,
+    'marker_groups': markerGroups,
     'tmin': tmin,
     'tmax': tmax,
     'baseline': baseline ? [baselineStart, baselineEnd] : null,

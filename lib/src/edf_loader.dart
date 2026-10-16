@@ -1,3 +1,4 @@
+import 'event_sidecar.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -135,7 +136,7 @@ class EdfLoader {
       sampleRateHz: sampleRate,
       channelLabels: displayLabels,
       channelSamples: channelSamples,
-      markers: markers
+      markers: (loadEeglabEventSidecar(path, records * dataRecordSeconds) ?? markers)
         ..sort((a, b) => a.startSeconds.compareTo(b.startSeconds)),
       sourceDescription:
           '${displayLabels.length} channels, ${sampleRate.toStringAsFixed(1)} Hz, ${(records * dataRecordSeconds / 60).toStringAsFixed(1)} min',

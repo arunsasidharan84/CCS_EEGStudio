@@ -2,7 +2,7 @@ fn calc_g(x: f64) -> f64 {
     let mut g = 0.0;
     let mut p_n_minus_1 = x; // P_1
     let mut p_n_minus_2 = 1.0; // P_0
-    
+
     for n in 1..=50 {
         let n_f64 = n as f64;
         let p_n = if n == 1 {
@@ -10,10 +10,10 @@ fn calc_g(x: f64) -> f64 {
         } else {
             ((2.0 * n_f64 - 1.0) * x * p_n_minus_1 - (n_f64 - 1.0) * p_n_minus_2) / n_f64
         };
-        
+
         let term = (2.0 * n_f64 + 1.0) / (n_f64.powi(4) * (n_f64 + 1.0).powi(4));
         g += term * p_n;
-        
+
         if n > 1 {
             p_n_minus_2 = p_n_minus_1;
             p_n_minus_1 = p_n;

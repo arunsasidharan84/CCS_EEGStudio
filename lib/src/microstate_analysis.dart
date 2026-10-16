@@ -297,8 +297,13 @@ const _emptyEngineOptions = <String, Object>{
 };
 
 class MicrostateAnalysisView extends StatefulWidget {
-  const MicrostateAnalysisView({super.key, this.activeRecording});
+  const MicrostateAnalysisView({
+    super.key,
+    this.activeRecording,
+    this.batchMode = false,
+  });
   final EegRecording? activeRecording;
+  final bool batchMode;
 
   @override
   State<MicrostateAnalysisView> createState() => _MicrostateAnalysisViewState();
@@ -311,7 +316,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
   final _peaks = TextEditingController(text: '300');
   final _segment = TextEditingController(text: '30');
   final List<String> _batchPaths = [];
-  bool _batch = false;
+  bool get _batch => widget.batchMode;
   bool _running = false;
   double _progress = 0;
   String _message = '';
@@ -478,23 +483,11 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
               _sectionTitle('1', 'Input'),
               const SizedBox(height: 8),
               const SizedBox(height: 12),
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                    value: false,
-                    label: Text('Interactive'),
-                    icon: Icon(Icons.show_chart, size: 15),
-                  ),
-                  ButtonSegment(
-                    value: true,
-                    label: Text('Batch'),
-                    icon: Icon(Icons.queue, size: 15),
-                  ),
-                ],
-                selected: {_batch},
-                onSelectionChanged: _running
-                    ? null
-                    : (v) => setState(() => _batch = v.first),
+              Text(
+                _batch
+                    ? 'Batch inputs · shared template and per-recording results'
+                    : 'Active recording · use Batch Workspace → Microstates for multiple files',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
               ),
               const SizedBox(height: 12),
               if (!_batch)

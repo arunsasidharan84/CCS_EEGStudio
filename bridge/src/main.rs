@@ -3,7 +3,6 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use std::{env, fs, io::Write, path::Path};
 
-
 #[derive(Deserialize)]
 struct Job {
     #[serde(default = "default_extract_job")]
@@ -45,6 +44,27 @@ fn main() -> Result<(), String> {
         println!("usage: ccs-eeg-engine <job.json>");
         return Ok(());
     }
+    let erp_value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&job_path).map_err(err)?).map_err(err)?;
+    if erp_value["job_type"]
+        .as_str()
+        .is_some_and(|t| t == "erp_workbench" || t == "inspect_erp")
+    {
+        let erp_job: erp_workbench::Job = serde_json::from_value(erp_value.clone()).map_err(err)?;
+        let result = if erp_value["job_type"] == "inspect_erp" {
+            erp_workbench::inspect(&erp_job.inputs, &erp_job.options)
+        } else {
+            erp_workbench::run(&erp_job, |path| {
+                if path.to_lowercase().ends_with(".edf") {
+                    load_edf(Path::new(path))
+                } else {
+                    preprocessing::load_portable(Path::new(path))
+                }
+            })?
+        };
+        println!("{}", serde_json::to_string(&result).map_err(err)?);
+        return Ok(());
+    }
     let job: Job = serde_json::from_slice(&fs::read(&job_path).map_err(err)?).map_err(err)?;
     eprintln!("PROGRESS 0 Loading {}", job.input);
     if job.job_type == "microstates" {
@@ -57,14 +77,16 @@ fn main() -> Result<(), String> {
         for (index, path) in paths.into_iter().enumerate() {
             let recording = preprocessing::load_portable(Path::new(&path))?;
             let name = job.microstate_names.get(index).cloned().unwrap_or_else(|| {
-                Path::new(&path).file_stem().and_then(|x| x.to_str())
-                    .unwrap_or("recording").trim_end_matches(".ccseeg").to_string()
+                Path::new(&path)
+                    .file_stem()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or("recording")
+                    .trim_end_matches(".ccseeg")
+                    .to_string()
             });
             recordings.push((name, recording));
         }
-        let mut report = |percent: usize, message: &str| {
-            eprintln!("PROGRESS {percent} {message}")
-        };
+        let mut report = |percent: usize, message: &str| eprintln!("PROGRESS {percent} {message}");
         let result = microstates::analyse(
             recordings,
             Path::new(&job.output),
@@ -74,17 +96,45 @@ fn main() -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&result).map_err(err)?);
         return Ok(());
     }
-    
+
     if job.job_type == "inspect_set" {
         let mat = set_loader::load_set(Path::new(&job.input))?;
-        let srate = mat.fields.get("srate").and_then(|v| v.first()).and_then(|v| v.numeric.first().copied()).unwrap_or(0.0);
-        let trials = mat.fields.get("trials").and_then(|v| v.first()).and_then(|v| v.numeric.first().copied()).unwrap_or(1.0) as usize;
-        
+        let srate = mat
+            .fields
+            .get("srate")
+            .and_then(|v| v.first())
+            .and_then(|v| v.numeric.first().copied())
+            .unwrap_or(0.0);
+        let trials = mat
+            .fields
+            .get("trials")
+            .and_then(|v| v.first())
+            .and_then(|v| v.numeric.first().copied())
+            .unwrap_or(1.0) as usize;
+
         let data = mat.fields.get("data").and_then(|v| v.first());
         let data_dims = data.map(|d| d.dims.clone()).unwrap_or_default();
-        let channel_count = mat.fields.get("nbchan").and_then(|v| v.first()).and_then(|v| v.numeric.first().copied()).unwrap_or(if !data_dims.is_empty() { data_dims[0] as f64 } else { 1.0 }) as usize;
-        let points_per_epoch = mat.fields.get("pnts").and_then(|v| v.first()).and_then(|v| v.numeric.first().copied()).unwrap_or(if data_dims.len() > 1 { data_dims[1] as f64 } else { 0.0 }) as usize;
-        
+        let channel_count = mat
+            .fields
+            .get("nbchan")
+            .and_then(|v| v.first())
+            .and_then(|v| v.numeric.first().copied())
+            .unwrap_or(if !data_dims.is_empty() {
+                data_dims[0] as f64
+            } else {
+                1.0
+            }) as usize;
+        let points_per_epoch = mat
+            .fields
+            .get("pnts")
+            .and_then(|v| v.first())
+            .and_then(|v| v.numeric.first().copied())
+            .unwrap_or(if data_dims.len() > 1 {
+                data_dims[1] as f64
+            } else {
+                0.0
+            }) as usize;
+
         let mut labels = Vec::new();
         if let Some(chanlocs_vec) = mat.fields.get("chanlocs") {
             if let Some(chanlocs) = chanlocs_vec.first() {
@@ -101,24 +151,42 @@ fn main() -> Result<(), String> {
             labels.push(format!("Ch {}", labels.len() + 1));
         }
         labels.truncate(channel_count);
-        
+
         let mut markers = Vec::new();
         if let Some(events_vec) = mat.fields.get("event") {
             for ev in events_vec {
-                let event_type = ev.fields.get("type")
+                let event_type = ev
+                    .fields
+                    .get("type")
                     .and_then(|v| v.first())
-                    .map(|v| if !v.text.is_empty() { v.text.clone() } else if let Some(n) = v.numeric.first() { format!("{}", n) } else { "Event".to_string() })
+                    .map(|v| {
+                        if !v.text.is_empty() {
+                            v.text.clone()
+                        } else if let Some(n) = v.numeric.first() {
+                            format!("{}", n)
+                        } else {
+                            "Event".to_string()
+                        }
+                    })
                     .unwrap_or_else(|| "Event".to_string());
-                let latency = ev.fields.get("latency")
+                let latency = ev
+                    .fields
+                    .get("latency")
                     .and_then(|v| v.first())
                     .and_then(|v| v.numeric.first().copied())
                     .unwrap_or(1.0);
-                let duration = ev.fields.get("duration")
+                let duration = ev
+                    .fields
+                    .get("duration")
                     .and_then(|v| v.first())
                     .and_then(|v| v.numeric.first().copied())
                     .unwrap_or(0.0);
 
-                let start_seconds = if srate > 0.0 { (latency - 1.0) / srate } else { 0.0 };
+                let start_seconds = if srate > 0.0 {
+                    (latency - 1.0) / srate
+                } else {
+                    0.0
+                };
                 let duration_seconds = if srate > 0.0 { duration / srate } else { 0.0 };
 
                 markers.push(serde_json::json!({
@@ -216,7 +284,11 @@ fn main() -> Result<(), String> {
     }
 
     let mut recording = if job.format == "set" {
-        if job.data_path.as_deref().is_some_and(|path| !path.is_empty()) {
+        if job
+            .data_path
+            .as_deref()
+            .is_some_and(|path| !path.is_empty())
+        {
             load_fdt(&job)?
         } else {
             let mat = set_loader::load_set(Path::new(&job.input))?;
@@ -238,16 +310,32 @@ fn main() -> Result<(), String> {
     }
     apply_channel_selection(&mut recording, job.selected_channels.as_deref());
     let retained_parent_epochs = if recording.source_epoch_samples.is_some() {
-        select_parent_epochs(&mut recording,job.accepted_intervals.as_deref(),job.rejected_intervals.as_deref())?
+        select_parent_epochs(
+            &mut recording,
+            job.accepted_intervals.as_deref(),
+            job.rejected_intervals.as_deref(),
+        )?
     } else {
-        apply_interval_selection(&mut recording,job.accepted_intervals.as_deref(),job.rejected_intervals.as_deref());
+        apply_interval_selection(
+            &mut recording,
+            job.accepted_intervals.as_deref(),
+            job.rejected_intervals.as_deref(),
+        );
         None
     };
-    let mut epoch_onsets = retained_parent_epochs.as_ref().map(|indices|indices.iter().filter_map(|i|job.epoch_start_seconds.get(*i).copied()).collect::<Vec<_>>()).unwrap_or_else(||job.epoch_start_seconds.clone());
+    let mut epoch_onsets = retained_parent_epochs
+        .as_ref()
+        .map(|indices| {
+            indices
+                .iter()
+                .filter_map(|i| job.epoch_start_seconds.get(*i).copied())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| job.epoch_start_seconds.clone());
 
-    if job.job_type=="export_portable" {
-        let portable=serde_json::json!({"format":"ccseeg-v1","sample_rate":recording.rate,"labels":recording.labels,"channels":recording.channels,"source_epoch_samples":recording.source_epoch_samples,"epoch_labels":recording.epoch_labels});
-        fs::write(&job.output,serde_json::to_vec(&portable).map_err(err)?).map_err(err)?;
+    if job.job_type == "export_portable" {
+        let portable = serde_json::json!({"format":"ccseeg-v1","sample_rate":recording.rate,"labels":recording.labels,"channels":recording.channels,"source_epoch_samples":recording.source_epoch_samples,"epoch_labels":recording.epoch_labels});
+        fs::write(&job.output, serde_json::to_vec(&portable).map_err(err)?).map_err(err)?;
         return Ok(());
     }
     if job.job_type == "preprocess" {
@@ -255,46 +343,119 @@ fn main() -> Result<(), String> {
             &mut recording,
             job.recording_path.as_deref().unwrap_or(&job.input),
             &job.output,
-            &job.preprocessing.clone().unwrap_or_else(default_preprocessing),
+            &job.preprocessing
+                .clone()
+                .unwrap_or_else(default_preprocessing),
         )?;
-        let mut metadata=serde_json::to_value(&summary).map_err(err)?;
-        if let Some(indices)=retained_parent_epochs {metadata["retained_parent_epochs"]=serde_json::json!(indices);}
+        let mut metadata = serde_json::to_value(&summary).map_err(err)?;
+        if let Some(indices) = retained_parent_epochs {
+            metadata["retained_parent_epochs"] = serde_json::json!(indices);
+        }
         println!("{}", serde_json::to_string_pretty(&metadata).map_err(err)?);
         eprintln!("PROGRESS 100 Preprocessing complete");
         return Ok(());
     }
 
-    remove_non_eeg_and_reference_configured(&mut recording, &job.options.non_eeg_channels, &job.options.reference_mode, &job.options.reference_channels,job.options.remove_non_eeg)?;
+    remove_non_eeg_and_reference_configured(
+        &mut recording,
+        &job.options.non_eeg_channels,
+        &job.options.reference_mode,
+        &job.options.reference_channels,
+        job.options.remove_non_eeg,
+    )?;
     let epoch_samples = recording
         .source_epoch_samples
         .unwrap_or_else(|| (job.epoch_seconds * recording.rate).round() as usize)
         .max(4);
     if job.options.psd {
-        if !job.options.psd_window_seconds.is_finite() || job.options.psd_window_seconds <= 0.0 || job.options.psd_window_seconds*recording.rate > epoch_samples as f64 {
-          return Err("PSD window must be positive and no longer than each analysis epoch".into());
+        if !job.options.psd_window_seconds.is_finite()
+            || job.options.psd_window_seconds <= 0.0
+            || job.options.psd_window_seconds * recording.rate > epoch_samples as f64
+        {
+            return Err(
+                "PSD window must be positive and no longer than each analysis epoch".into(),
+            );
         }
-        if !["median","mean"].contains(&job.options.psd_average.as_str()) { return Err("PSD average must be median or mean".into()); }
+        if !["median", "mean"].contains(&job.options.psd_average.as_str()) {
+            return Err("PSD average must be median or mean".into());
+        }
         for band in &job.options.psd_bands {
-          if band.label.is_empty() || !band.low.is_finite() || !band.high.is_finite() || band.low<0.0 || band.high<=band.low || band.high>recording.rate/2.0 {
-            return Err("Invalid PSD frequency band".into());
-          }
+            if band.label.is_empty()
+                || !band.low.is_finite()
+                || !band.high.is_finite()
+                || band.low < 0.0
+                || band.high <= band.low
+                || band.high > recording.rate / 2.0
+            {
+                return Err("Invalid PSD frequency band".into());
+            }
         }
     }
-    if !job.options.psd_bands.is_empty(){
-      let bands=psd_bands(&job.options);
-      if (job.options.fooof||job.options.irasa)&&bands.iter().any(|b|b.0<1.0||b.1>40.0){return Err("FOOOF/IRASA band definitions must be within 1-40 Hz".into());}
-      if job.options.connectivity&&(bands.iter().any(|b|b.1>40.0||(b.0<4.0&&b.1>4.0))||!bands.iter().any(|b|b.0>=4.0)){return Err("Connectivity needs bands within 4-40 Hz; bands entirely below 4 Hz are omitted".into());}
-      if bands.iter().any(|b|!b.0.is_finite()||!b.1.is_finite()||b.0<0.0||b.1<=b.0||b.1>recording.rate/2.0){return Err("Invalid frequency bands".into());}
+    if !job.options.psd_bands.is_empty() {
+        let bands = psd_bands(&job.options);
+        if (job.options.fooof || job.options.irasa) && bands.iter().any(|b| b.0 < 1.0 || b.1 > 40.0)
+        {
+            return Err("FOOOF/IRASA band definitions must be within 1-40 Hz".into());
+        }
+        if job.options.connectivity
+            && (bands.iter().any(|b| b.1 > 40.0 || (b.0 < 4.0 && b.1 > 4.0))
+                || !bands.iter().any(|b| b.0 >= 4.0))
+        {
+            return Err(
+                "Connectivity needs bands within 4-40 Hz; bands entirely below 4 Hz are omitted"
+                    .into(),
+            );
+        }
+        if bands.iter().any(|b| {
+            !b.0.is_finite()
+                || !b.1.is_finite()
+                || b.0 < 0.0
+                || b.1 <= b.0
+                || b.1 > recording.rate / 2.0
+        }) {
+            return Err("Invalid frequency bands".into());
+        }
     }
-    let parameters=&job.options.advanced_parameters;
-    if parameters.gc_lags==0 || parameters.gc_lags>=28 || parameters.fooof_max_peaks>20 || !parameters.fooof_peak_threshold.is_finite() || parameters.fooof_peak_threshold<=0.0 || !parameters.sample_entropy_tolerance.is_finite() || parameters.sample_entropy_tolerance<=0.0 || parameters.sample_entropy_tolerance>=1.0 || parameters.higuchi_kmax<2 || parameters.higuchi_kmax>100 || !parameters.acw_fraction.is_finite() || parameters.acw_fraction<=0.0 || parameters.acw_fraction>=1.0 {
+    let parameters = &job.options.advanced_parameters;
+    if parameters.gc_lags == 0
+        || parameters.gc_lags >= 28
+        || parameters.fooof_max_peaks > 20
+        || !parameters.fooof_peak_threshold.is_finite()
+        || parameters.fooof_peak_threshold <= 0.0
+        || !parameters.sample_entropy_tolerance.is_finite()
+        || parameters.sample_entropy_tolerance <= 0.0
+        || parameters.sample_entropy_tolerance >= 1.0
+        || parameters.higuchi_kmax < 2
+        || parameters.higuchi_kmax > 100
+        || !parameters.acw_fraction.is_finite()
+        || parameters.acw_fraction <= 0.0
+        || parameters.acw_fraction >= 1.0
+    {
         return Err("Invalid advanced feature parameters".into());
     }
-    if parameters.irasa_factors.iter().any(|h|!h.is_finite() || *h<=1.0 || *h>=2.0) {return Err("IRASA factors must be between 1 and 2 (exclusive)".into());}
-    if (job.options.fooof || job.options.irasa) && epoch_samples < recording.rate.round() as usize {return Err("FOOOF and IRASA require epochs at least one second long".into());}
-    if (job.options.fooof || job.options.irasa) && recording.rate<80.0 {return Err("FOOOF and IRASA require a sampling rate of at least 80 Hz for its 1-40 Hz bands".into());}
-    let offsets = analysis_offsets(recording.channels[0].len(), epoch_samples,
-        recording.source_epoch_samples, job.epoch_overlap_seconds, recording.rate)?;
+    if parameters
+        .irasa_factors
+        .iter()
+        .any(|h| !h.is_finite() || *h <= 1.0 || *h >= 2.0)
+    {
+        return Err("IRASA factors must be between 1 and 2 (exclusive)".into());
+    }
+    if (job.options.fooof || job.options.irasa) && epoch_samples < recording.rate.round() as usize {
+        return Err("FOOOF and IRASA require epochs at least one second long".into());
+    }
+    if (job.options.fooof || job.options.irasa) && recording.rate < 80.0 {
+        return Err(
+            "FOOOF and IRASA require a sampling rate of at least 80 Hz for its 1-40 Hz bands"
+                .into(),
+        );
+    }
+    let offsets = analysis_offsets(
+        recording.channels[0].len(),
+        epoch_samples,
+        recording.source_epoch_samples,
+        job.epoch_overlap_seconds,
+        recording.rate,
+    )?;
     let total_epochs = offsets.len();
     if job.epoch_overlap_seconds > 0.0 && epoch_onsets.is_empty() {
         epoch_onsets = offsets.iter().map(|&x| x as f64 / recording.rate).collect();
@@ -303,25 +464,87 @@ fn main() -> Result<(), String> {
         return Err("recording is shorter than one analysis epoch".into());
     }
     let groups = if epoch_onsets.is_empty() {
-        groups(&job.options,total_epochs,epoch_samples as f64/recording.rate)?
+        groups(
+            &job.options,
+            total_epochs,
+            epoch_samples as f64 / recording.rate,
+        )?
     } else {
-        groups_for_onsets(&job.options,&epoch_onsets,epoch_samples as f64/recording.rate,total_epochs)?
+        groups_for_onsets(
+            &job.options,
+            &epoch_onsets,
+            epoch_samples as f64 / recording.rate,
+            total_epochs,
+        )?
     };
     if !job.options.dfa_fei_window_seconds.is_finite() || job.options.dfa_fei_window_seconds < 0.0 {
         return Err("DFA/fE:I context must be zero (epoch only) or a positive duration".into());
     }
-    let requested_context = if !job.options.dfa_fei_short_epoch && job.options.dfa_fei_window_seconds > 0.0 {
-        (job.options.dfa_fei_window_seconds*recording.rate).round() as usize
-    } else { epoch_samples };
+    let requested_context =
+        if !job.options.dfa_fei_short_epoch && job.options.dfa_fei_window_seconds > 0.0 {
+            (job.options.dfa_fei_window_seconds * recording.rate).round() as usize
+        } else {
+            epoch_samples
+        };
     let parent_samples = recording.source_epoch_samples;
-    let context_samples = if job.accepted_intervals.as_ref().is_some_and(|x| !x.is_empty()) || job.rejected_intervals.as_ref().is_some_and(|x| !x.is_empty()) { epoch_samples } else { requested_context.max(epoch_samples).min(parent_samples.unwrap_or(recording.channels[0].len())) };
-    let context_times: Vec<(f64,f64)> = offsets.iter().enumerate().map(|(i,&a)| {
-        let (ca,cb) = feature_context_bounds(a,a+epoch_samples,recording.channels[0].len(),parent_samples,context_samples);
-        let epoch_start = epoch_onsets.get(i).copied().unwrap_or(a as f64/recording.rate);
-        let start = epoch_start + (ca as f64-a as f64)/recording.rate;
-        (start,start+(cb-ca) as f64/recording.rate)
-    }).collect();
-    let columns = columns(&job.options);
+    let context_samples = if job
+        .accepted_intervals
+        .as_ref()
+        .is_some_and(|x| !x.is_empty())
+        || job
+            .rejected_intervals
+            .as_ref()
+            .is_some_and(|x| !x.is_empty())
+    {
+        epoch_samples
+    } else {
+        requested_context
+            .max(epoch_samples)
+            .min(parent_samples.unwrap_or(recording.channels[0].len()))
+    };
+    let context_times: Vec<(f64, f64)> = offsets
+        .iter()
+        .enumerate()
+        .map(|(i, &a)| {
+            let (ca, cb) = feature_context_bounds(
+                a,
+                a + epoch_samples,
+                recording.channels[0].len(),
+                parent_samples,
+                context_samples,
+            );
+            let epoch_start = epoch_onsets
+                .get(i)
+                .copied()
+                .unwrap_or(a as f64 / recording.rate);
+            let start = epoch_start + (ca as f64 - a as f64) / recording.rate;
+            (start, start + (cb - ca) as f64 / recording.rate)
+        })
+        .collect();
+    job.options.information.validate()?;
+    // Validate before launching parallel epoch work; overlapping epochs remain independent windows.
+    if job.options.information.te {
+        information::temporal_te_matrix(
+            &recording.channels,
+            offsets[0],
+            offsets[0] + epoch_samples,
+            &job.options.information,
+        )?;
+    }
+    let mut columns = columns(&job.options);
+    columns.extend(information::column_names(
+        &recording.labels,
+        &job.options.information,
+    ));
+    if job.options.information.spectral_graph && job.options.connectivity {
+        for name in connectivity::spectral_network_names(&job.options) {
+            columns.extend(information::network_columns(
+                &name,
+                &recording.labels,
+                &job.options.information,
+            ));
+        }
+    }
     let basename = recording_stem(job.recording_path.as_deref().unwrap_or(&job.input));
     let parts: Vec<&str> = basename.split('_').collect();
     let mut all = Vec::new();
@@ -343,16 +566,49 @@ fn main() -> Result<(), String> {
                 let options = &job.options;
                 let connectivity =
                     connectivity::compute_epoch(channels, labels, a, b, rate, options);
-                let el = epoch_labels
-                    .as_ref()
-                    .and_then(|v| v.get(epoch))
-                    .cloned();
+                let info = if options.information.gcmi {
+                    Some(information::summarize(
+                        &information::gcmi_matrix(channels, a, b),
+                        &options.information,
+                    ))
+                } else {
+                    None
+                };
+                let networks: Vec<_> = if options.information.spectral_graph && options.connectivity
+                {
+                    connectivity::spectral_networks(channels, a, b, rate, options)
+                        .iter()
+                        .map(|(_, w)| information::summarize(w, &options.information))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let te = if options.information.te {
+                    Some(information::summarize(
+                        &information::temporal_te_matrix(channels, a, b, &options.information)
+                            .expect("validated equal-sized epoch bounds"),
+                        &options.information,
+                    ))
+                } else {
+                    None
+                };
+                let el = epoch_labels.as_ref().and_then(|v| v.get(epoch)).cloned();
                 (0..channels.len()).map(move |channel| {
                     let signal = &channels[channel];
                     let slice = &signal[a..b];
-                    let (ca,cb) = feature_context_bounds(a,b,signal.len(),parent_samples,context_samples);
+                    let (ca, cb) =
+                        feature_context_bounds(a, b, signal.len(), parent_samples, context_samples);
                     let mut values = features(slice, rate, options, &signal[ca..cb]);
                     values.extend_from_slice(&connectivity[channel]);
+                    if let Some(ref info) = info {
+                        values.extend_from_slice(&info[channel]);
+                    }
+                    if let Some(ref te) = te {
+                        values.extend_from_slice(&te[channel]);
+                    }
+                    for rows in &networks {
+                        values.extend_from_slice(&rows[channel]);
+                    }
                     Row {
                         values,
                         channel: labels[channel].clone(),
@@ -378,47 +634,95 @@ fn main() -> Result<(), String> {
         &job.options.mode,
         &epoch_onsets,
         epoch_samples as f64 / recording.rate,
-        if job.options.dfa_fei { &context_times } else { &[] },
+        if job.options.dfa_fei {
+            &context_times
+        } else {
+            &[]
+        },
+        if job.options.information.gcmi
+            || job.options.information.te
+            || job.options.information.spectral_graph
+        {
+            serde_json::to_string(&job.options.information).map_err(err)?
+        } else {
+            String::new()
+        }
+        .as_str(),
     )?;
     eprintln!("PROGRESS 100 Complete");
     Ok(())
 }
 
-fn feature_context_bounds(a: usize, b: usize, total: usize, parent: Option<usize>, window: usize) -> (usize,usize) {
+fn feature_context_bounds(
+    a: usize,
+    b: usize,
+    total: usize,
+    parent: Option<usize>,
+    window: usize,
+) -> (usize, usize) {
     let parent = parent.unwrap_or(total).max(1);
-    let base = a/parent*parent;
-    let end = (base+parent).min(total);
-    let length = window.max(b-a).min(end-base);
-    let start = (a+(b-a)/2).saturating_sub(length/2).max(base).min(end-length);
-    (start,start+length)
+    let base = a / parent * parent;
+    let end = (base + parent).min(total);
+    let length = window.max(b - a).min(end - base);
+    let start = (a + (b - a) / 2)
+        .saturating_sub(length / 2)
+        .max(base)
+        .min(end - length);
+    (start, start + length)
 }
 
-fn analysis_offsets(total: usize, window: usize, parent: Option<usize>, overlap: f64, rate: f64) -> Result<Vec<usize>, String> {
+fn analysis_offsets(
+    total: usize,
+    window: usize,
+    parent: Option<usize>,
+    overlap: f64,
+    rate: f64,
+) -> Result<Vec<usize>, String> {
     if !overlap.is_finite() || overlap < 0.0 || overlap * rate >= window as f64 {
         return Err("Epoch overlap must be nonnegative and shorter than the epoch".into());
     }
     let hop = window.saturating_sub((overlap * rate).round() as usize);
-    if hop == 0 { return Err("Epoch overlap leaves no sample hop".into()); }
+    if hop == 0 {
+        return Err("Epoch overlap leaves no sample hop".into());
+    }
     let parent = parent.unwrap_or(total);
     let mut offsets = Vec::new();
     if parent >= window && parent > 0 {
         for base in (0..total).step_by(parent) {
             let end = (base + parent).min(total);
             if end >= base + window {
-                offsets.extend((base..=end-window).step_by(hop));
+                offsets.extend((base..=end - window).step_by(hop));
             }
         }
     }
     Ok(offsets)
 }
 
-fn recording_stem(path:&str)->String {
-    let name=Path::new(path).file_name().and_then(|n|n.to_str()).unwrap_or("recording");
-    let lower=name.to_lowercase();
-    for suffix in [".ccseeg.json",".edf",".set",".fif",".vhdr",".mat",".orb",".signal"] {
-        if lower.ends_with(suffix){return name[..name.len()-suffix.len()].to_string();}
+fn recording_stem(path: &str) -> String {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("recording");
+    let lower = name.to_lowercase();
+    for suffix in [
+        ".ccseeg.json",
+        ".edf",
+        ".set",
+        ".fif",
+        ".vhdr",
+        ".mat",
+        ".orb",
+        ".signal",
+    ] {
+        if lower.ends_with(suffix) {
+            return name[..name.len() - suffix.len()].to_string();
+        }
     }
-    Path::new(name).file_stem().and_then(|n|n.to_str()).unwrap_or(name).to_string()
+    Path::new(name)
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or(name)
+        .to_string()
 }
 
 fn groups(o: &Options, n: usize, len: f64) -> Result<Vec<(usize, usize, f64, f64)>, String> {
@@ -459,29 +763,87 @@ fn groups(o: &Options, n: usize, len: f64) -> Result<Vec<(usize, usize, f64, f64
     }
 }
 
-fn groups_for_onsets(options:&Options,onsets:&[f64],duration:f64,count:usize)->Result<Vec<(usize,usize,f64,f64)>,String> {
-    if count==0 || onsets.len()!=count || onsets.iter().any(|t|!t.is_finite()||*t<0.0) || onsets.windows(2).any(|pair|pair[0]>pair[1]) {return Err("Epoch timestamps must be ordered and match the encoded epochs".into());}
-    let first=onsets[0];let last=onsets[count-1]+duration;
-    let range=|start:f64,end:f64,centres:bool| {
-        let indices:Vec<usize>=onsets.iter().enumerate().filter(|(_,t)|if centres {**t+duration/2.0>=start&&**t+duration/2.0<end}else{**t>=start&&**t+duration<=end+1e-9}).map(|(i,_)|i).collect();
-        indices.first().zip(indices.last()).map(|(a,b)|(*a,*b+1,start,end))
+fn groups_for_onsets(
+    options: &Options,
+    onsets: &[f64],
+    duration: f64,
+    count: usize,
+) -> Result<Vec<(usize, usize, f64, f64)>, String> {
+    if count == 0
+        || onsets.len() != count
+        || onsets.iter().any(|t| !t.is_finite() || *t < 0.0)
+        || onsets.windows(2).any(|pair| pair[0] > pair[1])
+    {
+        return Err("Epoch timestamps must be ordered and match the encoded epochs".into());
+    }
+    let first = onsets[0];
+    let last = onsets[count - 1] + duration;
+    let range = |start: f64, end: f64, centres: bool| {
+        let indices: Vec<usize> = onsets
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                if centres {
+                    **t + duration / 2.0 >= start && **t + duration / 2.0 < end
+                } else {
+                    **t >= start && **t + duration <= end + 1e-9
+                }
+            })
+            .map(|(i, _)| i)
+            .collect();
+        indices
+            .first()
+            .zip(indices.last())
+            .map(|(a, b)| (*a, *b + 1, start, end))
     };
-    match options.mode.as_str(){
-      "bins"=>{
-        if !options.bin_seconds.is_finite()||options.bin_seconds<duration{return Err("Bin duration must be at least one epoch".into());}
-        let bins=((last-first)/options.bin_seconds).floor() as usize;
-        let ranges:Vec<_>=(0..bins).filter_map(|i|range(first+i as f64*options.bin_seconds,first+(i+1) as f64*options.bin_seconds,true)).collect();
-        if ranges.is_empty(){Err("No complete time bins".into())}else{Ok(ranges)}
-      },
-      "interval"=>range(options.start_seconds.max(first),options.end_seconds.min(last),false).map(|r|vec![r]).ok_or_else(||"Interval contains no complete epochs".into()),
-      "middleTwoMinutes"=>{let start=first+((last-first-120.0)/2.0).max(0.0);range(start,(start+120.0).min(last),false).map(|r|vec![r]).ok_or_else(||"No epochs in middle interval".into())},
-      _=>Ok(vec![(0,count,first,last)]),
+    match options.mode.as_str() {
+        "bins" => {
+            if !options.bin_seconds.is_finite() || options.bin_seconds < duration {
+                return Err("Bin duration must be at least one epoch".into());
+            }
+            let bins = ((last - first) / options.bin_seconds).floor() as usize;
+            let ranges: Vec<_> = (0..bins)
+                .filter_map(|i| {
+                    range(
+                        first + i as f64 * options.bin_seconds,
+                        first + (i + 1) as f64 * options.bin_seconds,
+                        true,
+                    )
+                })
+                .collect();
+            if ranges.is_empty() {
+                Err("No complete time bins".into())
+            } else {
+                Ok(ranges)
+            }
+        }
+        "interval" => range(
+            options.start_seconds.max(first),
+            options.end_seconds.min(last),
+            false,
+        )
+        .map(|r| vec![r])
+        .ok_or_else(|| "Interval contains no complete epochs".into()),
+        "middleTwoMinutes" => {
+            let start = first + ((last - first - 120.0) / 2.0).max(0.0);
+            range(start, (start + 120.0).min(last), false)
+                .map(|r| vec![r])
+                .ok_or_else(|| "No epochs in middle interval".into())
+        }
+        _ => Ok(vec![(0, count, first, last)]),
     }
 }
 
-fn psd_bands(options:&Options)->Vec<(f64,f64,&str)> {
-    if options.psd_bands.is_empty() { BANDS.to_vec() }
-    else { options.psd_bands.iter().map(|b|(b.low,b.high,b.label.as_str())).collect() }
+fn psd_bands(options: &Options) -> Vec<(f64, f64, &str)> {
+    if options.psd_bands.is_empty() {
+        BANDS.to_vec()
+    } else {
+        options
+            .psd_bands
+            .iter()
+            .map(|b| (b.low, b.high, b.label.as_str()))
+            .collect()
+    }
 }
 
 fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> {
@@ -489,13 +851,27 @@ fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> 
     let mut out = Vec::new();
     if o.psd {
         let bands = psd_bands(o);
-        let values = features::bandpowers_with_options(&signal, rate,o.psd_window_seconds,o.psd_average=="mean",&bands);
+        let values = features::bandpowers_with_options(
+            &signal,
+            rate,
+            o.psd_window_seconds,
+            o.psd_average == "mean",
+            &bands,
+        );
         out.extend(bands.iter().map(|band| values[&format!("{}_PSD", band.2)]));
     }
     if o.fooof {
-        let values = spectral::fooof_features_banded(&signal, rate,o.advanced_parameters.fooof_max_peaks,o.advanced_parameters.fooof_peak_threshold,&psd_bands(o));
+        let values = spectral::fooof_features_banded(
+            &signal,
+            rate,
+            o.advanced_parameters.fooof_max_peaks,
+            o.advanced_parameters.fooof_peak_threshold,
+            &psd_bands(o),
+        );
         out.extend(
-            psd_bands(o).iter().map(|band| values[&format!("{}_FOOOF", band.2)]),
+            psd_bands(o)
+                .iter()
+                .map(|band| values[&format!("{}_FOOOF", band.2)]),
         );
         out.extend([
             values["offset_FOOOF"],
@@ -513,9 +889,16 @@ fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> 
         ]);
     }
     if o.irasa {
-        let values = spectral::irasa_features_banded(&signal, rate,&o.advanced_parameters.irasa_factors,&psd_bands(o));
+        let values = spectral::irasa_features_banded(
+            &signal,
+            rate,
+            &o.advanced_parameters.irasa_factors,
+            &psd_bands(o),
+        );
         out.extend(
-            psd_bands(o).iter().map(|band| values[&format!("{}_Irasa", band.2)]),
+            psd_bands(o)
+                .iter()
+                .map(|band| values[&format!("{}_Irasa", band.2)]),
         );
         out.extend([
             values["intercept_Irasa"],
@@ -526,7 +909,11 @@ fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> 
         ]);
     }
     if o.nonlinear {
-        let values = nonlinear::all_configured(&signal,o.advanced_parameters.sample_entropy_tolerance,o.advanced_parameters.higuchi_kmax);
+        let values = nonlinear::all_configured(
+            &signal,
+            o.advanced_parameters.sample_entropy_tolerance,
+            o.advanced_parameters.higuchi_kmax,
+        );
         out.extend([
             values["perm_entropy_nonlinear"],
             values["svd_entropy_nonlinear"],
@@ -539,12 +926,20 @@ fn features(x: &[f32], rate: f64, o: &Options, dfa_context: &[f32]) -> Vec<f64> 
         ]);
     }
     if o.acw {
-        out.push(features::acw_fraction(&signal, rate,o.advanced_parameters.acw_fraction));
+        out.push(features::acw_fraction(
+            &signal,
+            rate,
+            o.advanced_parameters.acw_fraction,
+        ));
     }
     if o.dfa_fei {
         let bands = psd_bands(o);
-        let context: Vec<f64> = dfa_context.iter().map(|&v|v as f64).collect();
-        let values = if o.dfa_fei_short_epoch { dfa_fei::all_short(&context,rate,&bands) } else { dfa_fei::all(&context,rate,&bands) };
+        let context: Vec<f64> = dfa_context.iter().map(|&v| v as f64).collect();
+        let values = if o.dfa_fei_short_epoch {
+            dfa_fei::all_short(&context, rate, &bands)
+        } else {
+            dfa_fei::all(&context, rate, &bands)
+        };
         for band in &bands {
             out.push(values[&format!("{}_DFA", band.2)]);
             out.push(values[&format!("{}_fEI", band.2)]);
@@ -611,8 +1006,16 @@ fn columns(o: &Options) -> Vec<String> {
     }
     if o.dfa_fei {
         for band in psd_bands(o) {
-            c.push(format!("{}_DFA{}", band.2, if o.dfa_fei_short_epoch {"_short"} else {""}));
-            c.push(format!("{}_fEI{}", band.2, if o.dfa_fei_short_epoch {"_short"} else {""}));
+            c.push(format!(
+                "{}_DFA{}",
+                band.2,
+                if o.dfa_fei_short_epoch { "_short" } else { "" }
+            ));
+            c.push(format!(
+                "{}_fEI{}",
+                band.2,
+                if o.dfa_fei_short_epoch { "_short" } else { "" }
+            ));
         }
     }
     if o.connectivity {
@@ -628,8 +1031,6 @@ fn default_preprocessing() -> preprocessing::PreprocessOptions {
     serde_json::from_value(serde_json::json!({})).expect("default preprocessing")
 }
 
-
-
 /// Drops auxiliary channels and re-references the remainder to the common
 /// average.
 ///
@@ -642,10 +1043,16 @@ fn default_preprocessing() -> preprocessing::PreprocessOptions {
 /// Note the ordering: channels are removed *before* the average is computed,
 /// so ECG/EOG/GSR never leak into the reference.
 #[cfg(test)]
-fn remove_non_eeg_and_reference(recording:&mut Recording,non_eeg:&[String]) {
-    remove_non_eeg_and_reference_configured(recording,non_eeg,"average",&[],true).unwrap();
+fn remove_non_eeg_and_reference(recording: &mut Recording, non_eeg: &[String]) {
+    remove_non_eeg_and_reference_configured(recording, non_eeg, "average", &[], true).unwrap();
 }
-fn remove_non_eeg_and_reference_configured(recording: &mut Recording, non_eeg: &[String], mode:&str, references:&[String],drop_auxiliary:bool) -> Result<(),String> {
+fn remove_non_eeg_and_reference_configured(
+    recording: &mut Recording,
+    non_eeg: &[String],
+    mode: &str,
+    references: &[String],
+    drop_auxiliary: bool,
+) -> Result<(), String> {
     let keep: Vec<usize> = if non_eeg.is_empty() {
         const EXCLUDED: [&str; 8] = [
             "GSR", "ECG", "EOG", "EMG", "RESP", "X_DIR", "Y_DIR", "Z_DIR",
@@ -678,24 +1085,68 @@ fn remove_non_eeg_and_reference_configured(recording: &mut Recording, non_eeg: &
             .map(|i| recording.channels[*i].clone())
             .collect();
     }
-    if mode=="none" {return Ok(());}
-    let indices:Vec<usize> = match mode {
-      "average" => recording.labels.iter().enumerate().filter(|(_,label)| {
-        if !non_eeg.is_empty() { !non_eeg.iter().any(|aux|aux.eq_ignore_ascii_case(label)) }
-        else {let upper=label.to_uppercase(); !["GSR","ECG","EOG","EMG","RESP","X_DIR","Y_DIR","Z_DIR"].iter().any(|aux|upper.contains(aux))}
-      }).map(|(i,_)|i).collect(),
-      "channels" => references.iter().map(|name| recording.labels.iter().position(|label|label.eq_ignore_ascii_case(name)).ok_or_else(||format!("Reference channel {name} is unavailable"))).collect::<Result<_,_>>()?,
-      _ => return Err("Reference mode must be none, average, or channels".into()),
+    if mode == "none" {
+        return Ok(());
+    }
+    let indices: Vec<usize> = match mode {
+        "average" => recording
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| {
+                if !non_eeg.is_empty() {
+                    !non_eeg.iter().any(|aux| aux.eq_ignore_ascii_case(label))
+                } else {
+                    let upper = label.to_uppercase();
+                    ![
+                        "GSR", "ECG", "EOG", "EMG", "RESP", "X_DIR", "Y_DIR", "Z_DIR",
+                    ]
+                    .iter()
+                    .any(|aux| upper.contains(aux))
+                }
+            })
+            .map(|(i, _)| i)
+            .collect(),
+        "channels" => references
+            .iter()
+            .map(|name| {
+                recording
+                    .labels
+                    .iter()
+                    .position(|label| label.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("Reference channel {name} is unavailable"))
+            })
+            .collect::<Result<_, _>>()?,
+        _ => return Err("Reference mode must be none, average, or channels".into()),
     };
-    if indices.is_empty(){return Err("Choose reference channels".into());}
-    if recording.channels.len()<2 && mode=="average" {return Ok(());}
+    if indices.is_empty() {
+        return Err("Choose reference channels".into());
+    }
+    if recording.channels.len() < 2 && mode == "average" {
+        return Ok(());
+    }
     for sample in 0..recording.channels[0].len() {
-      let mean=indices.iter().map(|i| recording.channels[*i][sample] as f64).sum::<f64>() / indices.len() as f64;
-      for (index,channel) in recording.channels.iter_mut().enumerate() {
-        let label=&recording.labels[index];
-        let auxiliary=if !non_eeg.is_empty() {non_eeg.iter().any(|name|name.eq_ignore_ascii_case(label))} else {let upper=label.to_uppercase();["GSR","ECG","EOG","EMG","RESP","X_DIR","Y_DIR","Z_DIR"].iter().any(|name|upper.contains(name))};
-        if !auxiliary || indices.contains(&index) {channel[sample]-=mean as f32;}
-      }
+        let mean = indices
+            .iter()
+            .map(|i| recording.channels[*i][sample] as f64)
+            .sum::<f64>()
+            / indices.len() as f64;
+        for (index, channel) in recording.channels.iter_mut().enumerate() {
+            let label = &recording.labels[index];
+            let auxiliary = if !non_eeg.is_empty() {
+                non_eeg.iter().any(|name| name.eq_ignore_ascii_case(label))
+            } else {
+                let upper = label.to_uppercase();
+                [
+                    "GSR", "ECG", "EOG", "EMG", "RESP", "X_DIR", "Y_DIR", "Z_DIR",
+                ]
+                .iter()
+                .any(|name| upper.contains(name))
+            };
+            if !auxiliary || indices.contains(&index) {
+                channel[sample] -= mean as f32;
+            }
+        }
     }
     Ok(())
 }
@@ -718,30 +1169,83 @@ fn apply_channel_selection(recording: &mut Recording, selected: Option<&[String]
         return;
     }
     recording.labels = keep.iter().map(|i| recording.labels[*i].clone()).collect();
-    recording.channels = keep.iter().map(|i| recording.channels[*i].clone()).collect();
+    recording.channels = keep
+        .iter()
+        .map(|i| recording.channels[*i].clone())
+        .collect();
 }
 
-fn select_parent_epochs(recording:&mut Recording,accepted:Option<&[[f64;2]]>,rejected:Option<&[[f64;2]]>)->Result<Option<Vec<usize>>,String> {
-    let has_selection=accepted.map(|v|!v.is_empty()).unwrap_or(false)||rejected.map(|v|!v.is_empty()).unwrap_or(false);
-    if !has_selection {return Ok(None);}
-    let points=recording.source_epoch_samples.ok_or("No epoch boundaries")?;
-    let samples=recording.channels[0].len();
-    if points==0||samples%points!=0{return Err("Invalid encoded epoch boundaries".into());}
-    let parents=samples/points;
-    let mut keep=vec![!accepted.map(|v|!v.is_empty()).unwrap_or(false);parents];
-    for (intervals,value) in [(accepted,true),(rejected,false)] {
-      if let Some(intervals)=intervals {for interval in intervals {
-        let a=interval[0].min(interval[1]);let b=interval[0].max(interval[1]);
-        if !a.is_finite()||!b.is_finite()||a<0.0||b<=a{return Err("Invalid selection interval".into());}
-        let start=(a*recording.rate).round() as usize;let end=(b*recording.rate).round() as usize;
-        if start%points!=0||(end<samples&&end%points!=0){return Err("Select complete parent epochs, or use Crop / subepoch for within-trial windows".into());}
-        for selected in keep.iter_mut().take((end/points).min(parents)).skip((start/points).min(parents)){*selected=value;}
-      }}
+fn select_parent_epochs(
+    recording: &mut Recording,
+    accepted: Option<&[[f64; 2]]>,
+    rejected: Option<&[[f64; 2]]>,
+) -> Result<Option<Vec<usize>>, String> {
+    let has_selection = accepted.map(|v| !v.is_empty()).unwrap_or(false)
+        || rejected.map(|v| !v.is_empty()).unwrap_or(false);
+    if !has_selection {
+        return Ok(None);
     }
-    let indices:Vec<usize>=keep.iter().enumerate().filter(|(_,keep)|**keep).map(|(i,_)|i).collect();
-    if indices.is_empty(){return Err("Selection contains no complete epochs".into());}
-    for channel in &mut recording.channels {let selected=indices.iter().flat_map(|i|channel[*i*points..(*i+1)*points].iter().copied()).collect();*channel=selected;}
-    if let Some(labels)=recording.epoch_labels.as_ref(){recording.epoch_labels=Some(indices.iter().map(|i|labels.get(*i).cloned().unwrap_or_else(||format!("Epoch {}",i+1))).collect());}
+    let points = recording
+        .source_epoch_samples
+        .ok_or("No epoch boundaries")?;
+    let samples = recording.channels[0].len();
+    if points == 0 || samples % points != 0 {
+        return Err("Invalid encoded epoch boundaries".into());
+    }
+    let parents = samples / points;
+    let mut keep = vec![!accepted.map(|v| !v.is_empty()).unwrap_or(false); parents];
+    for (intervals, value) in [(accepted, true), (rejected, false)] {
+        if let Some(intervals) = intervals {
+            for interval in intervals {
+                let a = interval[0].min(interval[1]);
+                let b = interval[0].max(interval[1]);
+                if !a.is_finite() || !b.is_finite() || a < 0.0 || b <= a {
+                    return Err("Invalid selection interval".into());
+                }
+                let start = (a * recording.rate).round() as usize;
+                let end = (b * recording.rate).round() as usize;
+                if start % points != 0 || (end < samples && end % points != 0) {
+                    return Err("Select complete parent epochs, or use Crop / subepoch for within-trial windows".into());
+                }
+                for selected in keep
+                    .iter_mut()
+                    .take((end / points).min(parents))
+                    .skip((start / points).min(parents))
+                {
+                    *selected = value;
+                }
+            }
+        }
+    }
+    let indices: Vec<usize> = keep
+        .iter()
+        .enumerate()
+        .filter(|(_, keep)| **keep)
+        .map(|(i, _)| i)
+        .collect();
+    if indices.is_empty() {
+        return Err("Selection contains no complete epochs".into());
+    }
+    for channel in &mut recording.channels {
+        let selected = indices
+            .iter()
+            .flat_map(|i| channel[*i * points..(*i + 1) * points].iter().copied())
+            .collect();
+        *channel = selected;
+    }
+    if let Some(labels) = recording.epoch_labels.as_ref() {
+        recording.epoch_labels = Some(
+            indices
+                .iter()
+                .map(|i| {
+                    labels
+                        .get(*i)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Epoch {}", i + 1))
+                })
+                .collect(),
+        );
+    }
     Ok(Some(indices))
 }
 
@@ -1001,8 +1505,9 @@ fn write_csv(
     cond: &str,
     mode: &str,
     epoch_onsets: &[f64],
-    epoch_duration:f64,
-    dfa_context_times:&[(f64,f64)],
+    epoch_duration: f64,
+    dfa_context_times: &[(f64, f64)],
+    connectivity_settings: &str,
 ) -> Result<(), String> {
     let mut w = fs::File::create(path).map_err(err)?;
     let mut h = cols.to_vec();
@@ -1024,10 +1529,16 @@ fn write_csv(
             "dfa_fei_window_s",
             "dfa_fei_context_start_s",
             "dfa_fei_context_end_s",
+            "connectivity_settings",
         ]
         .map(str::to_string),
     );
-    writeln!(w, "{}", h.join(",")).map_err(err)?;
+    writeln!(
+        w,
+        "{}",
+        h.iter().map(|s| csv(s)).collect::<Vec<_>>().join(",")
+    )
+    .map_err(err)?;
     for r in rows {
         let mut v: Vec<String> = r
             .values
@@ -1052,12 +1563,32 @@ fn write_csv(
             format!("{:.3}", r.start),
             format!("{:.3}", r.end),
             mode.into(),
-            format!("{:.6}",epoch_onsets.get(r.epoch-1).copied().unwrap_or((r.epoch-1) as f64*epoch_duration)),
-            format!("{:.6}",epoch_onsets.get(r.epoch-1).copied().unwrap_or((r.epoch-1) as f64*epoch_duration)+epoch_duration),
+            format!(
+                "{:.6}",
+                epoch_onsets
+                    .get(r.epoch - 1)
+                    .copied()
+                    .unwrap_or((r.epoch - 1) as f64 * epoch_duration)
+            ),
+            format!(
+                "{:.6}",
+                epoch_onsets
+                    .get(r.epoch - 1)
+                    .copied()
+                    .unwrap_or((r.epoch - 1) as f64 * epoch_duration)
+                    + epoch_duration
+            ),
         ]);
-        if let Some(&(start,end)) = dfa_context_times.get(r.epoch-1) {
-            v.extend([format!("{:.6}",end-start),format!("{start:.6}"),format!("{end:.6}")]);
-        } else { v.extend([String::new(),String::new(),String::new()]); }
+        if let Some(&(start, end)) = dfa_context_times.get(r.epoch - 1) {
+            v.extend([
+                format!("{:.6}", end - start),
+                format!("{start:.6}"),
+                format!("{end:.6}"),
+            ]);
+        } else {
+            v.extend([String::new(), String::new(), String::new()]);
+        }
+        v.push(csv(connectivity_settings));
         writeln!(w, "{}", v.join(",")).map_err(err)?
     }
     Ok(())
@@ -1089,12 +1620,12 @@ mod tests {
     #[test]
     fn modes_validate() {
         let o = Options {
-            advanced_parameters:AdvancedParameters::default(),
+            advanced_parameters: AdvancedParameters::default(),
             psd_window_seconds: 1.0,
             psd_average: "median".into(),
             psd_bands: Vec::new(),
-            reference_mode:"average".into(),
-            reference_channels:Vec::new(),
+            reference_mode: "average".into(),
+            reference_channels: Vec::new(),
             mode: "bins".into(),
             start_seconds: 0.0,
             end_seconds: 10.0,
@@ -1105,6 +1636,7 @@ mod tests {
             nonlinear: false,
             acw: false,
             connectivity: false,
+            information: information::InformationOptions::default(),
             mic: false,
             mim: false,
             gc: false,
@@ -1194,7 +1726,13 @@ mod tests {
     fn never_removes_every_channel() {
         // A misconfigured list must not leave the recording empty.
         let mut rec = recording_with(&["Fp1", "Cz"]);
-        let result=remove_non_eeg_and_reference_configured(&mut rec,&["Fp1".to_string(),"Cz".to_string()],"average",&[],true);
+        let result = remove_non_eeg_and_reference_configured(
+            &mut rec,
+            &["Fp1".to_string(), "Cz".to_string()],
+            "average",
+            &[],
+            true,
+        );
         assert!(result.is_err());
         assert_eq!(rec.labels.len(), 2);
     }
@@ -1204,14 +1742,26 @@ mod tests {
 mod overlap_tests {
     #[test]
     fn context_does_not_cross_trial_edges() {
-        assert_eq!(super::feature_context_bounds(8,10,20,Some(10),60),(0,10));
-        assert_eq!(super::feature_context_bounds(12,14,20,Some(10),6),(10,16));
+        assert_eq!(
+            super::feature_context_bounds(8, 10, 20, Some(10), 60),
+            (0, 10)
+        );
+        assert_eq!(
+            super::feature_context_bounds(12, 14, 20, Some(10), 6),
+            (10, 16)
+        );
     }
     use super::analysis_offsets;
     #[test]
     fn sliding_windows_keep_original_trial_boundaries() {
-        assert_eq!(analysis_offsets(20, 4, Some(10), 0.2, 10.0).unwrap(), vec![0,2,4,6,10,12,14,16]);
-        assert_eq!(analysis_offsets(10, 4, None, 0.0, 10.0).unwrap(), vec![0,4]);
+        assert_eq!(
+            analysis_offsets(20, 4, Some(10), 0.2, 10.0).unwrap(),
+            vec![0, 2, 4, 6, 10, 12, 14, 16]
+        );
+        assert_eq!(
+            analysis_offsets(10, 4, None, 0.0, 10.0).unwrap(),
+            vec![0, 4]
+        );
         assert!(analysis_offsets(10, 4, None, 0.4, 10.0).is_err());
     }
 }

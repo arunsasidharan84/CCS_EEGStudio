@@ -1,3 +1,4 @@
+import 'feature_events.dart';
 import 'topostats/topostats_engine.dart' show splitFeatureCsvLine;
 import 'recording_transform.dart';
 import 'dart:convert';
@@ -216,6 +217,7 @@ class ExtractionService {
                 : errors.join('\n'),
           );
         }
+        await appendFeatureEvents(part, recording);
         parts.add(part);
 
         // Persist this recording's own CSV before it is merged away.
@@ -488,6 +490,7 @@ class ExtractionService {
           selection.acceptedIntervals.isEmpty &&
           selection.rejectedIntervals.isEmpty;
       final copiedMarkers = <EegMarker>[];
+      final stimulusOnsets = <double>[];
       final outputSamples =
           (resultSummary['samples'] as num?)?.toInt() ?? recording.sampleCount;
       if (recording.isEpoched) {
@@ -523,18 +526,19 @@ class ExtractionService {
         if (onsets.length == outputSamples ~/ trialPoints) {
           for (var epoch = 0; epoch < onsets.length; epoch++) {
             final start = (onsets[epoch] * outputRate).round() + startOffset;
+            stimulusOnsets.add(start / outputRate);
             for (final marker in recording.markers) {
               final sample = (marker.startSeconds * outputRate).round();
-              if (sample >= start && sample < start + trialPoints)
+              if (sample < start + trialPoints &&
+                  (marker.durationSeconds > 0
+                      ? sample + marker.durationSeconds * outputRate > start
+                      : sample >= start))
                 copiedMarkers.add(
                   EegMarker(
                     type: marker.type,
                     description: marker.description,
-                    startSeconds: (sample - start) / outputRate,
-                    durationSeconds: math.min(
-                      marker.durationSeconds,
-                      (start + trialPoints - sample) / outputRate,
-                    ),
+                    startSeconds: marker.startSeconds - start / outputRate,
+                    durationSeconds: marker.durationSeconds,
                     channelIndex: marker.channelIndex,
                     epochIndex: epoch,
                   ),
@@ -578,8 +582,8 @@ class ExtractionService {
       await File('$outputPath.preprocessing.json').writeAsString(
         jsonEncode({
           'source_path': recording.path,
-          if (stim == null && (recording.isEpoched || preserveTimeline))
-            'epoch_start_seconds': outputOnsets,
+          if (stimulusOnsets.isNotEmpty || (stim == null && (recording.isEpoched || preserveTimeline)))
+            'epoch_start_seconds': stimulusOnsets.isNotEmpty ? stimulusOnsets : outputOnsets,
           'source_duration_seconds': recording.sourceDurationSeconds,
           'preprocessing': options.toJson(),
           'summary': resultSummary,
@@ -1456,7 +1460,7 @@ class ExtractionService {
       rgb: _Rgb.white,
     );
     p.text(
-      'eLORETA inverse solution — FreeSurfer fsaverage parcellation',
+      'Source inverse solution — selected forward model and parcellation',
       x: 36,
       y: 749,
       size: 8,

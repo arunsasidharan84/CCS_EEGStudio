@@ -409,6 +409,23 @@ class TopoFigure {
       }
     }
 
+    for (var eventIndex = 0; eventIndex < sess.events.length; eventIndex++) {
+      final event = sess.events[eventIndex];
+      final onset = (event['onset_s'] as num).toDouble() / 60;
+      final duration = (event['duration_s'] as num).toDouble() / 60;
+      final xx = xOf(onset);
+      final ink = Paint()..color = const Color(0xFF7B1FA2)..strokeWidth = 0.7 * pt;
+      if (duration > 0) {
+        canvas.drawRect(Rect.fromLTRB(xx, ax.top, xOf(onset + duration), ax.bottom),
+          Paint()..color = const Color(0xFF7B1FA2).withValues(alpha: 0.08));
+      }
+      canvas.drawLine(Offset(xx, ax.top), Offset(xx, ax.bottom), ink);
+      final label = TextPainter(text: TextSpan(text: event['label'] as String,
+        style: TextStyle(color: const Color(0xFF7B1FA2), fontSize: 7 * pt)),
+        textDirection: TextDirection.ltr, maxLines: 1, ellipsis: '…')..layout(maxWidth: 80 * pt);
+      label.paint(canvas, Offset(xx + 2 * pt, ax.top + (eventIndex % 3) * 9 * pt));
+    }
+
     // fill_between(mean - band, mean + band, gray, alpha .3), zorder 2
     final fill = Paint()..color = _gray.withValues(alpha: 0.3);
     var r = 0;

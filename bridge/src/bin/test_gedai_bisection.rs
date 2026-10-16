@@ -16,7 +16,8 @@ fn main() {
     let py_data: PyData = serde_json::from_str(&json_str).unwrap();
     let mut data = py_data.data;
     let ref_cov = leadfield_cov(&py_data.labels).unwrap();
-    
-    let (_, _, sensai, thresh) = gedai_per_band(&mut data, 250.0, 1.0, &ref_cov, "auto", true).unwrap();
+
+    let (_, _, sensai, thresh) =
+        gedai_per_band(&mut data, 250.0, 1.0, &ref_cov, "auto", true).unwrap();
     println!("Rust Threshold: {}, Sensai: {}", thresh, sensai);
 }

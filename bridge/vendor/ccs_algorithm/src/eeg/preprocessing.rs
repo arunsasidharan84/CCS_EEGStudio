@@ -54,6 +54,10 @@ pub struct PreprocessOptions {
     #[serde(default = "default_source_snr")]
     pub source_snr: f64,
     #[serde(default)]
+    pub source_method: String,
+    #[serde(default)]
+    pub source_model_path: String,
+    #[serde(default)]
     pub source_regions: Vec<String>,
     #[serde(default)]
     pub epoch_before_gedai: bool,
@@ -520,8 +524,8 @@ pub fn run(
     apply_output_reference(&mut f64_channels, &rec.labels, &options.reference_mode, &options.reference_channels)?;
     let mut source_localized = false;
     if options.source_localization {
-        eprintln!("PROGRESS 85 Converting to source space (68 FreeSurfer ROIs via eLORETA)...");
-        match crate::eeg::source_loc::convert_to_source_space(&f64_channels, &rec.labels, options.source_snr) {
+        eprintln!("PROGRESS 85 Converting to source space (selected inverse and atlas)...");
+        match crate::eeg::source_loc::convert_with_model(&f64_channels, &rec.labels, options.source_snr, if options.source_method.is_empty(){"mne"}else{&options.source_method}, &options.source_model_path) {
             Ok((roi_data, roi_labels)) => {
                 if options.source_regions.is_empty() {
                     f64_channels = roi_data;
@@ -533,7 +537,7 @@ pub fn run(
                 }
                 source_localized = true;
             }
-            Err(e) => warnings.push(format!("Source localization failed: {e}")),
+            Err(e) => return Err(format!("Source localization failed: {e}")),
         }
     }
 

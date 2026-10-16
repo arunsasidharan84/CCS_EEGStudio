@@ -51,7 +51,9 @@ void main() {
   );
 
   testWidgets('stimulus epoch panel with detected markers', (tester) async {
-    final cfg = AnalysisConfig()..stimEpochs = true;
+    final cfg = AnalysisConfig()
+      ..stimEpochs = true
+      ..stimMarkers = ['S 51', 'S 52'];
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(),

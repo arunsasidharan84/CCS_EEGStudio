@@ -19,7 +19,13 @@ import 'filtered_file_picker.dart';
 import 'group_statistics.dart';
 import 'processing_settings_dialog.dart';
 import 'erp_analysis.dart';
+import 'erp/erp_workbench_view.dart';
+import 'batch_profiles.dart';
 import 'erp/stim_epoch_panel.dart';
+import 'epoch_service.dart';
+import 'recording_transform.dart';
+import 'erp/protocol_tools.dart';
+import 'erp/output_naming.dart';
 import 'topostats_analysis.dart';
 import 'microstate_analysis.dart';
 import 'update_checker.dart';
@@ -138,7 +144,7 @@ String _moduleSubtitle(_Module m) => switch (m) {
   _Module.groupStatistics => 'Metadata, LMM / GLM, contrasts',
   _Module.loadRaw => 'EDF, SET, FIF, VHDR',
   _Module.preprocess => 'Filter, re-reference, clean',
-  _Module.sourceSpace => 'eLORETA inverse solution',
+  _Module.sourceSpace => 'Minimum-norm source analysis',
   _Module.featureExtraction => 'Spectral, connectivity, non-linear',
   _Module.plotsReport => 'Topomaps & line plots',
   _Module.erpAnalysis => 'Event waveforms & stats',
@@ -262,6 +268,7 @@ class _FeatureHomeState extends State<FeatureHome>
   _Module? _selectedModule;
   bool _sidebarCollapsed = false;
   bool _batchMaximized = false;
+  String _batchProfile = 'EEG';
   bool _workspaceMaximized = false;
   bool _waveformMaximized = false;
 
@@ -301,7 +308,7 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Stage 1 output.
   EegRecording? _preprocessed;
 
-  /// Stage 2 output (eLORETA source projection).
+  /// Stage 2 output (selected source inverse projection).
   EegRecording? _source;
 
   /// A file loaded straight into Stage 3, bypassing Stages 1 and 2.
@@ -460,7 +467,7 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   bool get _usesExistingEpochs =>
-      !_batchMaximized && _raw?.pointsPerEpoch != null;
+      !_batchMaximized && _activeRecording?.pointsPerEpoch != null;
 
   String? get _gedaiEpochError {
     if (!_cfg.gedai) return null;
@@ -584,7 +591,12 @@ class _FeatureHomeState extends State<FeatureHome>
     try {
       _log('Loading ${_shortName(path)}…');
       final rec = await _loader.load(path);
+      _restoreSavedEpochProtocol(rec);
       setState(() {
+        for (final existing in _stageRecordings) {
+          if (!_openedRecordings.any((r) => r.path == existing.path))
+            _openedRecordings.add(existing);
+        }
         _openedRecordings.removeWhere((item) => item.path == rec.path);
         _openedRecordings.add(rec);
         _raw = rec;
@@ -610,13 +622,33 @@ class _FeatureHomeState extends State<FeatureHome>
     }
   }
 
+  void _restoreSavedEpochProtocol(EegRecording recording) {
+    if (!recording.isEpoched) return;
+    for (final suffix in ['.preparation.json', '.preprocessing.json']) {
+      final file = File('${recording.path}$suffix');
+      if (!file.existsSync()) continue;
+      try {
+        final saved = jsonDecode(file.readAsStringSync()) as Map;
+        final spec =
+            saved['epoch_protocol'] ??
+            (saved['preprocessing'] as Map?)?['stim_epochs_spec'];
+        if (spec is Map) {
+          applyErpProtocol(_cfg, {...erpProtocolJson(_cfg), 'epoching': spec});
+          return;
+        }
+      } catch (_) {
+        /* Older files may have no reusable epoch settings. */
+      }
+    }
+  }
+
   void _selectOpenedRecording(EegRecording recording) {
+    _restoreSavedEpochProtocol(recording);
     setState(() {
       _raw = recording;
       _selectedModule = _Module.loadRaw;
-      _preprocessed = null;
-      _source = null;
-      _directInput = null;
+
+      _directInput = recording;
       final csv =
           '${File(recording.path).parent.path}${Platform.pathSeparator}${_stem(recording.path)}.features.csv';
       _featuresCsv = File(csv).existsSync() ? csv : null;
@@ -730,7 +762,7 @@ class _FeatureHomeState extends State<FeatureHome>
   // ══════════════════════════════════════════════════════════════════════
 
   Future<void> _runPreprocessing() async {
-    final input = _raw;
+    final input = _activeRecording;
     if (input == null) {
       _log('Load a raw recording first.');
       return;
@@ -739,9 +771,42 @@ class _FeatureHomeState extends State<FeatureHome>
       _log(error);
       return;
     }
+    if (_cfg.stimEpochs && !input.isEpoched) {
+      final spec = _cfg.stimEpochSpec!;
+      var count = 0;
+      String? selectionError;
+      try {
+        count = spec.selectEvents(input.markers, selection: _selection).length;
+      } catch (e) {
+        selectionError = e.toString();
+      }
+      if (count < 2 || selectionError != null) {
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Choose matching events'),
+            content: Text(
+              selectionError ??
+                  '$count events match the current selection. Select marker chips or add a named group in Event-based trials before preprocessing. The previous recording may use different event codes.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Back to event settings'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    }
     final path = await FilePicker.saveFile(
       dialogTitle: 'Save cleaned EEG file',
-      fileName: '${_stem(input.path)}${_cfg.cleanSuffix}.ccseeg.json',
+      fileName: erpOutputName(
+        input.path,
+        epoched: input.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai,
+        cleaned: true,
+      ),
       allowedExtensions: ['json'],
       type: FileType.custom,
     );
@@ -756,8 +821,9 @@ class _FeatureHomeState extends State<FeatureHome>
         recording: input,
         outputPath: path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json',
         selection: _selection,
-        outputOverlapSeconds:
-            _cfg.stimEpochs ? 0 : _cfg.preprocessingOverlapSeconds,
+        outputOverlapSeconds: (_cfg.stimEpochs || !_cfg.epochBeforeGedai)
+            ? 0
+            : _cfg.preprocessingOverlapSeconds,
         outputWindowSeconds: _cfg.gedaiEpochSeconds,
         options: _cfg.toPreprocessingOptions(
           nonEegChannels: _channels.nonEegChannels,
@@ -769,6 +835,8 @@ class _FeatureHomeState extends State<FeatureHome>
       );
       setState(() {
         _preprocessed = cleaned;
+        _openedRecordings.removeWhere((r) => r.path == cleaned.path);
+        _openedRecordings.add(cleaned);
         _source = null;
         _directInput = null;
         _channels = _channels.rebaseOnto(cleaned.labels);
@@ -1299,6 +1367,12 @@ class _FeatureHomeState extends State<FeatureHome>
             label: _batchMaximized ? 'Close Batch' : 'Batch Workspace',
             active: _batchMaximized,
             onTap: () => setState(() {
+              if (!_batchMaximized)
+                _batchProfile = _presetKey == 'erp'
+                    ? 'ERP'
+                    : _presetKey == 'microstates'
+                    ? 'Microstates'
+                    : 'EEG';
               _batchMaximized = !_batchMaximized;
               _workspaceMaximized = false;
               _waveformMaximized = false;
@@ -1486,14 +1560,26 @@ class _FeatureHomeState extends State<FeatureHome>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  _moduleLabel(mod),
-                                  style: TextStyle(
-                                    color: selected
-                                        ? Colors.white
-                                        : Colors.white70,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
+                                Tooltip(
+                                  message: switch (mod) {
+                                    _Module.loadRaw =>
+                                      'Open and inspect recordings. Switching between open recordings keeps derived files available.',
+                                    _Module.preprocess =>
+                                      'Choose events and named groups, set trial/baseline windows, then clean and save. Already epoched inputs retain their saved trials.',
+                                    _Module.erpAnalysis =>
+                                      'Choose saved conditions A and B, review the task, ROI and time window, then average and analyse. Use Batch Workspace for multiple recordings.',
+                                    _ =>
+                                      '${_moduleSubtitle(mod)}. Review the settings and run this stage using the active recording.',
+                                  },
+                                  child: Text(
+                                    _moduleLabel(mod),
+                                    style: TextStyle(
+                                      color: selected
+                                          ? Colors.white
+                                          : Colors.white70,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 Text(
@@ -1572,6 +1658,12 @@ class _FeatureHomeState extends State<FeatureHome>
         return _buildPlotsLayout();
       case _Module.erpAnalysis:
         return ErpAnalysisView(
+          config: _cfg,
+          onPrepare: () => setState(() => _selectedModule = _Module.preprocess),
+          onOpenBatch: () => setState(() {
+            _batchProfile = 'ERP';
+            _batchMaximized = true;
+          }),
           activeRecording: _activeRecording,
           extraFiles: [
             for (final p in _batchPrepOutputs)
@@ -1798,9 +1890,10 @@ class _FeatureHomeState extends State<FeatureHome>
                     )) {
                       _selectOpenedRecording(rec);
                     } else {
-                      setState(() => _directInput = rec == _raw ? null : rec);
+                      setState(() => _directInput = rec);
                     }
                   },
+                  onRequestEpochs: _epochActiveRecording,
                   onEpochsGenerated: (epoched) {
                     if (_running) return;
                     setState(() => _preprocessed = epoched);
@@ -1894,9 +1987,10 @@ class _FeatureHomeState extends State<FeatureHome>
                     )) {
                       _selectOpenedRecording(rec);
                     } else {
-                      setState(() => _directInput = rec == _raw ? null : rec);
+                      setState(() => _directInput = rec);
                     }
                   },
+                  onRequestEpochs: _epochActiveRecording,
                   onEpochsGenerated: (epoched) {
                     if (_running) return;
                     setState(() => _preprocessed = epoched);
@@ -1974,6 +2068,110 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   // ── Stage 1 ─────────────────────────────────────────────────────────────
+
+  Future<void> _epochActiveRecording() async {
+    final input = _activeRecording;
+    if (input == null || _running) return;
+    if (input.isEpoched) {
+      setState(() => _selectedModule = _Module.erpAnalysis);
+      return;
+    }
+    _cfg.stimEpochs = true;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('1  Define ERP trials'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Choose locking events, give related codes a condition name, then set the trial and baseline windows. These settings are shared with Preprocess. Saving trials does not run cleaning.',
+                ),
+                ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+                StimEpochPanel(
+                  config: _cfg,
+                  markers: input.markers,
+                  onChanged: () => setState(() {}),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save event epochs…'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return;
+    try {
+      final spec = _cfg.stimEpochSpec;
+      if (spec == null)
+        throw StateError(
+          'Enable event-based trials and select locking events.',
+        );
+      // Use the same selector as preprocessing, including regex and crop rules.
+      final events = spec.selectEvents(input.markers);
+      if (events.isEmpty) throw StateError('No events match this protocol.');
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Save reusable event epochs',
+        fileName: erpOutputName(
+          input.path,
+          epoched: true,
+          cleaned:
+              input.completedStages.contains('preprocessing') ||
+              input.path.contains('_clean'),
+        ),
+      );
+      if (path == null) return;
+      final full = await _loader.loadFull(input);
+      final selected = full.markers
+          .where(
+            (m) => events.any((e) => (e.$1 - m.startSeconds).abs() < .000001),
+          )
+          .toList();
+      final epochs = EpochService().generateEpochs(
+        recording: full,
+        selectedMarkers: selected,
+        options: EpochOptions(
+          targetEvents: const [],
+          markerGroups: spec.markerGroups,
+          tmin: spec.tmin,
+          tmax: spec.tmax,
+          applyBaseline: spec.baseline,
+          baselineMin: spec.baselineStart,
+          baselineMax: spec.baselineEnd,
+        ),
+      );
+      await RecordingTransform.save(
+        epochs,
+        path,
+        sourcePath: input.path,
+        operations: {'epoch_protocol': spec.toJson()},
+      );
+      final saved = await _loader.load(path);
+      if (!mounted) return;
+      setState(() {
+        _openedRecordings.add(saved);
+        _directInput = saved;
+        _selectedModule = _Module.erpAnalysis;
+      });
+      _log(
+        '✓ Saved ${saved.epochCount} event trials: $path. Choose groups A/B, then average and analyse.',
+      );
+    } catch (e) {
+      _log('✗ Epoching: $e');
+    }
+  }
 
   Future<void> _prepareRecording() async {
     final recording =
@@ -2065,8 +2263,28 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           if (_step1OptsExpanded) _buildPreprocessingOptions(),
           const SizedBox(height: 8),
+          if (_cfg.stimEpochs &&
+              _activeRecording != null &&
+              !_activeRecording!.isEpoched) ...[
+            _infoBox(
+              'Already cleaned input? Save event trials without running the cleaners again. Additional artifact cleaning can change the ERP.',
+              _accentBlue,
+            ),
+            _stageRunButton(
+              label: 'Epoch only (keep existing cleaning)',
+              icon: Icons.cut,
+              color: _accentBlue,
+              enabled: !_running,
+              onPressed: _epochActiveRecording,
+              tooltip:
+                  'Cut and save the shared event groups and trial window. Apply the selected baseline; skip filtering, ICA, ASR and GEDAI.',
+            ),
+            const SizedBox(height: 8),
+          ],
           _stageRunButton(
-            label: 'Run Preprocessing',
+            label: _cfg.stimEpochs && !(_activeRecording?.isEpoched ?? false)
+                ? 'Clean + epoch (additional cleaning)'
+                : 'Run Preprocessing',
             icon: Icons.cleaning_services,
             color: _accentPurple,
             enabled: !_running && _raw != null,
@@ -2299,8 +2517,9 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const SizedBox(height: 8),
           _infoBox(
-            'Projects scalp potentials to 68 FreeSurfer cortical dipoles via a '
-            'regularised eLORETA inverse solution (fsaverage parcellation).',
+            'Inverse: ${_cfg.sourceMethod.toUpperCase()}. '
+            '${_cfg.sourceModelPath.isEmpty ? 'Bundled fsaverage / 68 Desikan–Killiany regions' : 'Custom forward / atlas: ${_shortName(_cfg.sourceModelPath)}'}. '
+            'Fixed source orientations; identity sensor noise covariance.',
             _accentBlue,
           ),
           const SizedBox(height: 8),
@@ -2538,6 +2757,50 @@ class _FeatureHomeState extends State<FeatureHome>
             ),
           ),
 
+          ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+          if (_activeRecording?.isEpoched == true)
+            TextButton.icon(
+              onPressed: () =>
+                  setState(() => _selectedModule = _Module.erpAnalysis),
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text("Next: average and analyse saved trials"),
+            ),
+          if (!_usesExistingEpochs)
+            StimEpochPanel(
+              config: _cfg,
+              markers: _raw?.markers ?? const [],
+              enabled: !_running,
+              onChanged: () => setState(() {}),
+            ),
+          if (!_usesExistingEpochs && !_cfg.stimEpochs)
+            _check(
+              'Save fixed-length windows',
+              _cfg.epochBeforeGedai,
+              (v) => _cfg.epochBeforeGedai = v,
+            ),
+          if (!_usesExistingEpochs &&
+              !_cfg.stimEpochs &&
+              _cfg.epochBeforeGedai) ...[
+            _field(
+              _gedaiEpoch,
+              'Fixed window length',
+              suffix: 's',
+              helper:
+                  'Length of each saved fixed window. Event-based trials use their own event window.',
+              error: _gedaiEpochError,
+            ),
+            _field(_prepOverlap, 'Fixed window overlap', suffix: 's'),
+          ],
+          _infoBox(
+            _usesExistingEpochs
+                ? 'Preserve existing trials → clean each trial → save.'
+                : _cfg.stimEpochs
+                ? 'Filter continuous data → cut event-based trials → clean each trial → save. No fixed-window epoching is applied.'
+                : _cfg.epochBeforeGedai
+                ? 'Filter → split into fixed windows → clean → save windows.'
+                : 'Filter → clean → save continuous data. GEDAI uses internal processing windows.',
+            _accentBlue,
+          ),
           _check(
             'Downsample to target rate',
             _cfg.downsample,
@@ -2719,9 +2982,9 @@ class _FeatureHomeState extends State<FeatureHome>
           if ((_cfg.icaMethod != 'none' ||
                   _cfg.asrMode != 'off' ||
                   _cfg.muscleMethod != 'none') &&
-              _usesExistingEpochs)
+              (_usesExistingEpochs || _cfg.stimEpochs))
             _infoBox(
-              'ICA, ASR and muscle cleaners need continuous data and are skipped for epoched input.',
+              'ICA, ASR and muscle cleaners need continuous data and are skipped for existing or event-based trials.',
               _accentBlue,
             ),
           if (_cfg.icaMethod != 'none' && _cfg.gedai)
@@ -2751,36 +3014,20 @@ class _FeatureHomeState extends State<FeatureHome>
               'Existing trial boundaries are preserved. Use Crop / subepoch to change the window or overlap.',
               _accentBlue,
             ),
-          if (_cfg.gedai && !_usesExistingEpochs)
+          if (_cfg.gedai &&
+              !_usesExistingEpochs &&
+              !_cfg.stimEpochs &&
+              !_cfg.epochBeforeGedai)
             Padding(
               padding: const EdgeInsets.only(left: 24, bottom: 4),
               child: _field(
                 _gedaiEpoch,
-                'GEDAI epoch size',
+                'GEDAI processing window',
                 suffix: 's',
-                helper: _cfg.stimEpochs
-                    ? 'Stimulus-locked trials override this value.'
-                    : 'Window length used by GEDAI; also used when epoching before GEDAI.',
+                helper:
+                    'Internal denoising window; the saved recording remains continuous.',
                 error: _gedaiEpochError,
               ),
-            ),
-          if (!_usesExistingEpochs && !_cfg.stimEpochs)
-            _field(
-              _prepOverlap,
-              'Saved epoch overlap after cleaning (s)',
-              suffix: 's',
-            ),
-          _check('Epoch before GEDAI (memory safe)', _cfg.epochBeforeGedai, (
-            v,
-          ) {
-            if (_raw?.pointsPerEpoch == null) _cfg.epochBeforeGedai = v;
-          }),
-          if (!_usesExistingEpochs)
-            StimEpochPanel(
-              config: _cfg,
-              markers: _raw?.markers ?? const [],
-              enabled: !_running,
-              onChanged: () => setState(() {}),
             ),
           _check(
             'Interpolate bad channels',
@@ -2920,6 +3167,105 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const SizedBox(height: 6),
           _subLabel('BIVARIATE CONNECTIVITY'),
+          _check('Gaussian-copula MI (GCMI)', _cfg.gcmi, (v) => _cfg.gcmi = v),
+          _check(
+            'Transfer entropy (lagged time samples)',
+            _cfg.transferEntropy,
+            (v) => _cfg.transferEntropy = v,
+          ),
+          _check(
+            'Pair matrices / graph measures for selected spectral connectivity',
+            _cfg.spectralGraph,
+            (v) => _cfg.spectralGraph = v,
+          ),
+          if (_cfg.gcmi || _cfg.transferEntropy || _cfg.spectralGraph) ...[
+            const Text(
+              'GCMI and TE use broadband signals. TE estimates source-past → target-present information within each epoch, conditioned on target history. Overlapping windows are supported.',
+            ),
+            DropdownButtonFormField<String>(
+              initialValue: _cfg.connectivityOutput,
+              decoration: const InputDecoration(
+                labelText: 'Pair / graph output selection',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'edges', child: Text('Raw pairs')),
+                DropdownMenuItem(
+                  value: 'graph',
+                  child: Text('Graph summaries'),
+                ),
+                DropdownMenuItem(
+                  value: 'both',
+                  child: Text('Pairs and graph summaries'),
+                ),
+              ],
+              onChanged: (v) => setState(() => _cfg.connectivityOutput = v!),
+            ),
+            DropdownButtonFormField<double>(
+              initialValue: _cfg.graphDensity,
+              decoration: const InputDecoration(
+                labelText: 'Graph edge density (positive weights)',
+              ),
+              items: [0.1, 0.2, 0.3, 0.5, 1.0]
+                  .map(
+                    (v) => DropdownMenuItem(
+                      value: v,
+                      child: Text('${(v * 100).round()}%'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) => setState(() => _cfg.graphDensity = v!),
+            ),
+            if (_cfg.transferEntropy)
+              DropdownButtonFormField<int>(
+                initialValue: _cfg.teMaxDelay,
+                decoration: const InputDecoration(
+                  labelText: 'TE source-to-target delay (samples)',
+                ),
+                items: [1, 2, 3, 5, 10, 20, 30, 50, 100]
+                    .map(
+                      (v) =>
+                          DropdownMenuItem(value: v, child: Text('$v samples')),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() {
+                  _cfg.teMaxDelay = v!;
+                  _cfg.teMinDelay = v - 1;
+                }),
+              ),
+            if (_cfg.transferEntropy) ...[
+              for (final source in [true, false])
+                DropdownButtonFormField<int>(
+                  initialValue: source
+                      ? _cfg.teSourceHistory
+                      : _cfg.teTargetHistory,
+                  decoration: InputDecoration(
+                    labelText: source
+                        ? 'TE source history (samples)'
+                        : 'TE target history (samples)',
+                  ),
+                  items: [1, 2, 3, 5, 10]
+                      .map((v) => DropdownMenuItem(value: v, child: Text('$v')))
+                      .toList(),
+                  onChanged: (v) => setState(() {
+                    if (source) {
+                      _cfg.teSourceHistory = v!;
+                    } else {
+                      _cfg.teTargetHistory = v!;
+                    }
+                  }),
+                ),
+              DropdownButtonFormField<int>(
+                initialValue: _cfg.teHistoryStep,
+                decoration: const InputDecoration(
+                  labelText: 'TE history spacing (samples)',
+                ),
+                items: [1, 2, 5, 10]
+                    .map((v) => DropdownMenuItem(value: v, child: Text('$v')))
+                    .toList(),
+                onChanged: (v) => setState(() => _cfg.teHistoryStep = v!),
+              ),
+            ],
+          ],
           _check('Coherence (COH)', _cfg.coh, (v) => _cfg.coh = v),
           _check('PLV', _cfg.plv, (v) => _cfg.plv = v),
           _check('ciPLV', _cfg.ciplv, (v) => _cfg.ciplv = v),
@@ -3071,7 +3417,24 @@ class _FeatureHomeState extends State<FeatureHome>
     });
   }
 
-  Widget _buildBatchBar({bool fillAvailable = false}) {
+  Widget _buildBatchBar({bool fillAvailable = false}) => SizedBox(
+    height: fillAvailable ? null : 320,
+    child: BatchProfilesView(
+      profile: _batchProfile,
+      onChanged: (v) => setState(() => _batchProfile = v),
+      eeg: _buildEegBatchBar(fillAvailable: true),
+      erp: ErpWorkbenchView(
+        key: const ValueKey('erp-batch-profile'),
+        config: _cfg,
+      ),
+      microstates: const MicrostateAnalysisView(
+        key: ValueKey('microstate-batch-profile'),
+        batchMode: true,
+      ),
+    ),
+  );
+
+  Widget _buildEegBatchBar({bool fillAvailable = false}) {
     return Container(
       height: fillAvailable ? null : 320,
       decoration: const BoxDecoration(
@@ -4065,11 +4428,9 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('[${i + 1}/${_batchPrepFiles.length}] ${_shortName(path)}');
       try {
         final dir = _batchPrepOutputDir ?? File(path).parent.path;
-        final outPath =
-            '$dir${Platform.pathSeparator}'
-            '${_stem(path)}${_cfg.cleanSuffix}.ccseeg.json';
-
         final rec = await _loader.load(path);
+        final outPath =
+            '$dir${Platform.pathSeparator}${erpOutputName(path, epoched: rec.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai, cleaned: true)}';
         // Detect channel types per file — a batch queue can mix montages.
         final channels = ChannelTypeMap.autoDetect(rec.labels);
         if (channels.nonEegCount > 0) {
@@ -4083,8 +4444,9 @@ class _FeatureHomeState extends State<FeatureHome>
           options: _cfg.toPreprocessingOptions(
             nonEegChannels: channels.nonEegChannels,
           ),
-          outputOverlapSeconds:
-              _cfg.stimEpochs ? 0 : _cfg.preprocessingOverlapSeconds,
+          outputOverlapSeconds: (_cfg.stimEpochs || !_cfg.epochBeforeGedai)
+              ? 0
+              : _cfg.preprocessingOverlapSeconds,
           outputWindowSeconds: _cfg.gedaiEpochSeconds,
           onProgress: (p, msg) {
             _updateBatchFile(path, 'Running', progress: p);
@@ -4526,7 +4888,12 @@ class _FeatureHomeState extends State<FeatureHome>
         ),
       ),
     );
-    return tooltip == null ? button : Tooltip(message: tooltip, child: button);
+    return Tooltip(
+      message:
+          tooltip ??
+          '$label using the selected recording and the settings above. Choose an output path before processing starts; the input file is retained.',
+      child: button,
+    );
   }
 
   Widget _recordingChip(EegRecording rec, {bool active = false}) => Container(

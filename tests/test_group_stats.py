@@ -106,3 +106,15 @@ class GroupStatsTests(unittest.TestCase):
             ols.assert_not_called()
 
 if __name__=='__main__':unittest.main()
+
+class ErpGroupStatsTests(unittest.TestCase):
+    def test_erp_metrics_and_varying_condition_are_suggested(self):
+        rows=[]
+        for subject in range(1,8):
+            for condition,offset in [('Related',0),('Unrelated',-3)]:
+                rows.append(dict(filename=f'{subject}_N400',subjid=str(subject),condn='N400',Chan='Cz',Epoch=1,epoch_label=condition,Condition=condition,mean_amplitude_ERP=subject*.1+offset))
+        table=g.prepare_eeg_table(pd.DataFrame(rows),None,None)
+        detected=g.detect_columns(table)
+        self.assertEqual(detected['group_col'],'Condition')
+        self.assertIn('mean_amplitude_ERP',detected['metric_columns'])
+        self.assertEqual(g.categorize_metrics(detected['metric_columns'])['ERP component measurements'],['mean_amplitude_ERP'])
