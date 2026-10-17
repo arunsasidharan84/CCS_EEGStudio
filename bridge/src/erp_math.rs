@@ -43,12 +43,86 @@ pub fn measure(
         cumulative[k] =
             cumulative[k - 1] + ((polarity * y[i]).max(0.) + (polarity * y[j]).max(0.)) * dt / 2.;
     }
-    let mut peak = indices[0];
-    for &i in &indices {
-        if polarity * y[i] > polarity * y[peak] {
-            peak = i;
+
+    // Determine effective polarity: if 0., auto-detect from window's dominant deflection
+    let eff_polarity = if polarity.abs() > 1e-6 {
+        polarity
+    } else {
+        let win_mean = indices.iter().map(|&i| y[i]).sum::<f64>() / indices.len() as f64;
+        let mut max_pos = 0.0f64;
+        let mut max_neg = 0.0f64;
+        for &i in &indices {
+            let diff = y[i] - win_mean;
+            if diff > max_pos {
+                max_pos = diff;
+            }
+            if -diff > max_neg {
+                max_neg = -diff;
+            }
+        }
+        if max_pos >= max_neg {
+            1.0
+        } else {
+            -1.0
+        }
+    };
+
+    // Find candidate local extrema within the window (excluding window endpoints)
+    let mut local_peaks = Vec::new();
+    let mut opp_local_peaks = Vec::new();
+    for idx_k in 1..indices.len().saturating_sub(1) {
+        let prev = y[indices[idx_k - 1]];
+        let curr = y[indices[idx_k]];
+        let next = y[indices[idx_k + 1]];
+        if eff_polarity > 0.0 {
+            if curr >= prev && curr >= next && (curr > prev || curr > next) {
+                local_peaks.push(indices[idx_k]);
+            }
+            if curr <= prev && curr <= next && (curr < prev || curr < next) {
+                opp_local_peaks.push(indices[idx_k]);
+            }
+        } else {
+            if curr <= prev && curr <= next && (curr < prev || curr < next) {
+                local_peaks.push(indices[idx_k]);
+            }
+            if curr >= prev && curr >= next && (curr > prev || curr > next) {
+                opp_local_peaks.push(indices[idx_k]);
+            }
         }
     }
+
+    let peak = if !local_peaks.is_empty() {
+        // Choose the local peak with the maximum prominent amplitude
+        let mut best = local_peaks[0];
+        for &p in &local_peaks[1..] {
+            if eff_polarity * y[p] > eff_polarity * y[best] {
+                best = p;
+            }
+        }
+        best
+    } else {
+        // If no strict interior local peak, check best sample in indices
+        let mut best = indices[0];
+        for &i in &indices {
+            if eff_polarity * y[i] > eff_polarity * y[best] {
+                best = i;
+            }
+        }
+        // If the extremum lands on the window endpoint, but an interior local peak exists
+        // (e.g. component polarity was positive like P2/P3a but setting was negative),
+        // pick the prominent interior local peak instead of an endpoint artifact.
+        if (best == indices[0] || best == *indices.last().unwrap()) && !opp_local_peaks.is_empty() {
+            let mut best_opp = opp_local_peaks[0];
+            for &p in &opp_local_peaks[1..] {
+                if -eff_polarity * y[p] > -eff_polarity * y[best_opp] {
+                    best_opp = p;
+                }
+            }
+            best = best_opp;
+        }
+        best
+    };
+
     let total = *cumulative.last().unwrap();
     let area = if total > 0. {
         let k = (1..indices.len())
@@ -59,7 +133,7 @@ pub fn measure(
     } else {
         None
     };
-    let threshold = polarity * y[peak] * 0.5;
+    let threshold = eff_polarity * y[peak] * 0.5;
     let mut onset = None;
     if threshold > 0. {
         for pair in indices.windows(2) {
@@ -67,7 +141,7 @@ pub fn measure(
             if b > peak {
                 break;
             }
-            let (va, vb) = (polarity * y[a], polarity * y[b]);
+            let (va, vb) = (eff_polarity * y[a], eff_polarity * y[b]);
             if va < threshold && vb >= threshold {
                 onset = Some(times[a] + (threshold - va) / (vb - va) * (times[b] - times[a]));
                 break;

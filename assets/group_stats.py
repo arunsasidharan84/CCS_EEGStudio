@@ -1001,6 +1001,195 @@ def generate_publication_plot(
     return output_png_path
 
 
+# ─── ELECTRODE-ADJACENCY TFCE (eTFCE) ────────────────────────────────────────
+
+def compute_etfce(
+    raw_df: pd.DataFrame,
+    metric: str,
+    group_col: str,
+    channel_col: str,
+    subject_id: str | None = None,
+    n_perm: int = 1000,
+    e_param: float = 0.5,
+    h_param: float = 2.0,
+    dh_steps: int = 50,
+) -> dict[str, Any] | None:
+    """Computes electrode-adjacency Threshold-Free Cluster Enhancement (eTFCE).
+
+    References:
+    - Smith & Nichols (2009) NeuroImage: Threshold-free cluster enhancement.
+    - Mensen et al. (2013) NeuroImage: Optimal parameters for electrode-adjacency TFCE in EEG.
+
+    Algorithm:
+    1. Constructs electrode adjacency graph from 10-20 spherical scalp coordinates.
+    2. Calculates two-sample t-statistic for each electrode between the two primary groups.
+    3. Integrates cluster extent across thresholds:
+       TFCE(s) = sum_{h} (cluster_size(s, h))^E * h^H * dh
+    4. Evaluates permutation distribution of max-TFCE by permuting subject group labels (n_perm iterations).
+    5. Yields non-parametric FWER cluster-corrected p-values for all electrodes.
+    """
+    needed = [metric, group_col, channel_col] + ([subject_id] if subject_id else [])
+    clean = raw_df[needed].dropna().copy()
+    clean[metric] = pd.to_numeric(clean[metric], errors="coerce")
+    clean = clean.dropna(subset=[metric])
+    groups = sorted([str(g) for g in clean[group_col].dropna().unique()])
+    if len(groups) < 2:
+        return None
+    g1, g2 = groups[0], groups[1]
+
+    channels = sorted([str(c) for c in clean[channel_col].unique()])
+    is_ok, matched = check_topoplot_suitability(channels)
+    if not is_ok or len(matched) < 4:
+        return None
+
+    ch_list = list(matched.keys())
+    n_ch = len(ch_list)
+    adj: dict[int, list[int]] = {i: [] for i in range(n_ch)}
+    for i in range(n_ch):
+        x1, y1 = matched[ch_list[i]]
+        for j in range(i + 1, n_ch):
+            x2, y2 = matched[ch_list[j]]
+            dist = math.hypot(x1 - x2, y1 - y2)
+            if dist <= 0.26:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    # Average within subject if repeated measures exist
+    if subject_id and subject_id in clean.columns:
+        subj_df = clean.groupby([subject_id, group_col, channel_col])[metric].mean().reset_index()
+    else:
+        subj_df = clean
+
+    s_g1 = subj_df[subj_df[group_col].astype(str) == g1]
+    s_g2 = subj_df[subj_df[group_col].astype(str) == g2]
+
+    subjects_g1 = sorted(s_g1[subject_id].unique()) if (subject_id and subject_id in s_g1.columns) else list(range(len(s_g1)))
+    subjects_g2 = sorted(s_g2[subject_id].unique()) if (subject_id and subject_id in s_g2.columns) else list(range(len(s_g2)))
+    if len(subjects_g1) < 2 or len(subjects_g2) < 2:
+        return None
+
+    mat_g1 = np.full((len(subjects_g1), n_ch), np.nan)
+    mat_g2 = np.full((len(subjects_g2), n_ch), np.nan)
+
+    for i, s in enumerate(subjects_g1):
+        sdf = s_g1[s_g1[subject_id] == s] if (subject_id and subject_id in s_g1.columns) else s_g1.iloc[[i]]
+        for c_idx, ch in enumerate(ch_list):
+            v = sdf[sdf[channel_col].astype(str) == ch][metric].values
+            if len(v) > 0:
+                mat_g1[i, c_idx] = v[0]
+
+    for i, s in enumerate(subjects_g2):
+        sdf = s_g2[s_g2[subject_id] == s] if (subject_id and subject_id in s_g2.columns) else s_g2.iloc[[i]]
+        for c_idx, ch in enumerate(ch_list):
+            v = sdf[sdf[channel_col].astype(str) == ch][metric].values
+            if len(v) > 0:
+                mat_g2[i, c_idx] = v[0]
+
+    for c_idx in range(n_ch):
+        col1 = mat_g1[:, c_idx]
+        col2 = mat_g2[:, c_idx]
+        m1 = float(np.nanmean(col1)) if np.any(~np.isnan(col1)) else 0.0
+        m2 = float(np.nanmean(col2)) if np.any(~np.isnan(col2)) else 0.0
+        mat_g1[np.isnan(col1), c_idx] = m1
+        mat_g2[np.isnan(col2), c_idx] = m2
+
+    def calc_t(m1: np.ndarray, m2: np.ndarray) -> np.ndarray:
+        n1_sub, n2_sub = m1.shape[0], m2.shape[0]
+        mean1, mean2 = np.mean(m1, axis=0), np.mean(m2, axis=0)
+        var1 = np.var(m1, axis=0, ddof=1) if n1_sub > 1 else np.zeros(m1.shape[1])
+        var2 = np.var(m2, axis=0, ddof=1) if n2_sub > 1 else np.zeros(m2.shape[1])
+        denom = np.sqrt(var1 / n1_sub + var2 / n2_sub)
+        denom[denom == 0] = 1e-10
+        return (mean2 - mean1) / denom
+
+    def tfce_score(t_vec: np.ndarray) -> np.ndarray:
+        max_t = float(np.max(np.abs(t_vec)))
+        if max_t <= 0:
+            return np.zeros(n_ch)
+        h_vals = np.linspace(0, max_t, dh_steps)
+        dh = float(h_vals[1] - h_vals[0]) if len(h_vals) > 1 else 0.1
+        scores = np.zeros(n_ch)
+
+        for h in h_vals[1:]:
+            visited_pos = set()
+            for seed in range(n_ch):
+                if seed not in visited_pos and t_vec[seed] >= h:
+                    comp_nodes = []
+                    q = [seed]
+                    visited_pos.add(seed)
+                    while q:
+                        curr = q.pop(0)
+                        comp_nodes.append(curr)
+                        for nbr in adj[curr]:
+                            if nbr not in visited_pos and t_vec[nbr] >= h:
+                                visited_pos.add(nbr)
+                                q.append(nbr)
+                    c_size = len(comp_nodes)
+                    inc = (c_size ** e_param) * (h ** h_param) * dh
+                    for node in comp_nodes:
+                        scores[node] += inc
+
+            visited_neg = set()
+            for seed in range(n_ch):
+                if seed not in visited_neg and t_vec[seed] <= -h:
+                    comp_nodes = []
+                    q = [seed]
+                    visited_neg.add(seed)
+                    while q:
+                        curr = q.pop(0)
+                        comp_nodes.append(curr)
+                        for nbr in adj[curr]:
+                            if nbr not in visited_neg and t_vec[nbr] <= -h:
+                                visited_neg.add(nbr)
+                                q.append(nbr)
+                    c_size = len(comp_nodes)
+                    inc = (c_size ** e_param) * (h ** h_param) * dh
+                    for node in comp_nodes:
+                        scores[node] += inc
+
+        return scores
+
+    obs_t = calc_t(mat_g1, mat_g2)
+    obs_tfce = tfce_score(obs_t)
+
+    combined = np.vstack([mat_g1, mat_g2])
+    n1_len = mat_g1.shape[0]
+    n_tot = combined.shape[0]
+    max_null = np.zeros(n_perm)
+
+    rng = np.random.default_rng(42)
+    for p in range(n_perm):
+        perm_idx = rng.permutation(n_tot)
+        perm_g1 = combined[perm_idx[:n1_len]]
+        perm_g2 = combined[perm_idx[n1_len:]]
+        perm_t = calc_t(perm_g1, perm_g2)
+        perm_tfce = tfce_score(perm_t)
+        max_null[p] = float(np.max(perm_tfce))
+
+    p_etfce = np.array([
+        float(np.sum(max_null >= obs_tfce[i]) + 1) / (n_perm + 1)
+        for i in range(n_ch)
+    ])
+
+    dof = len(subjects_g1) + len(subjects_g2) - 2
+    p_uncorr = 2 * (1 - stats.t.cdf(np.abs(obs_t), df=dof))
+    sig_channels = [ch_list[i] for i in range(n_ch) if p_etfce[i] < 0.05]
+
+    return {
+        "channels": ch_list,
+        "t_stats": [float(x) for x in obs_t],
+        "tfce_scores": [float(x) for x in obs_tfce],
+        "p_uncorrected": [float(x) for x in p_uncorr],
+        "p_etfce": [float(x) for x in p_etfce],
+        "sig_channels_etfce": sig_channels,
+        "n_perm": n_perm,
+        "group1": str(g1),
+        "group2": str(g2),
+        "e_param": e_param,
+        "h_param": h_param,
+    }
+
+
 # ─── 2D EEG TOPOGRAPHIC SCALP DISTRIBUTION (TOPOPLOT) ────────────────────────
 
 def generate_topoplot(
@@ -1010,6 +1199,7 @@ def generate_topoplot(
     channel_col: str,
     posthoc_contrasts: list[dict[str, Any]],
     output_png_path: Path,
+    etfce_result: dict[str, Any] | None = None,
 ) -> Path | None:
     """Renders 2D EEG topographic scalp distribution map (Topoplot) across channels for each group and differences."""
     needed = [metric, group_col, channel_col]
@@ -1044,6 +1234,11 @@ def generate_topoplot(
             level = str(c.get("level", ""))
             if level in matched:
                 sig_channels.add(level)
+
+    if etfce_result and etfce_result.get("sig_channels_etfce"):
+        for ch in etfce_result["sig_channels_etfce"]:
+            if ch in matched:
+                sig_channels.add(ch)
 
     # Grid for interpolation
     r = 0.5
@@ -1651,9 +1846,23 @@ def run_group_analysis(
             generate_publication_plot(res, df, plot_file)
             plot_paths[m] = plot_file
 
-            # Generate topoplot if channel distribution is suitable and not invariant macroarchitecture
+            # Generate topoplot & compute eTFCE if channel distribution is suitable and not invariant macroarchitecture
             if is_topo_feasible and not res.get("is_macroarchitecture", False):
                 topo_file = plots_dir / f"{m}_topoplot.png"
+                etfce_res = None
+                try:
+                    etfce_res = compute_etfce(
+                        raw_df=df,
+                        metric=m,
+                        group_col=final_group_col,
+                        channel_col=final_subgroup_col,
+                        subject_id=final_subject_id,
+                    )
+                    if etfce_res:
+                        res["etfce"] = etfce_res
+                except Exception as e:
+                    sys.stderr.write(f"eTFCE notice for {m}: {e}\n")
+
                 topo_res = generate_topoplot(
                     raw_df=df,
                     metric=m,
@@ -1661,6 +1870,7 @@ def run_group_analysis(
                     channel_col=final_subgroup_col,
                     posthoc_contrasts=res.get("posthoc_contrasts", []),
                     output_png_path=topo_file,
+                    etfce_result=etfce_res,
                 )
                 if topo_res and topo_res.exists():
                     res["topoplot_path"] = str(topo_res)

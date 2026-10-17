@@ -130,6 +130,47 @@ class _ErpChannelGridState extends State<ErpChannelGrid> {
       'profile': widget.profile,
       ...widget.axisLimits,
     };
+    final firstFile = widget.files.first;
+    final condNames = (firstFile['condition_names'] as List?)?.cast<String>() ?? [];
+
+    if (condNames.isNotEmpty) {
+      d['condition_names'] = condNames;
+      final condWaves = <String, List<double>>{};
+      final condSems = <String, List<double>>{};
+      for (final cond in condNames) {
+        final people = <String, List<List<double>>>{};
+        for (final f in widget.files) {
+          final index = (f['labels'] as List).indexOf(label);
+          if (index < 0) continue;
+          List<double>? values;
+          final chans = f['channel_conditions'] as Map?;
+          if (chans != null && chans.containsKey(cond)) {
+            final rows = chans[cond] as List?;
+            if (rows != null && index < rows.length) {
+              values = erpNumbers(rows[index]);
+            }
+          } else if (cond == condNames.first && f['channel_a'] != null) {
+            final rows = f['channel_a'] as List?;
+            if (rows != null && index < rows.length) values = erpNumbers(rows[index]);
+          } else if (condNames.length > 1 && cond == condNames[1] && f['channel_b'] != null) {
+            final rows = f['channel_b'] as List?;
+            if (rows != null && index < rows.length) values = erpNumbers(rows[index]);
+          }
+          if (values != null && values.length == times.length) {
+            people.putIfAbsent('${f['subject']}', () => []).add(values);
+          }
+        }
+        final waves = [
+          for (final p in people.values)
+            smoothErp(reviewAverage(p), times, widget.smoothingMs),
+        ];
+        condWaves[cond] = reviewAverage(waves);
+        condSems[cond] = reviewSem(waves);
+      }
+      d['condition_waves'] = condWaves;
+      d['condition_sems'] = condSems;
+    }
+
     for (final key in ['a', 'b', 'difference']) {
       final people = <String, List<List<double>>>{};
       for (final f in widget.files) {

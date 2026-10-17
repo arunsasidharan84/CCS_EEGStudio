@@ -8,6 +8,44 @@ its matching section is missing.
 
 - Fix administrator Linux updates failing with `curl: (23)` when a previous user owns the fixed package filename in `/tmp`. Package downloads and optional engine rebuilds now use a private temporary directory, cleaned on success or failure. The generated updater also cleans its downloaded installer. Existing updater commands fetch this fix from `main`; no application reinstall is needed.
 
+## [1.2.22]
+
+### Multi-condition ERP analysis and event group naming
+
+- Support arbitrary multiple conditions ($K \ge 2$, e.g. Standard, Oddball, Distracter, Novel) in ERP analysis and interactive review instead of rigid two-condition A/B limits.
+- Automatically serialize and display actual event group names across waveforms, channel grids, legends, hover readouts, measurement summary tables, and exported model CSVs (`Condition` column now records the condition group name).
+- Maintain 100% backward compatibility for legacy 2-condition profiles and scripts (`a`, `b`, `difference`).
+
+### Peak latency interior turning-point detection
+
+- Fix peak latency returning window endpoints instead of the true peak timepoint. The interior turning-point algorithm isolates true local extrema where the first derivative crosses zero.
+- If the waveform is monotonic or flat at the boundary, the solver falls back to an interior opposite-polarity deflection rather than pinning to the boundary edge. Verified across Dart and Rust test suites.
+
+### Batch individual ERP browsing gallery
+
+- Add a dedicated **Individual ERPs** gallery tab in batch results with live search and filter by Subject ID or assigned group.
+- Each participant card renders mini sparkline ERP waveforms across conditions, accepted trial counts, group affiliation badges, and peak latency/amplitude callouts, with a one-click **Inspect →** button jumping directly into that participant's waveforms and channel grid.
+- Add `[◀ Prev]` `Grand Average / Participant X of N` `[Next ▶]` stepper in the ERP results header to rapidly cycle through individual participants.
+
+### Publication-friendly plots studio and group labeling
+
+- Add an interactive **Publication plots** studio matching the journal aesthetic of cognitive ERP literature (Cahn & Polich 2009):
+  - **Fig 1**: Grand-averaged waveform grid across midline electrodes (e.g. Fz, Cz, Pz) and conditions with group overlays, shaded SEM error bands, and N1/P2/P3a peak callouts.
+  - **Fig 2**: Scalp topographic voltage maps grid (Groups $\times$ Conditions $\times$ Components) with scientific diverging colorbar and head outlines.
+  - **Fig 3 & 5**: Interaction line plots of Component Mean Amplitude / Peak Latency across Electrodes and Conditions with SEM error bars.
+- One-click export to **W3C Vector SVG** (infinite resolution for Adobe Illustrator/Inkscape) and **300 DPI High-Resolution PNG**.
+- Add interactive `ErpGroupLabelDialog` to label participant cohorts directly from the UI after batch analysis, with automatic prefix guessing (e.g. `CTRL_` vs `MED_`), 50/50 split, manual assignment, and CSV export/import (`participant_groups.csv`).
+
+### State-of-the-art statistics (eTFCE & LMM/GLM)
+
+- Add full electrode-adjacency Threshold-Free Cluster Enhancement (`compute_etfce`) in `assets/group_stats.py` using Smith & Nichols (2009) and Mensen et al. (2013) parameters ($E=0.5, H=2.0$), 10-20 spherical scalp coordinate neighborhood adjacency graphs, and non-parametric subject permutation testing.
+- Connect publication plots directly into the Linear Mixed Models (LMM), Repeated-Measures ANOVA, and eTFCE statistics engine via **Run LMM / GLM & eTFCE Stats**.
+
+### Validation
+
+- Full test suite passes cleanly, including `erp_review_test.dart`, `erp_workbench_parity.rs`, `unified_analysis_workflow_test.dart`, and `erp_workbench_test.dart`.
+- Static analysis clean: `flutter analyze` reports 0 issues across the entire codebase.
+
 ## [1.2.21]
 
 - Supersede the unpublished v1.2.20 build tag after correcting the Linux portable-package workflow.

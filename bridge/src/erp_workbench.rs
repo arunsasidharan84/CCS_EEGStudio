@@ -21,20 +21,82 @@ pub struct Event {
     pub index: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionDef {
+    pub name: String,
+    pub codes: Vec<String>,
+}
+
+fn default_a_name() -> String {
+    "A".into()
+}
+
+fn default_b_name() -> String {
+    "B".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub task: String,
     #[serde(default)]
     pub component_name: String,
+    #[serde(default = "default_a_name")]
     pub a_name: String,
+    #[serde(default = "default_b_name")]
     pub b_name: String,
+    #[serde(default)]
     pub a_codes: Vec<String>,
+    #[serde(default)]
     pub b_codes: Vec<String>,
+    #[serde(default)]
+    pub conditions: Vec<ConditionDef>,
     pub roi: Vec<String>,
     pub epoch: [f64; 2],
     pub baseline: [f64; 2],
     pub window: [f64; 2],
     pub polarity: f64,
+    #[serde(default)]
     pub lateralized: bool,
+}
+
+impl Profile {
+    pub fn resolved_conditions(&self) -> Vec<ConditionDef> {
+        if !self.conditions.is_empty() {
+            self.conditions.clone()
+        } else {
+            let mut list = Vec::new();
+            if !self.a_name.is_empty() || !self.a_codes.is_empty() {
+                list.push(ConditionDef {
+                    name: if self.a_name.is_empty() {
+                        "A".into()
+                    } else {
+                        self.a_name.clone()
+                    },
+                    codes: self.a_codes.clone(),
+                });
+            }
+            if !self.b_name.is_empty() || !self.b_codes.is_empty() {
+                list.push(ConditionDef {
+                    name: if self.b_name.is_empty() {
+                        "B".into()
+                    } else {
+                        self.b_name.clone()
+                    },
+                    codes: self.b_codes.clone(),
+                });
+            }
+            if list.is_empty() {
+                list.push(ConditionDef {
+                    name: "A".into(),
+                    codes: Vec::new(),
+                });
+                list.push(ConditionDef {
+                    name: "B".into(),
+                    codes: Vec::new(),
+                });
+            }
+            list
+        }
+    }
 }
 fn codes(x: &[i32]) -> Vec<String> {
     x.iter().map(|v| v.to_string()).collect()
@@ -47,6 +109,7 @@ pub fn profile(task: &str) -> Result<Profile, String> {
         b_name: "B".into(),
         a_codes: Vec::new(),
         b_codes: Vec::new(),
+        conditions: Vec::new(),
         roi: vec!["Fz".into()],
         epoch: [-0.2, 0.8],
         baseline: [-0.2, 0.],
@@ -690,14 +753,15 @@ struct Trial {
 fn classify(events: &[Event], p: &Profile, o: &Options) -> (Vec<Trial>, usize) {
     let mut trials = Vec::new();
     let mut rejected = 0;
+    let conditions = p.resolved_conditions();
     for (i, e) in events.iter().enumerate() {
         let normalized = normalized(&e.label);
-        let class = if p.a_codes.iter().any(|x| self::normalized(x) == normalized) {
-            0
-        } else if p.b_codes.iter().any(|x| self::normalized(x) == normalized) {
-            1
-        } else {
-            continue;
+        let class = match conditions
+            .iter()
+            .position(|c| c.codes.iter().any(|x| self::normalized(x) == normalized))
+        {
+            Some(idx) => idx,
+            None => continue,
         };
         let response = if !["MMN", "ERN", "LRP"].contains(&p.task.as_str()) {
             events
@@ -750,6 +814,18 @@ fn avg(x: &[Vec<f64>]) -> Vec<f64> {
         .map(|j| x.iter().map(|r| r[j]).sum::<f64>() / x.len() as f64)
         .collect()
 }
+fn waves_sem(x: &[Vec<f64>]) -> Vec<f64> {
+    if x.len() <= 1 {
+        return if x.is_empty() { Vec::new() } else { vec![0.0; x[0].len()] };
+    }
+    let m = avg(x);
+    let n = x.len() as f64;
+    (0..m.len())
+        .map(|j| {
+            (x.iter().map(|r| (r[j] - m[j]).powi(2)).sum::<f64>() / ((n - 1.0) * n)).sqrt()
+        })
+        .collect()
+}
 #[derive(Clone, Serialize)]
 pub struct FileResult {
     pub path: String,
@@ -766,6 +842,12 @@ pub struct FileResult {
     pub difference: Vec<f64>,
     pub n_a: usize,
     pub n_b: usize,
+    #[serde(default)]
+    pub condition_names: Vec<String>,
+    #[serde(default)]
+    pub condition_waves: BTreeMap<String, Vec<f64>>,
+    #[serde(default)]
+    pub condition_counts: Vec<usize>,
     pub rejected_behavior: usize,
     pub rejected_boundary: usize,
     pub rejected_amplitude: usize,
@@ -777,6 +859,8 @@ pub struct FileResult {
     pub channel_difference: Vec<Vec<f64>>,
     pub channel_a: Vec<Vec<f64>>,
     pub channel_b: Vec<Vec<f64>>,
+    #[serde(default)]
+    pub channel_conditions: BTreeMap<String, Vec<Vec<f64>>>,
     pub gfp_a: Vec<f64>,
     pub gfp_b: Vec<f64>,
     pub regression: Option<Value>,
@@ -893,12 +977,13 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
             } else {
                 label.as_str()
             };
-            let class = if p.a_codes.iter().any(|c| normalized(c) == normalized(label)) {
-                0
-            } else if p.b_codes.iter().any(|c| normalized(c) == normalized(label)) {
-                1
-            } else {
-                continue;
+            let conditions = p.resolved_conditions();
+            let class = match conditions
+                .iter()
+                .position(|c| c.codes.iter().any(|code| normalized(code) == normalized(label)))
+            {
+                Some(idx) => idx,
+                None => continue,
             };
             let event = Event {
                 label: label.to_string(),
@@ -979,11 +1064,15 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
     let bin_times: Vec<_> = (0..nb)
         .map(|b| p.epoch[0] + (b as f64 + 0.5) * dt)
         .collect();
+    let conditions = p.resolved_conditions();
+    let num_conditions = conditions.len();
+    let mut mean_conditions = vec![vec![vec![0.; points]; labels.len()]; num_conditions];
+    let mut roi_conditions = vec![vec![0.; points]; num_conditions];
+    let mut n = vec![0usize; num_conditions];
     let mut mean_a = vec![vec![0.; points]; labels.len()];
     let mut mean_b = mean_a.clone();
     let mut roi_a = vec![0.; points];
     let mut roi_b = roi_a.clone();
-    let mut n = [0usize; 2];
     let (mut boundary, mut artifact) = (0, 0);
     let mut accepted = Vec::new();
     let mut trial_metrics = Vec::new();
@@ -1035,19 +1124,27 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
         }
         let class = trial.class;
         n[class] += 1;
-        let (ra, rb) = if p.lateralized {
-            let ipsi = roi[class];
-            let contra = roi[1 - class];
-            (x[ipsi].clone(), x[contra].clone())
-        } else {
-            let r: Vec<_> = (0..points)
-                .map(|t| roi.iter().map(|&c| x[c][t]).sum::<f64>() / roi.len() as f64)
-                .collect();
-            if class == 0 {
-                (r, Vec::new())
-            } else {
-                (Vec::new(), r)
+        let r: Vec<_> = (0..points)
+            .map(|t| roi.iter().map(|&c| x[c][t]).sum::<f64>() / roi.len() as f64)
+            .collect();
+        for t in 0..points {
+            roi_conditions[class][t] += r[t];
+        }
+        for c in 0..labels.len() {
+            for t in 0..points {
+                mean_conditions[class][c][t] += x[c][t];
             }
+        }
+        let (ra, rb) = if p.lateralized {
+            let ipsi = roi[class.min(1)];
+            let contra = roi[1 - class.min(1)];
+            (x[ipsi].clone(), x[contra].clone())
+        } else if class == 0 {
+            (r.clone(), Vec::new())
+        } else if class == 1 {
+            (Vec::new(), r.clone())
+        } else {
+            (Vec::new(), Vec::new())
         };
         if p.lateralized {
             for c in 0..labels.len() {
@@ -1058,11 +1155,16 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
                     mean_b[c][t] += x[canonical][t];
                 }
             }
-        } else {
-            let target = if class == 0 { &mut mean_a } else { &mut mean_b };
+        } else if class == 0 {
             for c in 0..labels.len() {
                 for t in 0..points {
-                    target[c][t] += x[c][t];
+                    mean_a[c][t] += x[c][t];
+                }
+            }
+        } else if class == 1 {
+            for c in 0..labels.len() {
+                for t in 0..points {
+                    mean_b[c][t] += x[c][t];
                 }
             }
         }
@@ -1070,17 +1172,22 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
             for t in 0..points {
                 roi_a[t] += ra[t];
             }
-            if o.export_trial_measurements {
-                trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Ipsilateral"}else{&p.a_name},"metrics":math::measure(&times,&ra,p.window,p.polarity)?}));
-            }
         }
         if !rb.is_empty() {
             for t in 0..points {
                 roi_b[t] += rb[t];
             }
-            if o.export_trial_measurements {
-                trial_metrics.push(json!({"event_index":trial.event.index,"condition":if p.lateralized{"Contralateral"}else{&p.b_name},"metrics":math::measure(&times,&rb,p.window,p.polarity)?}));
-            }
+        }
+        if o.export_trial_measurements {
+            trial_metrics.push(json!({
+                "event_index": trial.event.index,
+                "condition": if p.lateralized {
+                    if class == 0 { "Ipsilateral" } else { "Contralateral" }
+                } else {
+                    &conditions[class].name
+                },
+                "metrics": math::measure(&times, &r, p.window, p.polarity)?
+            }));
         }
         if o.regression || o.decoding {
             binned.push(
@@ -1093,12 +1200,24 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
         kept.push(trial);
     }
     if n.iter().any(|&v| v < 2) {
+        let counts: Vec<String> = n.iter().enumerate().map(|(i, &c)| format!("{}: {}", conditions[i].name, c)).collect();
         return Err(format!(
-            "Each event class needs at least two accepted trials; got {} and {}",
-            n[0], n[1]
+            "Each event class needs at least two accepted trials; got {}",
+            counts.join(", ")
         ));
     }
-    let denominators = if p.lateralized { [n[0] + n[1]; 2] } else { n };
+    for k in 0..num_conditions {
+        let denom = n[k] as f64;
+        for c in 0..labels.len() {
+            for t in 0..points {
+                mean_conditions[k][c][t] /= denom;
+            }
+        }
+        for t in 0..points {
+            roi_conditions[k][t] /= denom;
+        }
+    }
+    let denominators = if p.lateralized { [n[0] + n[1]; 2] } else { [n[0], n[1]] };
     for c in 0..labels.len() {
         for t in 0..points {
             mean_a[c][t] /= denominators[0] as f64;
@@ -1111,8 +1230,20 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
     }
     let difference: Vec<_> = roi_b.iter().zip(&roi_a).map(|(b, a)| b - a).collect();
     let mut measurements = BTreeMap::new();
-    for (name, x) in [("A", &roi_a), ("B", &roi_b), ("B_minus_A", &difference)] {
-        measurements.insert(name.into(), math::measure(&times, x, p.window, p.polarity)?);
+    let mut condition_waves = BTreeMap::new();
+    let mut channel_conditions = BTreeMap::new();
+    let mut condition_names = Vec::new();
+    for k in 0..num_conditions {
+        let name = &conditions[k].name;
+        condition_names.push(name.clone());
+        condition_waves.insert(name.clone(), roi_conditions[k].clone());
+        channel_conditions.insert(name.clone(), mean_conditions[k].clone());
+        measurements.insert(name.clone(), math::measure(&times, &roi_conditions[k], p.window, p.polarity)?);
+    }
+    if num_conditions >= 2 {
+        measurements.insert("A".into(), math::measure(&times, &roi_a, p.window, p.polarity)?);
+        measurements.insert("B".into(), math::measure(&times, &roi_b, p.window, p.polarity)?);
+        measurements.insert("B_minus_A".into(), math::measure(&times, &difference, p.window, p.polarity)?);
     }
     let topo_a: Vec<_> = mean_a
         .iter()
@@ -1215,7 +1346,10 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
         b: roi_b,
         difference,
         n_a: n[0],
-        n_b: n[1],
+        n_b: if n.len() > 1 { n[1] } else { 0 },
+        condition_names,
+        condition_waves,
+        condition_counts: n.clone(),
         rejected_behavior,
         rejected_boundary: boundary,
         rejected_amplitude: artifact,
@@ -1230,6 +1364,7 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
             .collect(),
         channel_a: mean_a.clone(),
         channel_b: mean_b.clone(),
+        channel_conditions,
         gfp_a: gfp(&mean_a),
         gfp_b: gfp(&mean_b),
         regression,
@@ -1810,7 +1945,69 @@ fn group(files: &[&FileResult], o: &Options) -> Value {
                 .collect::<Vec<_>>())
         })
         .collect::<Vec<_>>());
-    json!({"task":first.task,"component_name":first.profile.component_name,"profile":first.profile,"subjects":names,"n_subjects":subjects.len(),"n_files":files.len(),"times":first.times,"a":a,"b":b,"difference":difference,"sem_difference":sem,"grand_difference_measurements":grand_difference_measurements,"regression_inference":regression_inference,"gfp_a":gfp_a,"gfp_b":gfp_b,"labels":common_labels,"topo_difference":if same_channels{Some(avg(&topo))}else{None},"topo_t":topo_t,"topo_p_fwer":topo_p,"bin_times":first.bin_times,"spatiotemporal_t":temporal_t,"spatiotemporal_p_fwer":temporal_p,"statistics":stats,"tanova_gmd":tanova,"tanova_p":tanova_p,"permutation_patterns":flip.len(),"inference_unit":"participant; multiple recordings averaged within participant","warning":if !same_channels{"Fewer than four common channels: topographical inference omitted"}else if subjects.len()<2{"One participant: descriptive results only"}else{"Separate max-|t| families: component-window channels and all channel×time bins"}})
+    let mut grand_condition_waves = BTreeMap::new();
+    let mut grand_condition_sems = BTreeMap::new();
+    let mut grand_condition_measurements = BTreeMap::new();
+    for name in &first.condition_names {
+        let mut subject_waves: Vec<Vec<f64>> = Vec::new();
+        for fs in subjects.values() {
+            let mut waves = Vec::new();
+            for f in fs {
+                if let Some(w) = f.condition_waves.get(name) {
+                    waves.push(w.clone());
+                }
+            }
+            if !waves.is_empty() {
+                subject_waves.push(avg(&waves));
+            }
+        }
+        if !subject_waves.is_empty() {
+            let a = avg(&subject_waves);
+            let s = waves_sem(&subject_waves);
+            grand_condition_waves.insert(name.clone(), a.clone());
+            grand_condition_sems.insert(name.clone(), s);
+            if let Ok(m) = math::measure(&first.times, &a, first.profile.window, first.profile.polarity) {
+                grand_condition_measurements.insert(name.clone(), m);
+            }
+        }
+    }
+    let mut grand_channel_conditions = BTreeMap::new();
+    if same_channels {
+        for name in &first.condition_names {
+            let mut subj_chans: Vec<Vec<Vec<f64>>> = Vec::new();
+            for fs in subjects.values() {
+                let mut fs_chans = Vec::new();
+                for f in fs {
+                    if let Some(ch) = f.channel_conditions.get(name) {
+                        fs_chans.push(ch.clone());
+                    }
+                }
+                if !fs_chans.is_empty() {
+                    let n_chan = fs_chans[0].len();
+                    let n_time = fs_chans[0][0].len();
+                    let mut subj_mean = vec![vec![0.0; n_time]; n_chan];
+                    for c in 0..n_chan {
+                        for t in 0..n_time {
+                            subj_mean[c][t] = fs_chans.iter().map(|ch| ch[c][t]).sum::<f64>() / fs_chans.len() as f64;
+                        }
+                    }
+                    subj_chans.push(subj_mean);
+                }
+            }
+            if !subj_chans.is_empty() {
+                let n_chan = subj_chans[0].len();
+                let n_time = subj_chans[0][0].len();
+                let mut cond_mean = vec![vec![0.0; n_time]; n_chan];
+                for c in 0..n_chan {
+                    for t in 0..n_time {
+                        cond_mean[c][t] = subj_chans.iter().map(|ch| ch[c][t]).sum::<f64>() / subj_chans.len() as f64;
+                    }
+                }
+                grand_channel_conditions.insert(name.clone(), cond_mean);
+            }
+        }
+    }
+    json!({"task":first.task,"component_name":first.profile.component_name,"profile":first.profile,"subjects":names,"n_subjects":subjects.len(),"n_files":files.len(),"times":first.times,"a":a,"b":b,"difference":difference,"sem_difference":sem,"grand_difference_measurements":grand_difference_measurements,"condition_names":first.condition_names,"condition_waves":grand_condition_waves,"condition_sems":grand_condition_sems,"grand_condition_measurements":grand_condition_measurements,"channel_conditions":if same_channels{Some(grand_channel_conditions)}else{None},"regression_inference":regression_inference,"gfp_a":gfp_a,"gfp_b":gfp_b,"labels":common_labels,"topo_difference":if same_channels{Some(avg(&topo))}else{None},"topo_t":topo_t,"topo_p_fwer":topo_p,"bin_times":first.bin_times,"spatiotemporal_t":temporal_t,"spatiotemporal_p_fwer":temporal_p,"statistics":stats,"tanova_gmd":tanova,"tanova_p":tanova_p,"permutation_patterns":flip.len(),"inference_unit":"participant; multiple recordings averaged within participant","warning":if !same_channels{"Fewer than four common channels: topographical inference omitted"}else if subjects.len()<2{"One participant: descriptive results only"}else{"Separate max-|t| families: component-window channels and all channel×time bins"}})
 }
 pub fn run<F>(job: &Job, mut load: F) -> Result<Value, String>
 where

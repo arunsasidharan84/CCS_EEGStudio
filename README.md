@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.21</b> ·
+  <b>Current version: 1.2.22</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -132,6 +132,35 @@ The updater fetches the current installer on each run. Downloads use a private t
 | 🧹 | Configurable GEDAI window/epoch size for continuous and memory-safe preprocessing |
 | 🔁 | Single-recording exploration and unattended batch pipelines share one configuration |
 | ⬆️ | Built-in update checker downloads and installs verified packages directly from GitHub Releases |
+
+---
+
+## What's new in 1.2.22
+
+### Multi-condition ERP analysis, event group naming and peak accuracy
+
+- **Arbitrary Conditions ($K \ge 2$)**: Configure and compare multiple named conditions (e.g. Standard, Oddball, Distracter, Novel) simultaneously in single-subject and batch ERP analysis, replacing previous two-condition limits.
+- **Event Group Naming**: Condition names are automatically serialized and displayed throughout waveform plots, multi-channel grids, legends, summary tables, and exported CSV models (`Condition` column reflects the true event group).
+- **Peak Latency Accuracy**: The peak latency calculation now employs interior turning-point detection and opposite-polarity deflection fallback, avoiding window endpoint boundary pinning.
+
+### Batch individual ERP browsing gallery
+
+- **Individual ERPs Gallery**: Dedicated batch results tab with live search/filter by Subject ID or assigned group. Participant cards display mini sparkline ERP waveforms, accepted trial counts, group affiliation badges, and peak measurements, with a one-click **Inspect →** button jumping directly into that participant's waveforms and channel grid.
+- **Participant Stepper**: Added `[◀ Prev]` `Grand Average / Participant X of N` `[Next ▶]` stepper in the ERP results header for rapid cycling through individual recordings.
+
+### Publication-friendly plots studio & group labeling
+
+- **Publication Plots Studio**: Interactive studio providing journal-ready figures matching cognitive ERP literature (Cahn & Polich 2009):
+  - **Fig 1**: Grand-averaged waveform grid across midline electrodes and conditions with group overlays, shaded SEM error bands, and N1/P2/P3a peak callouts.
+  - **Fig 2**: Scalp topographic voltage maps grid (Groups $\times$ Conditions $\times$ Components) with scientific diverging colorbar and head outlines.
+  - **Fig 3 & 5**: Interaction line plots of Component Mean Amplitude / Peak Latency across Electrodes and Conditions with SEM error bars.
+- **Vector & High-Res Export**: Direct export to **W3C Vector SVG** (infinite resolution) and **300 DPI High-Resolution PNG**.
+- **Participant Group Labeling**: Interactive `ErpGroupLabelDialog` to label participant cohorts directly from the UI after batch analysis, with automatic prefix guessing (e.g. `CTRL_` vs `MED_`), 50/50 split, manual assignment, and CSV export/import (`participant_groups.csv`).
+
+### State-of-the-art statistics (eTFCE & LMM/GLM)
+
+- **Electrode-Adjacency TFCE**: Integrated `compute_etfce` using Smith & Nichols (2009) and Mensen et al. (2013) parameters ($E=0.5, H=2.0$) with 10-20 spherical scalp coordinate neighborhood adjacency graphs and non-parametric subject permutation testing.
+- **Direct Stats Integration**: One-click launch from the publication plots studio into Linear Mixed Models (LMM), Repeated-Measures ANOVA, and eTFCE statistics.
 
 ---
 

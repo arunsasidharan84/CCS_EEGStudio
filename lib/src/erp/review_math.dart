@@ -29,12 +29,22 @@ Map<String, double?> reviewMeasures(
       if (times[i] >= lo - 1e-10 && times[i] <= hi + 1e-10) i,
   ];
   if (indices.length < 2 || times.length != y.length) return {};
+
+  final effPolarity = polarity.abs() > 1e-6
+      ? polarity
+      : () {
+          final winMean = indices.map((i) => y[i]).reduce((a, b) => a + b) / indices.length;
+          var maxPos = 0.0, maxNeg = 0.0;
+          for (final i in indices) {
+            final diff = y[i] - winMean;
+            if (diff > maxPos) maxPos = diff;
+            if (-diff > maxNeg) maxNeg = -diff;
+          }
+          return maxPos >= maxNeg ? 1.0 : -1.0;
+        }();
+
   double signed = 0, positive = 0, negative = 0;
   final cumulative = <double>[0];
-  var peak = indices.first;
-  for (final i in indices) {
-    if (polarity * y[i] > polarity * y[peak]) peak = i;
-  }
   for (var k = 1; k < indices.length; k++) {
     final i = indices[k - 1], j = indices[k];
     final dt = times[j] - times[i];
@@ -43,11 +53,58 @@ Map<String, double?> reviewMeasures(
     negative += (math.min(0, y[i]) + math.min(0, y[j])) * dt / 2;
     cumulative.add(
       cumulative.last +
-          (math.max(0, polarity * y[i]) + math.max(0, polarity * y[j])) *
+          (math.max(0, effPolarity * y[i]) + math.max(0, effPolarity * y[j])) *
               dt /
               2,
     );
   }
+
+  // Find candidate local extrema within the window (excluding window endpoints)
+  final localPeaks = <int>[];
+  final oppLocalPeaks = <int>[];
+  for (var k = 1; k < indices.length - 1; k++) {
+    final prev = y[indices[k - 1]], curr = y[indices[k]], next = y[indices[k + 1]];
+    if (effPolarity > 0) {
+      if (curr >= prev && curr >= next && (curr > prev || curr > next)) {
+        localPeaks.add(indices[k]);
+      }
+      if (curr <= prev && curr <= next && (curr < prev || curr < next)) {
+        oppLocalPeaks.add(indices[k]);
+      }
+    } else {
+      if (curr <= prev && curr <= next && (curr < prev || curr < next)) {
+        localPeaks.add(indices[k]);
+      }
+      if (curr >= prev && curr >= next && (curr > prev || curr > next)) {
+        oppLocalPeaks.add(indices[k]);
+      }
+    }
+  }
+
+  int peak;
+  if (localPeaks.isNotEmpty) {
+    peak = localPeaks.first;
+    for (final p in localPeaks) {
+      if (effPolarity * y[p] > effPolarity * y[peak]) peak = p;
+    }
+  } else {
+    // If no local peak of effPolarity, find maximum in window
+    peak = indices.first;
+    for (final i in indices) {
+      if (effPolarity * y[i] > effPolarity * y[peak]) peak = i;
+    }
+    // If the extremum lands on the window endpoint, but an interior local peak exists
+    // (e.g. component polarity was positive like P2/P3a but setting was negative),
+    // pick the prominent interior local peak instead of an endpoint artifact.
+    if ((peak == indices.first || peak == indices.last) && oppLocalPeaks.isNotEmpty) {
+      var bestOpp = oppLocalPeaks.first;
+      for (final p in oppLocalPeaks) {
+        if (-effPolarity * y[p] > -effPolarity * y[bestOpp]) bestOpp = p;
+      }
+      peak = bestOpp;
+    }
+  }
+
   double? area, onset;
   if (cumulative.last > 0) {
     final k = List.generate(
@@ -61,12 +118,12 @@ Map<String, double?> reviewMeasures(
         times[indices[k - 1]] +
         fraction * (times[indices[k]] - times[indices[k - 1]]);
   }
-  final threshold = polarity * y[peak] * .5;
+  final threshold = effPolarity * y[peak] * .5;
   if (threshold > 0) {
     for (var k = 1; k < indices.length; k++) {
       final i = indices[k - 1], j = indices[k];
       if (j > peak) break;
-      final a = polarity * y[i], b = polarity * y[j];
+      final a = effPolarity * y[i], b = effPolarity * y[j];
       if (a < threshold && b >= threshold) {
         onset = times[i] + (threshold - a) / (b - a) * (times[j] - times[i]);
         break;

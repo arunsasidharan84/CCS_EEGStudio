@@ -216,4 +216,25 @@ void main() {
       image.dispose();
     });
   });
+
+  test('peak latency returns true local peak timepoint and avoids window endpoints', () {
+    // Waveform with a clear positive peak at 200 ms (t=0.2 s) within window [0.1, 0.4]
+    final times = [0.0, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5];
+    final y = [0.0, 1.0, 3.0, 7.5, 3.2, 1.2, 0.5, 0.2, 0.0];
+
+    // Matching positive polarity (+1):
+    final mPos = reviewMeasures(times, y, 0.1, 0.4, 1.0);
+    expect(mPos['peak_latency_ms'], 200.0);
+    expect(mPos['peak_amplitude'], 7.5);
+
+    // Auto polarity (0.0):
+    final mAuto = reviewMeasures(times, y, 0.1, 0.4, 0.0);
+    expect(mAuto['peak_latency_ms'], 200.0);
+    expect(mAuto['peak_amplitude'], 7.5);
+
+    // Opposite polarity (-1.0):
+    // Should NOT get stuck at window endpoint (100 ms or 400 ms), but detect the interior peak!
+    final mNeg = reviewMeasures(times, y, 0.1, 0.4, -1.0);
+    expect(mNeg['peak_latency_ms'], 200.0);
+  });
 }

@@ -15,6 +15,29 @@ import 'protocol_tools.dart';
 import 'review_workspace.dart';
 import 'review_math.dart';
 import 'channel_grid.dart';
+import 'publication_plots.dart';
+
+class ErpConditionConfig {
+  ErpConditionConfig({
+    required this.name,
+    List<String>? codes,
+    List<String>? savedGroups,
+  })  : codes = codes != null ? List<String>.from(codes) : [],
+        savedGroups = savedGroups != null ? List<String>.from(savedGroups) : [],
+        nameController = TextEditingController(text: name),
+        codesController = TextEditingController(text: (codes ?? []).join(', '));
+
+  String name;
+  List<String> codes;
+  List<String> savedGroups;
+  final TextEditingController nameController;
+  final TextEditingController codesController;
+
+  void dispose() {
+    nameController.dispose();
+    codesController.dispose();
+  }
+}
 
 class ErpWorkbenchView extends StatefulWidget {
   const ErpWorkbenchView({
@@ -92,7 +115,13 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   final Map<String, String> _modelChannels = {}, _modelPredictors = {};
   Map<String, dynamic>? _inspection, _result, _profile;
   bool _regroupEpochs = false;
-  List<String> _savedA = [], _savedB = [];
+  final List<ErpConditionConfig> _conditions = [];
+  final Map<String, String> _participantGroups = {};
+  String _gallerySearch = '';
+
+  List<String> get _savedA => _conditions.isNotEmpty ? _conditions[0].savedGroups : [];
+  List<String> get _savedB => _conditions.length > 1 ? _conditions[1].savedGroups : [];
+
   bool get _isPrepared =>
       !widget.batchMode && (widget.activeRecording?.isEpoched ?? false) ||
       _scanFiles.isNotEmpty && _scanFiles.every((f) => f['is_epoched'] == true);
@@ -103,7 +132,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       (widget.batchMode || _isPrepared) &&
       !(_isPrepared &&
           _profile != null &&
-          (_savedA.isEmpty || _savedB.isEmpty)) &&
+          (_conditions.isEmpty || _conditions.any((c) => c.savedGroups.isEmpty))) &&
       _timingIssue == null;
   String? get _timingIssue {
     if (!_isPrepared || _profile == null) return null;
@@ -169,7 +198,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 6, vsync: this);
+    _tabs = TabController(length: 8, vsync: this);
     _restoreProtocol();
     if (widget.initialResultPath != null) {
       final result = Map<String, dynamic>.from(
@@ -230,6 +259,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   @override
   void dispose() {
     _service.cancel();
+    for (final c in _conditions) {
+      c.dispose();
+    }
     for (final c in [
       _limit,
       _output,
@@ -294,12 +326,45 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
           .toList();
       double number(TextEditingController c) => double.parse(c.text) / 1000;
       p['component_name'] = _componentLabel.text.trim();
-      p['a_codes'] = _isPrepared ? _savedA : list(_a);
-      p['saved_a_groups'] = p['a_codes'];
-      if (_isPrepared) p['a_name'] = _savedA.join(' + ');
-      p['b_codes'] = _isPrepared ? _savedB : list(_b);
-      p['saved_b_groups'] = p['b_codes'];
-      if (_isPrepared) p['b_name'] = _savedB.join(' + ');
+      p['conditions'] = [
+        for (final c in _conditions)
+          {
+            'name': c.nameController.text.trim().isNotEmpty
+                ? c.nameController.text.trim()
+                : c.name,
+            'codes': _isPrepared
+                ? c.savedGroups
+                : c.codesController.text
+                    .split(',')
+                    .map((s) => s.trim())
+                    .where((s) => s.isNotEmpty)
+                    .toList(),
+          }
+      ];
+      if (_conditions.isNotEmpty) {
+        final c0 = _conditions[0];
+        p['a_name'] = c0.nameController.text.trim().isNotEmpty
+            ? c0.nameController.text.trim()
+            : c0.name;
+        p['a_codes'] = _isPrepared ? c0.savedGroups : list(c0.codesController);
+        p['saved_a_groups'] = p['a_codes'];
+      } else {
+        p['a_codes'] = _isPrepared ? _savedA : list(_a);
+        p['saved_a_groups'] = p['a_codes'];
+        if (_isPrepared) p['a_name'] = _savedA.join(' + ');
+      }
+      if (_conditions.length > 1) {
+        final c1 = _conditions[1];
+        p['b_name'] = c1.nameController.text.trim().isNotEmpty
+            ? c1.nameController.text.trim()
+            : c1.name;
+        p['b_codes'] = _isPrepared ? c1.savedGroups : list(c1.codesController);
+        p['saved_b_groups'] = p['b_codes'];
+      } else {
+        p['b_codes'] = _isPrepared ? _savedB : list(_b);
+        p['saved_b_groups'] = p['b_codes'];
+        if (_isPrepared) p['b_name'] = _savedB.join(' + ');
+      }
       p['roi'] = list(_roi);
       p['epoch'] = [number(_epoch0), number(_epoch1)];
       p['baseline'] = [number(_base0), number(_base1)];
@@ -367,28 +432,62 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   void _fillProfile(Map<String, dynamic>? p) {
     _profile = p;
     if (p == null) return;
-    if (_isPrepared) {
-      _savedA = _savedGroups
-          .where(
-            (g) => markerListContains(
-              ((p['saved_a_groups'] ?? p['a_codes']) as List).cast<String>(),
-              g,
-            ),
-          )
-          .toList();
-      _savedB = _savedGroups
-          .where(
-            (g) => markerListContains(
-              ((p['saved_b_groups'] ?? p['b_codes']) as List).cast<String>(),
-              g,
-            ),
-          )
-          .toList();
+    for (final c in _conditions) {
+      c.dispose();
+    }
+    _conditions.clear();
+    final condList = p['conditions'] as List?;
+    if (condList != null && condList.isNotEmpty) {
+      for (final item in condList) {
+        final m = erpMap(item);
+        final name = m['name']?.toString() ?? 'Condition';
+        final cds = (m['codes'] as List? ?? []).cast<String>();
+        final sg = _isPrepared
+            ? _savedGroups.where((g) => markerListContains(cds, g)).toList()
+            : <String>[];
+        _conditions.add(ErpConditionConfig(name: name, codes: cds, savedGroups: sg));
+      }
+    } else {
+      final aName = p['a_name']?.toString() ?? 'Class A';
+      final bName = p['b_name']?.toString() ?? 'Class B';
+      final aCodes = (p['a_codes'] as List? ?? []).cast<String>();
+      final bCodes = (p['b_codes'] as List? ?? []).cast<String>();
+      final aSaved = _isPrepared
+          ? _savedGroups
+              .where(
+                (g) => markerListContains(
+                  ((p['saved_a_groups'] ?? aCodes) as List).cast<String>(),
+                  g,
+                ),
+              )
+              .toList()
+          : <String>[];
+      final bSaved = _isPrepared
+          ? _savedGroups
+              .where(
+                (g) => markerListContains(
+                  ((p['saved_b_groups'] ?? bCodes) as List).cast<String>(),
+                  g,
+                ),
+              )
+              .toList()
+          : <String>[];
+      _conditions.add(ErpConditionConfig(name: aName, codes: aCodes, savedGroups: aSaved));
+      _conditions.add(ErpConditionConfig(name: bName, codes: bCodes, savedGroups: bSaved));
+
+      if (_isPrepared && _savedGroups.length > 2) {
+        final assigned = {...aSaved, ...bSaved};
+        for (final g in _savedGroups) {
+          if (!assigned.contains(g)) {
+            _conditions.add(ErpConditionConfig(name: g, codes: [g], savedGroups: [g]));
+          }
+        }
+      }
     }
     _componentLabel.text =
         p['component_name'] as String? ?? p['task'] as String;
-    _a.text = (p['a_codes'] as List).join(', ');
-    _b.text = (p['b_codes'] as List).join(', ');
+    if (_conditions.isNotEmpty) _a.text = _conditions[0].codes.join(', ');
+    if (_conditions.length > 1) _b.text = _conditions[1].codes.join(', ');
     _roi.text = (p['roi'] as List).join(', ');
     void pair(String key, TextEditingController a, TextEditingController b) {
       final v = erpNumbers(p[key]);
@@ -884,24 +983,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                         'Suggested groups are reconstructed from the original saved locking event of each existing trial. No re-epoching is performed.',
                         style: TextStyle(fontSize: 11),
                       ),
-                    _savedGroupPicker('A', _savedA, _savedB),
-                    _savedGroupPicker('B', _savedB, _savedA),
-                    if (_savedA.isEmpty || _savedB.isEmpty)
-                      const Text(
-                        'Choose at least one saved condition for each group. Arbitrary group names are not assigned to ERP CORE conditions automatically.',
-                        style: TextStyle(
-                          color: Colors.orangeAccent,
-                          fontSize: 11,
-                        ),
-                      ),
+                    _buildConditionEditor(),
                   ] else ...[
-                    _field(_a, 'Class A: ${_profile!['a_name']} · codes'),
-                    _field(_b, 'Class B: ${_profile!['b_name']} · codes'),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _reviewMarkers,
-                      icon: const Icon(Icons.flag),
-                      label: const Text('Choose from detected markers…'),
-                    ),
+                    _buildConditionEditor(),
                   ],
                   _field(
                     _roi,
@@ -1271,46 +1355,39 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                         ListTile(
                           title: Text('$key · ${counts[key]} events'),
                           trailing: SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment(value: 'A', label: Text('A')),
-                              ButtonSegment(value: 'B', label: Text('B')),
-                              ButtonSegment(value: '-', label: Text('Ignore')),
+                            segments: [
+                              for (final c in _conditions)
+                                ButtonSegment(
+                                  value: c.name,
+                                  label: Text(
+                                    c.name.length > 8 ? '${c.name.substring(0, 7)}…' : c.name,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                ),
+                              const ButtonSegment(value: '-', label: Text('Ignore', style: TextStyle(fontSize: 11))),
                             ],
                             selected: {
-                              _a.text
-                                      .split(',')
-                                      .map((s) => s.trim())
-                                      .contains(key)
-                                  ? 'A'
-                                  : _b.text
-                                        .split(',')
-                                        .map((s) => s.trim())
-                                        .contains(key)
-                                  ? 'B'
-                                  : '-',
+                              () {
+                                for (final c in _conditions) {
+                                  final list = c.codesController.text.split(',').map((s) => s.trim());
+                                  if (list.contains(key)) return c.name;
+                                }
+                                return '-';
+                              }(),
                             },
                             onSelectionChanged: (v) {
-                              void remove(TextEditingController c) => c.text = c
-                                  .text
-                                  .split(',')
-                                  .map((s) => s.trim())
-                                  .where((s) => s != key && s.isNotEmpty)
-                                  .join(', ');
-                              remove(_a);
-                              remove(_b);
-                              final target = v.first == 'A'
-                                  ? _a
-                                  : v.first == 'B'
-                                  ? _b
-                                  : null;
-                              if (target != null)
-                                target.text = [
-                                  ...target.text
-                                      .split(',')
-                                      .map((s) => s.trim())
-                                      .where((s) => s.isNotEmpty),
-                                  key,
-                                ].join(', ');
+                              final sel = v.first;
+                              for (final c in _conditions) {
+                                final list = c.codesController.text
+                                    .split(',')
+                                    .map((s) => s.trim())
+                                    .where((s) => s != key && s.isNotEmpty)
+                                    .toList();
+                                if (c.name == sel) {
+                                  list.add(key);
+                                }
+                                c.codesController.text = list.join(', ');
+                              }
                               update(() {});
                             },
                           ),
@@ -1348,21 +1425,31 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
     await dir.create(recursive: true);
     String quote(dynamic v) => '"${v.toString().replaceAll('"', '""')}"';
     final lines = <String>[
-      'filename,subjid,condn,Chan,Epoch,epoch_label,Condition,mean_amplitude_ERP,signed_auc_ERP,peak_amplitude_ERP,peak_latency_ms_ERP,fractional_area_latency_ms_ERP',
+      'filename,subjid,group,condn,Chan,Epoch,epoch_label,Condition,mean_amplitude_ERP,signed_auc_ERP,peak_amplitude_ERP,peak_latency_ms_ERP,fractional_area_latency_ms_ERP',
     ];
     for (final file in _results.where((f) => f['task'] == _component)) {
       final profile = erpMap(file['profile']);
-      for (final key in (difference ? ['B_minus_A'] : ['A', 'B'])) {
+      final subjid = file['subject'].toString();
+      final groupVal = _participantGroups[subjid] ?? 'Unknown';
+      final condNames = (file['condition_names'] as List?)?.cast<String>() ?? [];
+      final keys = difference
+          ? ['B_minus_A']
+          : (condNames.isNotEmpty ? condNames : ['A', 'B']);
+
+      for (final key in keys) {
         final m = erpMap(erpMap(file['measurements'])[key]);
         final label = difference
             ? 'B - A'
-            : profile['lateralized'] == true
-            ? (key == 'A' ? 'Ipsilateral' : 'Contralateral')
-            : profile[key == 'A' ? 'a_name' : 'b_name'];
+            : (condNames.contains(key)
+                ? key
+                : (profile['lateralized'] == true
+                    ? (key == 'A' ? 'Ipsilateral' : 'Contralateral')
+                    : profile[key == 'A' ? 'a_name' : 'b_name']));
         lines.add(
           [
             quote(file['path']),
             quote(file['subject']),
+            quote(groupVal),
             quote(file['task']),
             quote((profile['roi'] as List).join('+')),
             '1',
@@ -1393,45 +1480,350 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
     );
   }
 
-  Widget _savedGroupPicker(
-    String label,
-    List<String> selected,
-    List<String> other,
-  ) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Column(
+  Widget _buildConditionEditor() {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Group $label · ${selected.isEmpty ? "not selected" : selected.join(" + ")}',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            for (final g in _savedGroups)
-              FilterChip(
-                label: Text(
-                  '$g ×${_scanFiles.fold<int>(0, (n, f) => n + (erpMap(f['marker_counts'])[g] as num? ?? 0).toInt())}',
-                ),
-                selected: selected.contains(g),
-                onSelected: _busy
-                    ? null
-                    : (v) => setState(() {
-                        if (v) {
-                          selected.add(g);
-                          other.remove(g);
-                        } else {
-                          selected.remove(g);
-                        }
-                      }),
-              ),
+            Text(
+              'Conditions (${_conditions.length})',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            TextButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () {
+                      setState(() {
+                        final nextIdx = _conditions.length + 1;
+                        _conditions.add(
+                          ErpConditionConfig(
+                            name: 'Condition $nextIdx',
+                            codes: [],
+                            savedGroups: [],
+                          ),
+                        );
+                      });
+                    },
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add Condition'),
+            ),
           ],
         ),
+        for (var i = 0; i < _conditions.length; i++)
+          _buildConditionCard(i),
+        if (!_isPrepared)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 8),
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _reviewMarkers,
+              icon: const Icon(Icons.flag),
+              label: const Text('Assign from detected markers…'),
+            ),
+          ),
+        if (_conditions.any((c) => _isPrepared ? c.savedGroups.isEmpty : c.codesController.text.trim().isEmpty))
+          const Text(
+            'Ensure every condition has at least one event code or saved group selected.',
+            style: TextStyle(color: Colors.orangeAccent, fontSize: 11),
+          ),
       ],
-    ),
-  );
+    );
+  }
+
+  Widget _buildConditionCard(int index) {
+    final c = _conditions[index];
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      elevation: 0,
+      color: Colors.grey.shade50,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+        side: BorderSide(color: Colors.grey.shade300),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: c.nameController,
+                    decoration: InputDecoration(
+                      labelText: 'Condition ${index + 1} Name',
+                      isDense: true,
+                    ),
+                    onChanged: (v) {
+                      c.name = v.trim();
+                      setState(() {});
+                    },
+                  ),
+                ),
+                if (_conditions.length > 2)
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: 'Remove condition',
+                    onPressed: _busy
+                        ? null
+                        : () {
+                            setState(() {
+                              _conditions.removeAt(index).dispose();
+                            });
+                          },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            if (_isPrepared) ...[
+              Text(
+                '${index == 0 ? "Group A · " : index == 1 ? "Group B · " : ""}${c.savedGroups.isEmpty ? (c.name.isNotEmpty ? c.name : "not selected") : c.savedGroups.join(" + ")}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  for (final g in _savedGroups)
+                    FilterChip(
+                      label: Text(
+                        '$g ×${_scanFiles.fold<int>(0, (n, f) => n + (erpMap(f['marker_counts'])[g] as num? ?? 0).toInt())}',
+                      ),
+                      selected: c.savedGroups.contains(g),
+                      onSelected: _busy
+                          ? null
+                          : (sel) {
+                              setState(() {
+                                if (sel) {
+                                  c.savedGroups.add(g);
+                                  for (var other = 0; other < _conditions.length; other++) {
+                                    if (other != index) _conditions[other].savedGroups.remove(g);
+                                  }
+                                  if (c.name.startsWith('Condition ') || c.name.isEmpty) {
+                                    c.name = c.savedGroups.join(' + ');
+                                    c.nameController.text = c.name;
+                                  }
+                                } else {
+                                  c.savedGroups.remove(g);
+                                  if (c.savedGroups.isNotEmpty) {
+                                    c.name = c.savedGroups.join(' + ');
+                                    c.nameController.text = c.name;
+                                  }
+                                }
+                              });
+                            },
+                    ),
+                ],
+              ),
+            ] else ...[
+              TextField(
+                controller: c.codesController,
+                decoration: InputDecoration(
+                  labelText: '${c.name.isEmpty ? "Condition ${index + 1}" : c.name} Event Codes (comma-separated)',
+                  isDense: true,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIndividualErpGallery(
+    List<Map<String, dynamic>> current,
+    Map<String, dynamic> d,
+  ) {
+    final filter = _gallerySearch.trim().toLowerCase();
+    final visible = filter.isEmpty
+        ? current
+        : current
+            .where(
+              (f) =>
+                  f['subject'].toString().toLowerCase().contains(filter) ||
+                  (_participantGroups[f['subject'].toString()] ?? '')
+                      .toLowerCase()
+                      .contains(filter),
+            )
+            .toList();
+
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'Search participants by ID or Group…',
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    isDense: true,
+                  ),
+                  onChanged: (v) => setState(() => _gallerySearch = v),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text(
+                'Showing ${visible.length} of ${current.length} participants',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (ctx) => ErpGroupLabelDialog(
+                      files: current,
+                      initialGroups: _participantGroups,
+                      onSaved: (newGroups) {
+                        setState(() {
+                          _participantGroups.addAll(newGroups);
+                        });
+                      },
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.group, size: 16),
+                label: const Text('Manage Groups'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 380,
+                mainAxisExtent: 210,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+              ),
+              itemCount: visible.length,
+              itemBuilder: (ctx, i) {
+                final f = visible[i];
+                final subjid = f['subject'].toString();
+                final grp = _participantGroups[subjid] ?? 'Unassigned';
+                final isSelected = _file == f['path'];
+
+                final measurements = erpMap(f['measurements']);
+                final condNames = (f['condition_names'] as List?)?.cast<String>() ?? [];
+                final primaryCond = condNames.isNotEmpty ? condNames.first : 'A';
+                final m = erpMap(measurements[primaryCond] ?? (measurements.isNotEmpty ? measurements.values.first : null));
+
+                return Card(
+                  elevation: isSelected ? 4 : 1,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(
+                      color: isSelected ? const Color(0xFF2563EB) : Colors.grey.shade300,
+                      width: isSelected ? 2 : 1,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              subjid,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: grp.toLowerCase().contains('med')
+                                    ? Colors.purple.shade50
+                                    : (grp.toLowerCase().contains('con')
+                                        ? Colors.blue.shade50
+                                        : Colors.grey.shade100),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: grp.toLowerCase().contains('med')
+                                      ? Colors.purple.shade300
+                                      : (grp.toLowerCase().contains('con')
+                                          ? Colors.blue.shade300
+                                          : Colors.grey.shade400),
+                                ),
+                              ),
+                              child: Text(
+                                grp,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: grp.toLowerCase().contains('med')
+                                      ? Colors.purple.shade800
+                                      : (grp.toLowerCase().contains('con')
+                                          ? Colors.blue.shade800
+                                          : Colors.grey.shade800),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: CustomPaint(
+                              size: Size.infinite,
+                              painter: ErpWorkbenchWavePainter(
+                                {
+                                  ...f,
+                                  'times': f['times'],
+                                  'condition_names': f['condition_names'],
+                                  'condition_waves': f['condition_waves'],
+                                  'profile': f['profile'],
+                                },
+                                negativeUp: _negativeUp,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Peak: ${m['peak_amplitude'] != null ? (m['peak_amplitude'] as num).toStringAsFixed(1) : "—"} µV @ ${m['peak_latency'] != null ? ((m['peak_latency'] as num) * 1000).toStringAsFixed(0) : "—"} ms',
+                              style: const TextStyle(fontSize: 11, color: Colors.black87),
+                            ),
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _file = f['path'] as String;
+                                  _tabs.animateTo(0);
+                                });
+                              },
+                              child: const Text('Inspect →', style: TextStyle(fontSize: 12)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _resultsPane() {
     if (_groups.isEmpty)
@@ -1523,6 +1915,74 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 ),
               ),
               if (_file == null) Text('${d['n_subjects']} participant(s)'),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left),
+                    tooltip: 'Previous participant',
+                    onPressed: current.isEmpty
+                        ? null
+                        : () {
+                            if (_file == null) {
+                              setState(() => _file = current.last['path'] as String);
+                            } else {
+                              final idx = current.indexWhere((f) => f['path'] == _file);
+                              if (idx <= 0) {
+                                setState(() => _file = null);
+                              } else {
+                                setState(() => _file = current[idx - 1]['path'] as String);
+                              }
+                            }
+                          },
+                  ),
+                  Text(
+                    _file == null
+                        ? 'Grand Average'
+                        : 'Participant ${current.indexWhere((f) => f['path'] == _file) + 1} of ${current.length}',
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right),
+                    tooltip: 'Next participant',
+                    onPressed: current.isEmpty
+                        ? null
+                        : () {
+                            if (_file == null) {
+                              setState(() => _file = current.first['path'] as String);
+                            } else {
+                              final idx = current.indexWhere((f) => f['path'] == _file);
+                              if (idx >= current.length - 1) {
+                                setState(() => _file = null);
+                              } else {
+                                setState(() => _file = current[idx + 1]['path'] as String);
+                              }
+                            }
+                          },
+                  ),
+                ],
+              ),
+              OutlinedButton.icon(
+                onPressed: current.isEmpty
+                    ? null
+                    : () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => ErpGroupLabelDialog(
+                            files: current,
+                            initialGroups: _participantGroups,
+                            onSaved: (newGroups) {
+                              setState(() {
+                                _participantGroups.clear();
+                                _participantGroups.addAll(newGroups);
+                              });
+                            },
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.label_outlined),
+                label: const Text('Label Groups…'),
+              ),
               OutlinedButton.icon(
                 onPressed: current.isEmpty
                     ? null
@@ -1561,6 +2021,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
             Tab(text: 'Models'),
             Tab(text: 'Decoding'),
             Tab(text: 'Quality'),
+            Tab(text: 'Individual ERPs'),
+            Tab(text: 'Publication plots'),
           ],
         ),
         Expanded(
@@ -1834,6 +2296,20 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                       Text('${fail['path']}: ${fail['error']}'),
                   ],
                 ),
+              ),
+              _buildIndividualErpGallery(current, d),
+              ErpPublicationPlotsView(
+                files: current,
+                groupData: d,
+                profile: erpMap(d['profile']),
+                participantGroups: _participantGroups,
+                onGroupsChanged: (newGroups) {
+                  setState(() {
+                    _participantGroups.clear();
+                    _participantGroups.addAll(newGroups);
+                  });
+                },
+                outputDir: _output.text,
               ),
             ],
           ),

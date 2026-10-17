@@ -50,23 +50,83 @@ class ErpWorkbenchWavePainter extends CustomPainter {
     final times = erpNumbers(data['times']);
     if (times.length < 2) return;
     final modelPlot = data['model_plot'] == true;
-    final arrays = decode
-        ? [erpNumbers(data['auc']), erpNumbers(data['balanced_accuracy'])]
-        : [
-            erpNumbers(data['a']),
-            erpNumbers(data['b']),
-            if (!modelPlot) erpNumbers(data['difference']),
-          ];
+    final condWaves = data['condition_waves'] is Map ? (data['condition_waves'] as Map) : null;
+    final condNames = (data['condition_names'] as List?)?.map((e) => e.toString()).toList();
+    final condSems = data['condition_sems'] is Map ? (data['condition_sems'] as Map) : null;
     final profile = erpMap(data['profile']);
     final lateral = profile['lateralized'] == true;
-    final names = decode
-        ? ['AUC', 'Balanced accuracy']
-        : [
-            lateral ? 'Ipsilateral' : profile['a_name'] ?? 'A',
-            lateral ? 'Contralateral' : profile['b_name'] ?? 'B',
-            if (!modelPlot) 'B - A',
-          ];
-    const colors = [Color(0xFF2563EB), Color(0xFFDC2626), Color(0xFF475569)];
+
+    const defaultColors = [
+      Color(0xFF2563EB), // Blue
+      Color(0xFFDC2626), // Red
+      Color(0xFF16A34A), // Green
+      Color(0xFF9333EA), // Purple
+      Color(0xFFEA580C), // Orange
+      Color(0xFF0891B2), // Cyan
+      Color(0xFFD97706), // Amber
+      Color(0xFFDB2777), // Pink
+      Color(0xFF475569), // Slate
+    ];
+
+    List<List<double>> arrays;
+    List<String> names;
+    List<List<double>> bands = [];
+    List<Color> colors;
+
+    if (decode) {
+      arrays = [erpNumbers(data['auc']), erpNumbers(data['balanced_accuracy'])];
+      names = ['AUC', 'Balanced accuracy'];
+      colors = [const Color(0xFF2563EB), const Color(0xFFDC2626)];
+    } else if (condWaves != null && condNames != null && condNames.length > 2) {
+      names = condNames;
+      arrays = [for (final n in condNames) erpNumbers(condWaves[n])];
+      if (condSems != null) {
+        bands = [for (final n in condNames) erpNumbers(condSems[n])];
+      }
+      colors = [for (var i = 0; i < names.length; i++) defaultColors[i % defaultColors.length]];
+    } else if (condWaves != null && condNames != null && condNames.length == 2 && !modelPlot) {
+      final nameA = condNames[0];
+      final nameB = condNames[1];
+      final diffName = '$nameB - $nameA';
+      names = [nameA, nameB, diffName];
+      arrays = [
+        erpNumbers(condWaves[nameA]),
+        erpNumbers(condWaves[nameB]),
+        erpNumbers(data['difference']),
+      ];
+      bands = [
+        condSems != null ? erpNumbers(condSems[nameA]) : erpNumbers(data['sem_a']),
+        condSems != null ? erpNumbers(condSems[nameB]) : erpNumbers(data['sem_b']),
+        erpNumbers(data['sem_difference']),
+      ];
+      colors = [
+        const Color(0xFF2563EB),
+        const Color(0xFFDC2626),
+        const Color(0xFF475569),
+      ];
+    } else {
+      final nameA = lateral ? 'Ipsilateral' : (profile['a_name'] ?? 'A');
+      final nameB = lateral ? 'Contralateral' : (profile['b_name'] ?? 'B');
+      names = [
+        nameA,
+        nameB,
+        if (!modelPlot) '$nameB - $nameA',
+      ];
+      arrays = [
+        erpNumbers(data['a']),
+        erpNumbers(data['b']),
+        if (!modelPlot) erpNumbers(data['difference']),
+      ];
+      bands = [
+        for (final key in ['a', 'b', if (!modelPlot) 'difference'])
+          erpNumbers(data['sem_$key']),
+      ];
+      colors = [
+        const Color(0xFF2563EB),
+        const Color(0xFFDC2626),
+        if (!modelPlot) const Color(0xFF475569),
+      ];
+    }
     final ax = Rect.fromLTRB(62, 48, size.width - 20, size.height - 46);
     if (ax.width <= 0 || ax.height <= 0) return;
     var min = decode
@@ -81,9 +141,6 @@ class ErpWorkbenchWavePainter extends CustomPainter {
                   .expand((x) => x)
                   .where((x) => x.isFinite)
                   .fold(0.0, math.max);
-    final bands = [
-      for (final key in ['a', 'b', 'difference']) erpNumbers(data['sem_$key']),
-    ];
     for (var k = 0; k < arrays.length && k < bands.length; k++) {
       if (!decode &&
           bands[k].length == times.length &&
@@ -237,8 +294,8 @@ class ErpWorkbenchWavePainter extends CustomPainter {
       canvas.drawPath(
         path,
         Paint()
-          ..color = colors[k]
-          ..strokeWidth = (k == 2 ? 1.3 : 1.8)
+          ..color = colors[k % colors.length]
+          ..strokeWidth = (!decode && k == arrays.length - 1 && names.last.contains(' - ') ? 1.3 : 1.8)
           ..style = PaintingStyle.stroke,
       );
     }
@@ -255,8 +312,8 @@ class ErpWorkbenchWavePainter extends CustomPainter {
       if (i >= 0) {
         final values = [
           for (var k = 0; k < arrays.length; k++)
-            if (i < arrays[k].length)
-              '${names[k]} ${arrays[k][i].toStringAsFixed(2)}',
+            if (k < names.length && i < arrays[k].length)
+              '${names[k]}: ${arrays[k][i].toStringAsFixed(2)}',
         ];
         erpText(
           canvas,
@@ -268,16 +325,19 @@ class ErpWorkbenchWavePainter extends CustomPainter {
       }
     }
     canvas.restore();
-    for (var k = 0; k < names.length; k++)
-      if (arrays[k].length == times.length)
+    final itemWidth = math.max(80.0, (size.width - 80) / math.max(1, names.length));
+    for (var k = 0; k < names.length; k++) {
+      if (k < arrays.length && arrays[k].length == times.length) {
         erpText(
           canvas,
           names[k],
-          Offset(65 + k * math.max(100, (size.width - 80) / 3), 10),
+          Offset(65 + k * itemWidth, 10),
           size: 11,
-          color: colors[k],
-          maxWidth: math.max(100, (size.width - 80) / 3) - 8,
+          color: colors[k % colors.length],
+          maxWidth: itemWidth - 6,
         );
+      }
+    }
     erpText(
       canvas,
       'Time (ms)',
