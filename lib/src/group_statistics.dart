@@ -78,6 +78,9 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
     super.dispose();
   }
 
+  static final Future<Directory> _runtimeDirectory = Directory.systemTemp
+      .createTemp('ccs-stats-$pid-');
+
   static Future<String?> _findPythonExecutable() async {
     final candidates = [
       if (Platform.environment['CCS_EEG_PYTHON'] != null)
@@ -100,7 +103,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
             'import numpy, pandas, scipy, statsmodels, matplotlib; print("ready")',
           ],
           environment: {
-            'MPLCONFIGDIR': '${Directory.systemTemp.path}/ccs-eeg-mpl',
+            'MPLCONFIGDIR': '${(await _runtimeDirectory).path}/mpl',
           },
         );
         if (res.exitCode == 0) return cand;
@@ -129,7 +132,7 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
         'assets/group_stats.py',
       );
       final tempFile = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}ccs_group_stats.py',
+        '${(await _runtimeDirectory).path}${Platform.pathSeparator}group_stats.py',
       );
       await tempFile.writeAsString(scriptContent);
       return tempFile.path;
@@ -367,7 +370,11 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
         args.addAll(['--metadata-csv', _metadataPathController.text.trim()]);
       }
 
-      final res = await Process.run(python, args);
+      final res = await Process.run(
+        python,
+        args,
+        environment: {'MPLCONFIGDIR': '${(await _runtimeDirectory).path}/mpl'},
+      );
       if (res.exitCode != 0) {
         throw StateError('Inspection failed: ${res.stderr}');
       }
@@ -476,7 +483,11 @@ class _GroupStatisticsWorkbenchState extends State<GroupStatisticsWorkbench> {
         args.addAll(['--metadata-csv', _metadataPathController.text.trim()]);
       }
 
-      final process = await Process.start(python, args);
+      final process = await Process.start(
+        python,
+        args,
+        environment: {'MPLCONFIGDIR': '${(await _runtimeDirectory).path}/mpl'},
+      );
 
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();

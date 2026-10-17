@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.19</b> ·
+  <b>Current version: 1.2.20</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -100,7 +100,7 @@ To install or update CCS EEG Studio across all current and future user accounts 
 curl -fsSL https://raw.githubusercontent.com/arunsasidharan84/CCS_EEGStudio/main/scripts/install_linux.sh | sudo bash
 ```
 
-Once installed, administrators or sudo users can update the server to the newest release anytime with a single command:
+Administrators can update the shared installation with the command below. Standard users can instead use the no-sudo bootstrap/update described in [the per-user server guide](docs/server_and_plot_controls.md); that installs an independent user copy and leaves the shared package intact:
 ```bash
 sudo update-ccs-eeg-studio
 ```
@@ -132,7 +132,46 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## What's new in 1.2.19
+## What's new in 1.2.20
+
+### Server updates without sudo and multiple instances
+
+Every server account can install/update its own copy without changing the shared
+system installation. Linux **Updates** prefers the portable `.tar.gz`, verifies
+its checksum, installs into `$XDG_DATA_HOME/ccseegstudio/releases/` (default
+`~/.local/share/ccseegstudio/releases/`) and switches the per-user launcher.
+Existing instances retain their previous version directory and continue running.
+
+For an older installation that only offers sudo updates, download and run the
+[no-sudo bootstrap script](scripts/update_linux_nosudo.sh) once:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arunsasidharan84/CCS_EEGStudio/main/scripts/update_linux_nosudo.sh -o /tmp/ccseeg-update.sh
+bash /tmp/ccseeg-update.sh
+```
+
+Launch the user copy with `~/.local/bin/ccseegstudio` or the desktop launcher.
+GTK and other system runtime dependencies must already be available. DEB/RPM
+installers remain available for administrators. No shared installation is made
+world-writable.
+
+Use the **Open another independent instance** toolbar button for concurrent
+analyses, with different output paths. On shared servers, for example,
+`RAYON_NUM_THREADS=4 ~/.local/bin/ccseegstudio` bounds an instance to four CPU
+workers. GPU numerical acceleration is not enabled yet; it requires a compatible
+compute backend and validation for the server GPU/runtime. See [server and display
+controls](docs/server_and_plot_controls.md).
+
+### ERP axes, epoch duration and reference selection
+
+**Plot axis limits** controls display time (ms) and voltage (µV), including ERP
+batch review and electrode grids. Blank pairs use Auto; limits do not alter data
+or measurement windows. Single-epoch view labels its actual duration and saved
+zero-relative fractional times; stitched view restores the continuous time window.
+Preprocessing now exposes **Output re-reference** directly: keep current/cleaned,
+common average, or selected/linked reference electrodes.
+
+### Included from 1.2.19
 
 ### BrainVision scaling correction
 

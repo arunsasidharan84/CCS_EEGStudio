@@ -1,3 +1,4 @@
+import 'axis_controls.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -21,6 +22,8 @@ class ErpReviewWorkspace extends StatefulWidget {
 }
 
 class _ErpReviewWorkspaceState extends State<ErpReviewWorkspace> {
+  Map<String, dynamic> _axisLimits = {};
+
   final _selected = <String>{},
       _metrics = <String>{
         'mean',
@@ -438,6 +441,9 @@ class _ErpReviewWorkspaceState extends State<ErpReviewWorkspace> {
                       ),
                     ],
                   ),
+                  ErpAxisControls(
+                    onChanged: (v) => setState(() => _axisLimits = v),
+                  ),
                   Text(
                     '${people.length} participants · ${chosen.length} recordings · equal participant weighting · ${shown.length < 2 ? 'SEM unavailable for a single participant' : 'shadows = ±1 SEM across participants'}. Smoothing affects display only.',
                   ),
@@ -455,10 +461,10 @@ class _ErpReviewWorkspaceState extends State<ErpReviewWorkspace> {
                     SizedBox(
                       height: 350,
                       child: CustomPaint(
-                        painter: ErpWorkbenchWavePainter(
-                          data,
-                          negativeUp: _negativeUp,
-                        ),
+                        painter: ErpWorkbenchWavePainter({
+                          ...data,
+                          ..._axisLimits,
+                        }, negativeUp: _negativeUp),
                       ),
                     ),
                   ErpChannelGrid(
@@ -466,6 +472,7 @@ class _ErpReviewWorkspaceState extends State<ErpReviewWorkspace> {
                     profile: profile,
                     negativeUp: _negativeUp,
                     smoothingMs: _smooth,
+                    axisLimits: _axisLimits,
                   ),
                   Row(
                     children: [

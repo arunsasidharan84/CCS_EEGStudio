@@ -1,3 +1,4 @@
+import 'axis_controls.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -40,6 +41,8 @@ class ErpWorkbenchView extends StatefulWidget {
 
 class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
     with SingleTickerProviderStateMixin {
+  Map<String, dynamic> _axisLimits = {};
+
   final _service = ErpWorkbenchService();
   final _paths = <String>[];
   final _subjects = <String, String>{};
@@ -1586,6 +1589,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                     Text(
                       'A: ${erpMap(d['profile'])['a_name']} · B: ${erpMap(d['profile'])['b_name']} · Difference = B − A. Peak polarity selects a measurement; it never flips voltages.',
                     ),
+                    ErpAxisControls(
+                      onChanged: (v) => setState(() => _axisLimits = v),
+                    ),
                     SwitchListTile(
                       dense: true,
                       title: const Text(
@@ -1606,6 +1612,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                             painter: ErpWorkbenchWavePainter(
                               {
                                 ...d,
+                                ..._axisLimits,
                                 for (final key in ['a', 'b', 'difference'])
                                   key: smoothErp(
                                     erpNumbers(d[key]),
@@ -1629,6 +1636,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                       profile: erpMap(d['profile']),
                       negativeUp: _negativeUp,
                       smoothingMs: _displaySmoothing,
+                      axisLimits: _axisLimits,
                     ),
                     const Text('Component-window topography (B - A)'),
                     SizedBox(

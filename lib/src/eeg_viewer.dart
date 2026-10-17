@@ -327,12 +327,19 @@ class _EegViewerState extends State<EegViewer> {
                 _waveformFocus = false;
               }),
             ),
-            _dropdown<int>(
-              value: _windowSeconds,
-              items: const [5, 10, 20, 30, 60, 120],
-              label: (v) => '$v s',
-              onChanged: (v) => setState(() => _windowSeconds = v!),
-            ),
+            if (eeg.isEpoched && !_stitchEpochs)
+              Chip(
+                label: Text(
+                  'Epoch · ${eeg.epochDurationSeconds.toStringAsFixed(2)} s',
+                ),
+              )
+            else
+              _dropdown<int>(
+                value: _windowSeconds,
+                items: const [5, 10, 20, 30, 60, 120],
+                label: (v) => '$v s',
+                onChanged: (v) => setState(() => _windowSeconds = v!),
+              ),
             if (eeg.isEpoched && !(_controlsExpanded && !_waveformFocus))
               toggle(
                 'Stitch epochs',
@@ -745,18 +752,25 @@ class _EegViewerState extends State<EegViewer> {
           ),
         ),
         // Window duration
-        _dropdown<int>(
-          value: _windowSeconds,
-          items: const [5, 10, 20, 30, 60, 120],
-          label: (s) => '$s s',
-          onChanged: (v) => setState(() {
-            _windowSeconds = v ?? _windowSeconds;
-            _startSeconds = _startSeconds.clamp(
-              0.0,
-              math.max(0.0, eeg.durationSeconds - _windowSeconds),
-            );
-          }),
-        ),
+        if (eeg.isEpoched && !_stitchEpochs)
+          Chip(
+            label: Text(
+              'Epoch · ${eeg.epochDurationSeconds.toStringAsFixed(2)} s',
+            ),
+          )
+        else
+          _dropdown<int>(
+            value: _windowSeconds,
+            items: const [5, 10, 20, 30, 60, 120],
+            label: (s) => '$s s',
+            onChanged: (v) => setState(() {
+              _windowSeconds = v ?? _windowSeconds;
+              _startSeconds = _startSeconds.clamp(
+                0.0,
+                math.max(0.0, eeg.durationSeconds - _windowSeconds),
+              );
+            }),
+          ),
         // Trace spacing
         _dropdown<double>(
           value: _traceSpacing,
@@ -2241,14 +2255,20 @@ class _EegSignalPainter extends CustomPainter {
       ..strokeWidth = 1;
     final labelPainter = TextPainter(textDirection: TextDirection.ltr);
 
-    final firstTick = (startSeconds / niceInterval).ceil() * niceInterval;
+    final shift = eeg.isEpoched && !stitchedEpochs
+        ? (eeg.epochTmin ?? 0.0)
+        : 0.0;
+    final firstTick =
+        ((startSeconds + shift) / niceInterval).ceil() * niceInterval;
     var t = firstTick;
-    while (t <= startSeconds + windowSeconds + 1e-9) {
-      final x = plotLeft + (t - startSeconds) / windowSeconds * plotW;
+    while (t <= startSeconds + shift + windowSeconds + 1e-9) {
+      final x = plotLeft + (t - startSeconds - shift) / windowSeconds * plotW;
       if (x >= plotLeft && x <= size.width) {
         canvas.drawLine(Offset(x, drawH), Offset(x, drawH + 5), tickPaint);
         labelPainter.text = TextSpan(
-          text: _formatTime(t),
+          text: windowSeconds < 10
+              ? '${t.toStringAsFixed(2)} s'
+              : _formatTime(t),
           style: const TextStyle(
             fontFamily: 'DejaVuSans',
             fontSize: 9,

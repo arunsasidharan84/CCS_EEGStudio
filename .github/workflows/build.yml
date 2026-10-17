@@ -337,6 +337,7 @@ jobs:
           bash scripts/package_linux_rpm.sh \
             build/linux/x64/release/bundle \
             dist/CCSEEGStudio-linux-x86_64.rpm
+            dist/CCSEEGStudio-linux-x86_64.tar.gz
 
       # ── Smoke test: AlmaLinux 9 Docker ───────────────────────────────────
       - name: Validate RPM installer on AlmaLinux 9
@@ -353,6 +354,9 @@ jobs:
               /usr/lib/ccseegstudio/ccs-eeg-engine --help 2>&1 | grep -q "usage:"
             '
 
+      - name: Package no-sudo Linux portable bundle
+        run: tar -C build/linux/x64/release/bundle -czf dist/CCSEEGStudio-linux-x86_64.tar.gz .
+
       - name: Upload Linux installer artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -360,6 +364,7 @@ jobs:
           path: |
             dist/CCSEEGStudio-linux-amd64.deb
             dist/CCSEEGStudio-linux-x86_64.rpm
+            dist/CCSEEGStudio-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14
 
@@ -428,7 +433,8 @@ jobs:
             CCSEEGStudio-macos.zip \
             CCSEEGStudio-Installer.exe \
             CCSEEGStudio-linux-amd64.deb \
-            CCSEEGStudio-linux-x86_64.rpm > SHA256SUMS.txt
+            CCSEEGStudio-linux-x86_64.rpm \
+            CCSEEGStudio-linux-x86_64.tar.gz > SHA256SUMS.txt
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -441,6 +447,7 @@ jobs:
             dist/CCSEEGStudio-Installer.exe
             dist/CCSEEGStudio-linux-amd64.deb
             dist/CCSEEGStudio-linux-x86_64.rpm
+            dist/CCSEEGStudio-linux-x86_64.tar.gz
             dist/SHA256SUMS.txt
           draft: false
           make_latest: ${{ steps.release_info.outputs.tag != 'latest' && 'true' || 'false' }}

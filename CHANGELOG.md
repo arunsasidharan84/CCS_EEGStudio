@@ -6,6 +6,33 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.20]
+
+### ERP display and preprocessing controls
+
+- Add editable time-axis limits in milliseconds and amplitude-axis limits in µV to the ERP waveform and interactive batch review. Apply shared limits to electrode panels, validate ordered finite ranges, and reset either axis to Auto. These controls affect display only; trial data, baseline and measurement windows are unchanged.
+- Show the actual trial duration in single-epoch waveform view instead of a stale continuous-window setting. Stitched/continuous view retains the selected time window. Short-epoch tick labels retain fractional seconds and reflect saved event-zero offsets.
+- Expose output re-referencing directly in preprocessing: keep the current/cleaned reference, common average, or selected/linked reference electrodes. The native pipeline applies the chosen output reference after cleaning.
+
+### Per-user Linux updates and concurrent instances
+
+- Publish a portable Linux x86_64 `.tar.gz` bundle alongside DEB/RPM installers. The in-app updater prefers it and installs under the current user's XDG data directory without sudo or package-manager privileges.
+- Install into versioned directories and atomically switch the per-user launcher. Preserve previous versions so other running instances continue using their existing binaries, libraries and assets. Add a per-user update lock, readiness/error checks and a desktop launcher override.
+- Add `scripts/update_linux_nosudo.sh` for a one-time no-sudo bootstrap from an older system installation. It downloads the current tagged portable bundle, verifies `SHA256SUMS.txt`, and installs for the invoking user. Existing GTK/system runtime dependencies must already be available.
+- Use unique temporary download directories per update and verify SHA-256 before launching installers (API digest or the matching tagged checksum file). No shared system directories are made world-writable.
+- Add an Open another independent instance toolbar action. Linux already uses `G_APPLICATION_NON_UNIQUE`; native jobs use separate temporary workspaces. Use distinct output paths for concurrent analyses. `RAYON_NUM_THREADS` can bound each instance's CPU worker count on shared servers.
+- GPU rendering is distinct from numerical acceleration. The scientific Rust engine remains CPU-based in this release; a compute backend requires the server GPU/driver/runtime details and parity validation. No unverified GPU acceleration is claimed.
+
+### Validation
+
+- Full local Flutter suite: 212 passed, 6 skipped; focused rootless installer and axis-control checks passed. Scientific GPU compute remains pending server-specific backend selection and validation.
+- Includes the 1.2.19 BrainVision float32 calibration correction and all earlier recording format/ERP workflow improvements.
+- Isolate group-statistics scripts, Matplotlib caches and copied-plot files in unique temporary directories, avoiding cross-account and cross-instance temporary-file collisions.
+- Add ERP axis-control, epoch/stitched-window label, per-user installer, portable-asset selection and checksum-rejection tests.
+- Exercise two successive rootless installs and verify the first version remains intact while the launcher selects the second.
+- See [server installation, multiple instances and ERP display controls](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.20/docs/server_and_plot_controls.md).
+
+
 ## [1.2.19]
 
 ### Cross-platform output migration

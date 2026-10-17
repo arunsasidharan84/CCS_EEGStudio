@@ -1,5 +1,7 @@
+import 'linux_user_install.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -14,11 +16,13 @@ class ReleaseAsset {
     required this.name,
     required this.downloadUrl,
     required this.sizeBytes,
+    this.sha256Digest,
   });
 
   final String name;
   final String downloadUrl;
   final int sizeBytes;
+  final String? sha256Digest;
 }
 
 class UpdateInfo {
@@ -96,6 +100,19 @@ class UpdateChecker {
     UpdatePlatform? platform,
   }) {
     final target = platform ?? currentPlatform;
+    if (target == UpdatePlatform.linuxDebian ||
+        target == UpdatePlatform.linuxRpm) {
+      for (final raw in assets.whereType<Map<String, dynamic>>()) {
+        if (raw['name'] == 'CCSEEGStudio-linux-x86_64.tar.gz') {
+          return ReleaseAsset(
+            name: raw['name'],
+            downloadUrl: raw['browser_download_url'],
+            sizeBytes: (raw['size'] as num?)?.toInt() ?? 0,
+            sha256Digest: raw['digest'] as String?,
+          );
+        }
+      }
+    }
     ReleaseAsset? fallback;
     for (final raw in assets) {
       if (raw is! Map<String, dynamic>) continue;
@@ -107,6 +124,7 @@ class UpdateChecker {
         name: originalName,
         downloadUrl: url,
         sizeBytes: (raw['size'] as num?)?.toInt() ?? 0,
+        sha256Digest: raw['digest'] as String?,
       );
       switch (target) {
         case UpdatePlatform.macOS:
@@ -204,7 +222,7 @@ class UpdateChecker {
           : asset.sizeBytes;
       final safeName = asset.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
       final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}$safeName',
+        '${(await Directory.systemTemp.createTemp('ccs-update-$pid-')).path}${Platform.pathSeparator}$safeName',
       );
       if (file.existsSync()) file.deleteSync();
       final sink = file.openWrite();
@@ -226,6 +244,34 @@ class UpdateChecker {
       if (total > 0 && received != total) {
         file.deleteSync();
         throw const FormatException('The downloaded update is incomplete.');
+      }
+      String? expected = asset.sha256Digest?.replaceFirst('sha256:', '');
+      if (expected == null) {
+        final uri = Uri.parse(asset.downloadUrl).replace(
+          path: Uri.parse(
+            asset.downloadUrl,
+          ).path.replaceFirst(RegExp(r'[^/]+$'), 'SHA256SUMS.txt'),
+        );
+        final checksumRequest = await client.getUrl(uri);
+        final response = await checksumRequest.close();
+        if (response.statusCode != 200)
+          throw const FormatException('Release checksum file is unavailable.');
+        final lines = await response.transform(utf8.decoder).join();
+        for (final line in lines.split('\n')) {
+          final fields = line.trim().split(RegExp(r'\s+'));
+          if (fields.length == 2 &&
+              fields[1].replaceFirst('*', '') == asset.name)
+            expected = fields[0];
+        }
+      }
+      if (expected == null ||
+          expected.length != 64 ||
+          (await sha256.bind(file.openRead()).first).toString() !=
+              expected.toLowerCase()) {
+        await file.delete();
+        throw const FormatException(
+          'The update checksum did not match; download rejected.',
+        );
       }
       return file;
     } finally {
@@ -315,108 +361,43 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   }
 
   Future<void> _installLinuxUpdate(File file) async {
-    if (mounted) {
-      setState(() => _status = 'Launching package installer (sudo required)…');
+    if (!file.path.endsWith('.tar.gz')) {
+      throw const FormatException(
+        'This older release has no per-user portable bundle. Install a current release using the documented no-sudo updater.',
+      );
     }
-
-    try {
-      final helperScript = File('${Directory.systemTemp.path}${Platform.pathSeparator}apply_ccs_eeg_update.sh');
-      final scriptContent = '''#!/bin/bash
-set -e
-echo "======================================================================"
-echo "          CCS EEG Studio - Installing System Update                   "
-echo "======================================================================"
-echo "Package: ${file.path}"
-echo "Administrative (sudo) privileges are required to update this package."
-echo "Please enter your password when prompted below."
-echo "----------------------------------------------------------------------"
-
-if command -v dnf >/dev/null 2>&1; then
-  sudo dnf install -y "${file.path}"
-elif command -v yum >/dev/null 2>&1; then
-  sudo yum install -y "${file.path}"
-elif command -v rpm >/dev/null 2>&1; then
-  sudo rpm -Uvh --replacepkgs "${file.path}"
-elif command -v apt-get >/dev/null 2>&1; then
-  sudo apt-get install -y "${file.path}"
-elif command -v dpkg >/dev/null 2>&1; then
-  sudo dpkg -i "${file.path}" || sudo apt-get install -f -y
-else
-  echo "Error: Supported package manager (dnf/yum/rpm/apt-get/dpkg) not found." >&2
-  exit 1
-fi
-
-EXIT_CODE=\$?
-if [ \$EXIT_CODE -eq 0 ]; then
-  echo ""
-  echo "======================================================================"
-  echo "  CCS EEG Studio updated successfully!                                "
-  echo "======================================================================"
-  echo "Press Enter to exit and restart the application..."
-  read -r
-else
-  echo ""
-  echo "======================================================================"
-  echo "  Update failed or sudo permission denied.                            "
-  echo "======================================================================"
-  echo "Press Enter to close this window..."
-  read -r
-fi
-''';
-      await helperScript.writeAsString(scriptContent);
-      await Process.run('chmod', ['+x', helperScript.path]);
-
-      final terminals = [
-        'xfce4-terminal',
-        'gnome-terminal',
-        'konsole',
-        'x-terminal-emulator',
-        'mate-terminal',
-        'lxterminal',
-        'xterm',
-      ];
-
-      bool launched = false;
-      for (final term in terminals) {
-        final whichRes = await Process.run('which', [term]);
-        if (whichRes.exitCode == 0) {
-          final termPath = (whichRes.stdout as String).trim();
-          if (term == 'gnome-terminal') {
-            await Process.start(termPath, ['--title=Updating CCS EEG Studio', '--', '/bin/bash', helperScript.path], mode: ProcessStartMode.detached);
-          } else if (term == 'xfce4-terminal') {
-            await Process.start(termPath, ['--title=Updating CCS EEG Studio', '-e', '/bin/bash ${helperScript.path}'], mode: ProcessStartMode.detached);
-          } else {
-            await Process.start(termPath, ['-e', '/bin/bash ${helperScript.path}'], mode: ProcessStartMode.detached);
-          }
-          launched = true;
-          break;
-        }
-      }
-
-      if (launched) {
-        if (mounted) {
-          setState(() => _status = 'Installer terminal opened. Please enter your password to authorize sudo privileges.\n'
-              'Alternatively, run in terminal: sudo dnf install -y "${file.path}"');
-        }
-      } else {
-        final pkexecCheck = await Process.run('which', ['pkexec']);
-        if (pkexecCheck.exitCode == 0) {
-          Process.start('pkexec', ['/bin/bash', helperScript.path], mode: ProcessStartMode.detached);
-          if (mounted) {
-            setState(() => _status = 'Authorization prompt requested via pkexec.');
-          }
-        } else {
-          Process.run('xdg-open', [file.path]);
-          if (mounted) {
-            setState(() => _status = 'Package downloaded to: ${file.path}\nRun with sudo in terminal: sudo dnf install -y "${file.path}"');
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _status = 'Error launching installer: $e\nRun manually: sudo dnf install -y "${file.path}"');
-      }
+    final info = widget.info;
+    final staging = await Directory.systemTemp.createTemp('ccs-user-update-');
+    final helper = File('${staging.path}/install.sh');
+    await helper.writeAsString(LinuxUserInstaller.script);
+    if (mounted)
+      setState(
+        () => _status =
+            'Installing for this user without sudo; other instances keep running…',
+      );
+    final log = File('${staging.path}/install.log');
+    final ready = File('${staging.path}/ready');
+    final process = await Process.start('/bin/bash', [
+      helper.path,
+      file.path,
+      info.latestVersion,
+      pid.toString(),
+      ready.path,
+    ], mode: ProcessStartMode.detachedWithStdio);
+    process.stdout.listen(
+      (bytes) => log.writeAsBytesSync(bytes, mode: FileMode.append),
+    );
+    process.stderr.listen(
+      (bytes) => log.writeAsBytesSync(bytes, mode: FileMode.append),
+    );
+    final timer = Stopwatch()..start();
+    while (!await ready.exists()) {
+      if (await File('${ready.path}.failed').exists() ||
+          timer.elapsed > const Duration(minutes: 3))
+        throw StateError('Update did not complete. Details: ${log.path}');
+      await Future<void>.delayed(const Duration(milliseconds: 250));
     }
+    exit(0);
   }
 
   Future<void> _installMacUpdate(File archive) async {

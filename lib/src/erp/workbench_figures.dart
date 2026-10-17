@@ -106,8 +106,15 @@ class ErpWorkbenchWavePainter extends CustomPainter {
     min -= pad;
     max += pad;
     if (max == min) max = min + 1;
-    double x(double t) =>
-        ax.left + (t - times.first) / (times.last - times.first) * ax.width;
+    final xl = erpNumbers(data['x_limits']);
+    final yl = erpNumbers(data['y_limits']);
+    final xMin = xl.length == 2 && xl[1] > xl[0] ? xl[0] : times.first;
+    final xMax = xl.length == 2 && xl[1] > xl[0] ? xl[1] : times.last;
+    if (yl.length == 2 && yl[1] > yl[0]) {
+      min = yl[0];
+      max = yl[1];
+    }
+    double x(double t) => ax.left + (t - xMin) / (xMax - xMin) * ax.width;
     double y(double v) => negativeUp && !decode
         ? ax.top + (v - min) / (max - min) * ax.height
         : ax.bottom - (v - min) / (max - min) * ax.height;
@@ -115,7 +122,7 @@ class ErpWorkbenchWavePainter extends CustomPainter {
       ..color = const Color(0xFFE2E8F0)
       ..strokeWidth = 1;
     for (var k = 0; k <= 5; k++) {
-      final t = times.first + (times.last - times.first) * k / 5;
+      final t = xMin + (xMax - xMin) * k / 5;
       canvas.drawLine(Offset(x(t), ax.top), Offset(x(t), ax.bottom), grid);
       erpText(
         canvas,
@@ -132,7 +139,7 @@ class ErpWorkbenchWavePainter extends CustomPainter {
         size: 10,
       );
     }
-    if (times.first <= 0 && times.last >= 0) {
+    if (xMin <= 0 && xMax >= 0) {
       erpText(
         canvas,
         '0 ms · event',
@@ -159,7 +166,7 @@ class ErpWorkbenchWavePainter extends CustomPainter {
         Paint()..color = const Color(0x147C3AED),
       );
     }
-    if (times.first <= 0 && times.last >= 0)
+    if (xMin <= 0 && xMax >= 0)
       canvas.drawLine(
         Offset(x(0), ax.top),
         Offset(x(0), ax.bottom),
@@ -237,9 +244,8 @@ class ErpWorkbenchWavePainter extends CustomPainter {
     }
     if (hoverX != null) {
       final t =
-          times.first +
-          ((hoverX! - ax.left) / ax.width).clamp(0.0, 1.0) *
-              (times.last - times.first);
+          xMin +
+          ((hoverX! - ax.left) / ax.width).clamp(0.0, 1.0) * (xMax - xMin);
       canvas.drawLine(
         Offset(x(t), ax.top),
         Offset(x(t), ax.bottom),

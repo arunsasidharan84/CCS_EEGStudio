@@ -1333,6 +1333,11 @@ class _FeatureHomeState extends State<FeatureHome>
                 setState(() => _sidebarCollapsed = !_sidebarCollapsed),
           ),
           const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Open another independent instance',
+            icon: const Icon(Icons.open_in_new, size: 18),
+            onPressed: () => Process.start(Platform.resolvedExecutable, const [], mode: ProcessStartMode.detached),
+          ),
           // Pipeline preset dropdown
           Container(
             height: 34,
@@ -2894,6 +2899,44 @@ class _FeatureHomeState extends State<FeatureHome>
                 : 'Filter → clean → save continuous data. GEDAI uses internal processing windows.',
             _accentBlue,
           ),
+          DropdownButtonFormField<String>(
+            key: ValueKey('reference-${_cfg.referenceMode}'),
+            initialValue: _cfg.referenceMode,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Output re-reference'),
+            items: const [
+              DropdownMenuItem(
+                value: 'none',
+                child: Text('Keep existing reference'),
+              ),
+              DropdownMenuItem(
+                value: 'average',
+                child: Text('Common average reference'),
+              ),
+              DropdownMenuItem(
+                value: 'channels',
+                child: Text('Selected / linked reference electrodes'),
+              ),
+            ],
+            onChanged: _running
+                ? null
+                : (v) => setState(() => _cfg.referenceMode = v!),
+          ),
+          if (_cfg.referenceMode == 'channels')
+            TextFormField(
+              key: ValueKey(_cfg.referenceChannels.join(',')),
+              initialValue: _cfg.referenceChannels.join(', '),
+              decoration: const InputDecoration(
+                labelText: 'Reference electrodes',
+                helperText:
+                    'Comma-separated labels, e.g. TP9, TP10. Applied after cleaning.',
+              ),
+              onChanged: (v) => _cfg.referenceChannels = v
+                  .split(',')
+                  .map((s) => s.trim())
+                  .where((s) => s.isNotEmpty)
+                  .toList(),
+            ),
           _check(
             'Downsample to target rate',
             _cfg.downsample,

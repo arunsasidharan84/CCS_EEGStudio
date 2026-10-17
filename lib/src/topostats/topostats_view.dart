@@ -756,7 +756,7 @@ class _TopoStatsViewState extends State<TopoStatsView> {
     final fig = _currentGroup?.figure ?? _figure;
     if (fig == null) return;
     final tmp = File(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}${fig.result.outputFileName}.png',
+      '${(await Directory.systemTemp.createTemp('ccs-plot-$pid-')).path}${Platform.pathSeparator}${fig.result.outputFileName}.png',
     );
     await tmp.writeAsBytes(await fig.toPng(dpi: _s.dpi.toDouble()));
     await Clipboard.setData(ClipboardData(text: tmp.path));

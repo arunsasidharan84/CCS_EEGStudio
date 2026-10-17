@@ -10,11 +10,13 @@ class ErpChannelGrid extends StatefulWidget {
     required this.profile,
     this.negativeUp = true,
     this.smoothingMs = 0,
+    this.axisLimits = const {},
   });
   final List<Map<String, dynamic>> files;
   final Map<String, dynamic> profile;
   final bool negativeUp;
   final double smoothingMs;
+  final Map<String, dynamic> axisLimits;
   @override
   State<ErpChannelGrid> createState() => _ErpChannelGridState();
 }
@@ -123,7 +125,11 @@ class _ErpChannelGridState extends State<ErpChannelGrid> {
   }
 
   Map<String, dynamic> _data(String label, List<double> times) {
-    final d = <String, dynamic>{'times': times, 'profile': widget.profile};
+    final d = <String, dynamic>{
+      'times': times,
+      'profile': widget.profile,
+      ...widget.axisLimits,
+    };
     for (final key in ['a', 'b', 'difference']) {
       final people = <String, List<List<double>>>{};
       for (final f in widget.files) {
