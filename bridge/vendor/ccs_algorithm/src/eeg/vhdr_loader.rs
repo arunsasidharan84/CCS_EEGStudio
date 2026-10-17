@@ -69,7 +69,9 @@ pub fn load_vhdr(path: &Path) -> Result<Recording, String> {
                             } else {
                                 1.0
                             };
-                            channel_resolutions.insert(ch_idx, res);
+                            let unit = parts.get(3).map(|u| u.trim().to_lowercase().replace('μ', "µ")).unwrap_or_else(|| "µv".into());
+                            let factor = match unit.as_str() { "v" => 1e6, "mv" => 1e3, "nv" => 0.001, _ => 1.0 };
+                            channel_resolutions.insert(ch_idx, res * factor);
                         }
                     }
                 }

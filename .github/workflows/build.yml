@@ -103,7 +103,7 @@ jobs:
 
       - name: Run native ERP and epoch-boundary regression tests
         run: |
-          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing --test vhdr_calibration
           cargo test --release --locked -p ccs_ica --lib
         working-directory: bridge
 
@@ -188,7 +188,7 @@ jobs:
 
       - name: Run native ERP and epoch-boundary regression tests
         run: |
-          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing --test vhdr_calibration
           cargo test --release --locked -p ccs_ica --lib
         working-directory: bridge
 
@@ -286,7 +286,7 @@ jobs:
 
       - name: Run native ERP and epoch-boundary regression tests
         run: |
-          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing --test vhdr_calibration
           cargo test --release --locked -p ccs_ica --lib
         working-directory: bridge
 

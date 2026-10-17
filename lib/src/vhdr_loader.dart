@@ -64,6 +64,16 @@ class VhdrLoader {
               } else {
                 channelResolutions[idx] = 1.0;
               }
+              final unit = parts.length >= 4
+                  ? parts[3].trim().toLowerCase().replaceAll('μ', 'µ')
+                  : 'µv';
+              final multiplier = switch (unit) {
+                'v' => 1e6,
+                'mv' => 1e3,
+                'nv' => .001,
+                _ => 1.0,
+              };
+              channelResolutions[idx] = channelResolutions[idx]! * multiplier;
             }
           }
       }
@@ -218,11 +228,11 @@ class VhdrLoader {
       return 0.0;
     }
     return switch (format) {
-      'IEEE_FLOAT_32' => bd.getFloat32(offset, Endian.little),
+      'IEEE_FLOAT_32' => bd.getFloat32(offset, Endian.little) * resolution,
       'INT_16' => bd.getInt16(offset, Endian.little) * resolution,
       'UINT_16' => bd.getUint16(offset, Endian.little) * resolution,
       'INT_32' => bd.getInt32(offset, Endian.little) * resolution,
-      _ => bd.getFloat32(offset, Endian.little),
+      _ => bd.getFloat32(offset, Endian.little) * resolution,
     };
   }
 }

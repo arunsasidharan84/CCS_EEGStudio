@@ -22,6 +22,23 @@ ICA-cleaned averages are available together in `raw_vs_cleaned_erp.png`.
 Synthetic tests also check impulse alignment at time zero after 1000→250 and
 256→250 Hz resampling, with filtering both enabled and disabled.
 
+## BrainVision amplitude correction (1.2.18)
+
+A separate viewer calibration bug was identified after the timing audit: the
+Flutter float32 BrainVision path did not multiply samples by the channel's header
+resolution. For these files, 0.0488281 µV per stored unit means displayed raw
+amplitudes were inflated by about 20.48×. The native Rust loader already multiplied
+by that resolution. The native-preprocessed continuous recording used for the
+above timing/epoch audit therefore does not inherit this display-loader bug.
+
+The Flutter path now applies resolution for every numeric format, and both
+loaders convert voltage units to µV. The corrected Post-file Fp1 sample at index
+10000 is 14071.8189671 µV, matching an independent MNE read (Float32 tolerance).
+Direct epoch-only/crop exports made from an incorrectly calibrated raw Flutter
+load may need regeneration; the application does not guess and rescale old files.
+A fixed ±50 µV display can still show overlap during real high-amplitude artifacts;
+Autoscale or reduced gain remains available without changing saved sample values.
+
 ## Preprocessing controls
 
 - **Saved data structure** chooses continuous data, event-based trials, or fixed

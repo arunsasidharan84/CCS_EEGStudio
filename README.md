@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.17</b> ·
+  <b>Current version: 1.2.18</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -132,7 +132,16 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## What's new in 1.2.17
+## What's new in 1.2.18
+
+### BrainVision scaling correction
+
+Float32 `.vhdr` recordings now apply the channel resolution in the header. The
+previous Flutter loader ignored it, which made the Pallavi viewer/direct exports
+about **20.48× too large** for a resolution of 0.0488281 µV. Native Rust processing
+from the original BrainVision files already applied this calibration. Recreate
+affected direct epoch-only/crop exports from the originals; old saved files are
+not silently rescaled. V/mV/nV voltage units are converted consistently to µV.
 
 ### Faster loading and visible processing
 
