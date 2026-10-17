@@ -111,11 +111,27 @@ class LegacyFileMigration {
       ].any(p.endsWith),
     )) {
       final file = File(path);
-      var text = await file.readAsString();
-      for (final e in moves.entries) {
-        text = text.replaceAll(jsonEncode(e.key), jsonEncode(e.value));
+      String normalise(String value) {
+        final path = value.replaceAll('\\', '/');
+        return Platform.isWindows ? path.toLowerCase() : path;
       }
-      await file.writeAsString(text);
+
+      final references = {
+        for (final e in moves.entries) normalise(e.key): e.value,
+      };
+      dynamic rewrite(dynamic value) {
+        if (value is String) return references[normalise(value)] ?? value;
+        if (value is List) return value.map(rewrite).toList();
+        if (value is Map)
+          return value.map(
+            (key, item) => MapEntry(key.toString(), rewrite(item)),
+          );
+        return value;
+      }
+
+      await file.writeAsString(
+        jsonEncode(rewrite(jsonDecode(await file.readAsString()))),
+      );
     }
   }
 }

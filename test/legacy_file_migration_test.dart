@@ -14,9 +14,9 @@ void main() {
       final old = '${dir.path}/trial.ccseeg.json';
       final samples = '{"format":"ccseeg-v1","channels":[[1,2,3]]}';
       File(old).writeAsStringSync(samples);
-      File(
-        '$old.preprocessing.json',
-      ).writeAsStringSync(jsonEncode({'source_path': old}));
+      File('$old.preprocessing.json').writeAsStringSync(
+        jsonEncode({'source_path': old.replaceAll('/', '\\')}),
+      );
       File('${dir.path}/settings.json').writeAsStringSync('{}');
       final plan = await LegacyFileMigration.plan(dir.path);
       expect(plan, hasLength(2));
@@ -26,8 +26,8 @@ void main() {
       expect(
         jsonDecode(
           File('$signal.ccshistory').readAsStringSync(),
-        )['source_path'],
-        signal,
+        )['source_path'].toString().replaceAll('\\', '/'),
+        signal.replaceAll('\\', '/'),
       );
       expect(File('${dir.path}/settings.json').existsSync(), true);
       expect(File('${dir.path}/legacy_names.ccsmigration').existsSync(), true);

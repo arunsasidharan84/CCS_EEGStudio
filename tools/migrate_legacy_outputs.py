@@ -5,6 +5,7 @@ paths, and writes a reversible mapping. Unknown JSON files are left untouched.
 import argparse
 import json
 import re
+import os
 from pathlib import Path
 
 
@@ -67,10 +68,18 @@ def apply(root, mapping):
     # Exact path substitutions preserve signal arrays and unknown JSON fields.
     for path in root.iterdir():
         if path.suffix in {'.ccshistory', '.ccspreparation', '.ccsprotocol', '.ccserp', '.ccsanalysis'}:
-            text = path.read_text()
-            for old, new in replacements.items():
-                text = text.replace(json.dumps(old), json.dumps(new))
-            path.write_text(text)
+            def normalise(value):
+                return os.path.normcase(value.replace('\\', '/'))
+            references = {normalise(old): new for old, new in replacements.items()}
+            def rewrite(value):
+                if isinstance(value, str):
+                    return references.get(normalise(value), value)
+                if isinstance(value, list):
+                    return [rewrite(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: rewrite(item) for key, item in value.items()}
+                return value
+            path.write_text(json.dumps(rewrite(json.loads(path.read_text()))))
 
 
 if __name__ == '__main__':

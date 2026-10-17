@@ -22,7 +22,7 @@ ICA-cleaned averages are available together in `raw_vs_cleaned_erp.png`.
 Synthetic tests also check impulse alignment at time zero after 1000→250 and
 256→250 Hz resampling, with filtering both enabled and disabled.
 
-## BrainVision amplitude correction (1.2.18)
+## BrainVision amplitude correction (1.2.19)
 
 A separate viewer calibration bug was identified after the timing audit: the
 Flutter float32 BrainVision path did not multiply samples by the channel's header

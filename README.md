@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.18</b> ·
+  <b>Current version: 1.2.19</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -132,7 +132,7 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## What's new in 1.2.18
+## What's new in 1.2.19
 
 ### BrainVision scaling correction
 

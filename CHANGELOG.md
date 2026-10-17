@@ -6,14 +6,18 @@ its matching section is missing.
 
 ## [Unreleased]
 
-## [1.2.18]
+## [1.2.19]
+
+### Cross-platform output migration
+
+- Match metadata source paths using platform-aware separator and case normalisation so Windows mixed-slash paths are updated with their renamed signal files. Validate the migration with an explicit mixed-separator regression case.
+- Supersede the v1.2.17 and v1.2.18 build tags before publication; neither tag produced a published release.
 
 ### BrainVision amplitude calibration correction
 
 - Correct the Flutter BrainVision `IEEE_FLOAT_32` loader to multiply every sample by its channel resolution, just as the integer and native Rust paths do. With a 0.0488281 µV resolution, the prior viewer/direct-export amplitude was about 20.48× too large.
 - Convert V, mV and nV channel units to internal µV consistently in both Flutter and Rust loaders. Test float32, int16 and int32 in multiplexed and vectorized storage layouts.
 - Validate the Pallavi Post recording against an independent MNE sample read. Native preprocessing directly from the original `.vhdr` already applied the resolution; do not assume all native outputs are affected. Direct epoch-only/crop exports created from incorrectly calibrated Flutter-loaded float samples may require regeneration. Previously exported files are not silently rescaled.
-- Supersede the v1.2.17 build before publication so the distributed release includes this correction along with the changes below.
 
 ### Recording performance and processing feedback
 
@@ -56,9 +60,9 @@ its matching section is missing.
 
 ### Guides and method references
 
-- [Recording formats, performance checks and independent format validation](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.18/docs/pallavi_performance_and_files.md)
-- [Pallavi ERP timing review, boundary-aware ICA, response rules and filename migration](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.18/docs/pallavi_erp_review.md)
-- [ERP methods, references, parity and recovery guidance](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.18/docs/erp_workbench.md)
+- [Recording formats, performance checks and independent format validation](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.19/docs/pallavi_performance_and_files.md)
+- [Pallavi ERP timing review, boundary-aware ICA, response rules and filename migration](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.19/docs/pallavi_erp_review.md)
+- [ERP methods, references, parity and recovery guidance](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.19/docs/erp_workbench.md)
 - [EEGLAB ICA workflow](https://eeglab.org/tutorials/06_RejectArtifacts/RunICA.html), [EEGLAB filtering guidance](https://eeglab.org/tutorials/05_Preprocess/Filtering.html), [EDF specifications](https://www.edfplus.info/specs/edf.html), [EDF+ specifications](https://www.edfplus.info/specs/edfplus.html)
 
 ## [1.2.16]
