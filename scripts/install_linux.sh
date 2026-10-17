@@ -23,6 +23,10 @@ if [[ "$ARCH" != "x86_64" ]]; then
   exit 1
 fi
 
+# Private staging avoids stale files and cross-user collisions in shared /tmp.
+INSTALL_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ccseeg-install.XXXXXXXX")
+trap 'rm -rf -- "$INSTALL_WORK_DIR"' EXIT
+
 # Detect Linux Distribution
 if [[ -f /etc/os-release ]]; then
   . /etc/os-release
@@ -97,7 +101,7 @@ if [[ "$IS_RPM" = true ]]; then
     DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}/${RPM_ASSET_NAME}"
   fi
 
-  PKG_TMP="/tmp/${RPM_ASSET_NAME}"
+  PKG_TMP="$INSTALL_WORK_DIR/${RPM_ASSET_NAME}"
 elif [[ "$IS_DEB" = true ]]; then
   DEB_ASSET_NAME="CCSEEGStudio-linux-amd64.deb"
   if [[ -n "$API_RESPONSE" ]]; then
@@ -110,7 +114,7 @@ elif [[ "$IS_DEB" = true ]]; then
     DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_TAG}/${DEB_ASSET_NAME}"
   fi
 
-  PKG_TMP="/tmp/${DEB_ASSET_NAME}"
+  PKG_TMP="$INSTALL_WORK_DIR/${DEB_ASSET_NAME}"
 fi
 
 echo "--> Latest Release  : ${LATEST_TAG:-v1.2.5}"
@@ -148,7 +152,7 @@ if [[ -f "$ENGINE_PATH" ]]; then
     echo "    $MISSING_SYMBOLS"
     if command -v cargo >/dev/null 2>&1; then
       echo "    [INFO] Rebuilding native ccs-eeg-engine using local rust/cargo toolchain..."
-      TMP_BUILD_DIR=$(mktemp -d)
+      TMP_BUILD_DIR=$(mktemp -d "$INSTALL_WORK_DIR/build.XXXXXXXX")
       git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TMP_BUILD_DIR/repo" 2>/dev/null || true
       if [[ -d "$TMP_BUILD_DIR/repo/bridge" ]]; then
         (cd "$TMP_BUILD_DIR/repo/bridge" && cargo build --release)
@@ -227,10 +231,12 @@ cat > "$UPDATER_BIN" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "--> Checking for latest CCS EEG Studio updates..."
-TMP_SCRIPT=$(mktemp)
+UPDATE_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ccseeg-update.XXXXXXXX")
+trap 'rm -rf -- "$UPDATE_WORK_DIR"' EXIT
+TMP_SCRIPT="$UPDATE_WORK_DIR/install_linux.sh"
 curl -fsSL "https://raw.githubusercontent.com/arunsasidharan84/CCS_EEGStudio/main/scripts/install_linux.sh" -o "$TMP_SCRIPT"
 chmod +x "$TMP_SCRIPT"
-exec bash "$TMP_SCRIPT" "$@"
+bash "$TMP_SCRIPT" "$@"
 EOF
 chmod 755 "$UPDATER_BIN"
 echo "--> Created system updater: $UPDATER_BIN"

@@ -105,6 +105,9 @@ Administrators can update the shared installation with the command below. Standa
 sudo update-ccs-eeg-studio
 ```
 
+The updater fetches the current installer on each run. Downloads use a private temporary directory to avoid permission conflicts with packages left in shared `/tmp` by another user. If an older run failed with `curl: (23)` at `/tmp/CCSEEGStudio-linux-x86_64.rpm`, rerun the command above.
+
+
 <p align="center">
   <img src="screenshots/main.png" width="920" alt="CCS EEG Studio Main Window">
 </p>

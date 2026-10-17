@@ -6,6 +6,8 @@ its matching section is missing.
 
 ## [Unreleased]
 
+- Fix administrator Linux updates failing with `curl: (23)` when a previous user owns the fixed package filename in `/tmp`. Package downloads and optional engine rebuilds now use a private temporary directory, cleaned on success or failure. The generated updater also cleans its downloaded installer. Existing updater commands fetch this fix from `main`; no application reinstall is needed.
+
 ## [1.2.21]
 
 - Supersede the unpublished v1.2.20 build tag after correcting the Linux portable-package workflow.
