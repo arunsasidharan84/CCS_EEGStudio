@@ -608,7 +608,7 @@ class _ErpAnalysisViewState extends State<ErpAnalysisView>
               _section('EPOCHED FILES (SESSIONS)', [
                 if (_files.isEmpty)
                   const Text(
-                    'Add stimulus-epoched files (*-epo*.ccseeg.json). To make them, enable '
+                    'Add stimulus-epoched files (*-epo*.ccseeg). To make them, enable '
                     '"Stimulus-locked epochs (ERP)" in Preprocess: epochs are cut after '
                     'filtering and before GEDAI.',
                     style: TextStyle(color: _muted, fontSize: 11),
@@ -670,7 +670,7 @@ class _ErpAnalysisViewState extends State<ErpAnalysisView>
                                 context,
                                 allowMultiple: true,
                                 type: FileType.custom,
-                                allowedExtensions: ['json'],
+                                allowedExtensions: ['ccseeg', 'json'],
                               );
                               final ps =
                                   r?.files
@@ -699,7 +699,8 @@ class _ErpAnalysisViewState extends State<ErpAnalysisView>
                                       .map((f) => f.path)
                                       .where(
                                         (p) =>
-                                            p.endsWith('.ccseeg.json') &&
+                                            (p.endsWith('.ccseeg.json') ||
+                                                p.endsWith('.ccseeg')) &&
                                             p.contains('-epo'),
                                       )
                                       .toList()
@@ -708,7 +709,7 @@ class _ErpAnalysisViewState extends State<ErpAnalysisView>
                                 if (mounted) {
                                   setState(
                                     () => _status =
-                                        'No *-epo*.ccseeg.json files in $d',
+                                        'No *-epo*.ccseeg files in $d',
                                   );
                                 }
                                 return;

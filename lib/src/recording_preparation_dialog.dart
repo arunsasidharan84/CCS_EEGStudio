@@ -1,3 +1,4 @@
+import 'recording_storage.dart';
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -113,12 +114,12 @@ class _PreparationState extends State<RecordingPreparationDialog> {
       final path = await FilePicker.saveFile(
         dialogTitle: 'Save prepared recording',
         fileName:
-            '${widget.recording.path.split(RegExp(r'[\\/]')).last.replaceFirst(RegExp(r'\.(ccseeg\.json|edf|set|fif|vhdr|mat)', caseSensitive: false), '')}_prepared.ccseeg.json',
+            '${widget.recording.path.split(RegExp(r'[\\/]')).last.replaceFirst(RegExp(r'\.(ccseeg\.json|ccseeg|edf|set|fif|vhdr|mat)', caseSensitive: false), '')}_prepared.${RecordingStorage.extension}',
         type: FileType.custom,
-        allowedExtensions: ['json'],
+        allowedExtensions: [RecordingStorage.extension],
       );
       if (path == null) return;
-      final output = path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json';
+      final output = RecordingStorage.withExtension(path);
       await RecordingTransform.save(
         prepared,
         output,

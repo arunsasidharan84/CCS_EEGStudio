@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.16</b> ·
+  <b>Current version: 1.2.17</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -132,12 +132,69 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## 🌟 What's New in Version 1.2.14
+## What's new in 1.2.17
 
-- **Stacked Multi-Group Plots & Reports**: Compare multiple recordings, subjects, or experimental days stacked vertically in the TopoStats view. Includes `+ Add group` folder/CSV actions, active group sidebar selection, synchronized zoom, and multi-page PDF reporting.
-- **MMN ERP Stimulus Epoching Fix**: Preserved stimulus-locked trials (`source_epoch_samples > 0`) during preprocessing by preventing continuous sliding-window overlap slicing on epoched datasets. Re-verified multi-session MMN analysis parity across all recording days.
-- **Lateral Spread Reduction & Width Controls**: Quick width presets (`Compact 0.35"`, `Medium 0.5"`, `Wide 0.8"`) and responsive layout recalculation to easily compress wide plots for long recordings without re-running statistical permutations.
-- **Group Statistics & Mixed Model Workbench**: Aligned pooled CSV columns by name, robust numeric imports, searchable bounded recording lists, and advisory short-window DFA/fE:I checks.
+### Faster loading and visible processing
+
+Large BrainVision and portable recordings decode off the UI thread with typed
+sample buffers and fewer temporary copies. Loading and preprocessing show activity
+immediately, with **Stop processing** and ICA iteration feedback. Native Infomax
+reuses activation buffers and release builds use thin LTO. Windows speedups have
+not yet been measured; runtime still depends on channel count, duration and solver.
+
+### Save recordings in EDF+, FIF, or CCSEEG
+
+Open a processing **Settings** dialog and choose **Saved recording format (all
+workflows)**. EDF+ is the default on fresh settings; an explicit saved choice is
+retained. The preference applies across preprocessing, crop/subepoch, source outputs
+and event epoching.
+
+| Format / artifact | Filename example | Contents and use |
+| --- | --- | --- |
+| EDF+ | `subject-epo_clean.edf` + `subject-epo_clean.edf.ccsmeta` | Binary 16-bit signal plus exact application timing, trial labels and history |
+| FIF | `subject-epo_clean.fif` + `subject-epo_clean.fif.ccsmeta` | Binary float32 raw/epochs plus application metadata |
+| CCSEEG | `subject-epo_clean.ccseeg` | Native portable signal, embedded metadata/provenance; contents remain JSON |
+| ERP protocol | `task.ccsprotocol` | Reusable epoching, condition and analysis settings |
+| ERP results | `erp_results.ccserp` | Saved results that can be reopened in the ERP workbench |
+| History / feature metadata | `.ccshistory`, `.ccspreparation`, `.ccsanalysis` | JSON-content companions with recognisable roles |
+
+Keep each EDF/FIF signal with its `.ccsmeta` companion to restore exact epochs,
+markers, original event anchors and protocols. EDF quantizes to 16-bit; FIF retains
+floating-point amplitudes. These exports do not require Python. Legacy signal JSON,
+`.ccseeg.json`, protocol/result JSON and old history companions remain readable.
+
+**Settings → Organise legacy output filenames** previews safe extension renames,
+refuses collisions and writes a migration manifest. Signal samples are not
+re-encoded; raw vendor inputs and unknown JSON files are left alone. New output
+names strip repeated extensions such as `.ccseeg.ccseeg`.
+
+### Epoching, response rules and ERP review
+
+1. Choose **Saved data structure**: Continuous, Event-based trials, or Fixed-length
+   windows. Event trials use their own locking/baseline window; fixed windows can
+   use overlap.
+2. For ERP trials, label marker groups and optionally set response inclusion.
+   Choose correct/incorrect feedback markers, or map stimulus markers to expected
+   buttons (for example `S20 = R1`, `S30 = R2`). All, correct, incorrect and missed
+   trials are selectable. Rules persist in reusable protocols.
+3. Inspect higher-contrast event lines and the separate event-label lane. Method
+   parameter sections are collapsible; ICA/ICLabel has its own parameter action.
+4. Average saved groups and review selectable electrode grids, participant-weighted
+   waveforms, measurement windows and clear time-zero/voltage-zero references.
+
+ICA supports existing trials with one shared decomposition. High-pass/blink
+processing and the internal ASR training-copy adapter respect trial boundaries;
+training rejection does not delete samples from saved trials. Standalone ASR and
+muscle correction remain continuous-data operations. With continuous input,
+ICA/ASR runs before event extraction. ASR **Reject** cannot be combined with event
+extraction because deleted samples would invalidate timing; use **Correct**.
+
+The independent Pallavi review found no progressive resampling drift and confirmed
+all 483 saved Pz epochs against their continuous source. Oscillations were also
+present in independently filtered raw averages. This is a timing validation, not a
+claim that the ERP is artifact-free. See the [detailed audit and migration guide](docs/pallavi_erp_review.md)
+and [format/performance validation](docs/pallavi_performance_and_files.md), including
+method references and limitations.
 
 > 📜 See the complete **[CHANGELOG.md](CHANGELOG.md)** for detailed feature notes across all releases.
 
@@ -599,3 +656,19 @@ bash scripts/run_parity_test.sh /path/to/recording.set /path/to/reference_output
 ## 📄 License
 
 Proprietary — Centre for Consciousness Studies, NIMHANS, Bengaluru, India. All rights reserved.
+
+### Upcoming: large recordings and clearer ERP/file workflows
+
+The unpublished working tree adds worker-based loading/display filtering, visible progress and cancellation, response-correctness rules, electrode panel grids and clearer zero references. New native saves use `.ccseeg` while legacy JSON recordings remain readable; the contents are still JSON, without compression. See [performance measurements, file-format trade-offs and usage](docs/pallavi_performance_and_files.md).
+
+The saved-recording format is configurable from processing **Settings → Saved recording format (all workflows)**: CCSEEG, FIF, or EDF+. EDF/FIF exports include a matching `.ccsmeta` companion containing JSON metadata; keep the pair together. This preference applies to preprocessing, source/batch outputs and crop/event-epoch saves. FIF preserves floating-point samples; EDF+ uses 16-bit scaling and records its quantization in the companion.
+
+The preprocessing panel now uses one **Saved data structure** selector (continuous,
+event trials, or fixed windows), with collapsible method parameter sections.
+Response rules support stimulus-specific expected buttons and missed responses.
+ICA can operate across saved epochs while respecting trial boundaries; standalone
+ASR remains a continuous-data step. **EDF+ is the fresh-settings default**.
+Legacy file names can be reviewed and renamed from **Settings → Organise legacy
+output filenames**; recordings, protocols, results, and histories have distinct
+extensions. See the [Pallavi ERP review and file migration guide](docs/pallavi_erp_review.md)
+for validation findings, limitations, and method references.

@@ -26,6 +26,7 @@ fn read_f32_be(data: &[u8], offset: usize) -> f32 {
 struct ChInfo {
     name: String,
     cal: f32,
+    unit: i32,
 }
 
 pub fn load_fif(path: &Path) -> Result<Recording, String> {
@@ -69,6 +70,7 @@ pub fn load_fif(path: &Path) -> Result<Recording, String> {
             ch_infos.push(ChInfo {
                 name,
                 cal: range_val * cal_val,
+                unit: read_i32_be(data,72),
             });
         } else if kind == FIFF_DESCRIPTION || kind == FIFF_MNE_EVENT_COMMENTS {
             let text = String::from_utf8_lossy(data).to_string();
@@ -157,7 +159,7 @@ pub fn load_fif(path: &Path) -> Result<Recording, String> {
                 }
             }
         }
-        if max_abs > 0.0 && max_abs < 0.1 {
+        if ch_infos[c].unit == 107 || (ch_infos[c].unit == 0 && max_abs > 0.0 && max_abs < 0.1) {
             for sample in &mut ch_samples {
                 *sample *= 1e6;
             }

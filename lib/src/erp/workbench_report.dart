@@ -97,7 +97,7 @@ Future<String> writeErpWorkbenchReport(
               '${failure['path'].toString().split(RegExp(r'[\\/]')).last}: ${failure['error']}',
             ),
           if (failures.length > 8)
-            note('All failures are listed in erp_results.json.'),
+            note('All failures are listed in erp_results.ccserp.'),
         ],
         pw.SizedBox(height: 18),
         note(
@@ -252,7 +252,7 @@ Future<String> writeErpWorkbenchReport(
               ),
             ],
             note(
-              'rERP exports intercept, class effect, centered RT (when complete), and any numeric trial metadata predictors at every channel/time bin. Overlap correction fits continuous data with class events and other stimulus/response nuisance events. Inspect convergence, event counts and coefficients in the Models tab and erp_results.json. Conventional trial exclusions do not mask the continuous overlap model; its population/design must be reviewed separately.',
+              'rERP exports intercept, class effect, centered RT (when complete), and any numeric trial metadata predictors at every channel/time bin. Overlap correction fits continuous data with class events and other stimulus/response nuisance events. Inspect convergence, event counts and coefficients in the Models tab and erp_results.ccserp. Conventional trial exclusions do not mask the continuous overlap model; its population/design must be reviewed separately.',
             ),
           ],
         ),

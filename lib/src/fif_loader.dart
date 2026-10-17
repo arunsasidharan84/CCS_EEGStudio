@@ -10,36 +10,38 @@ class FifLoader {
     final executable = ExtractionService.findEngine();
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_fif_');
     final job = File('${temp.path}/inspect_fif.json');
-    await job.writeAsString(jsonEncode({
-      'job_type': 'inspect_fif',
-      'input': path,
-      'output': '',
-      'format': 'fif',
-      'epoch_seconds': 1.0,
-      'options': {
-        'mode': 'inspect',
-        'start_seconds': 0.0,
-        'end_seconds': 0.0,
-        'bin_seconds': 1.0,
-        'psd': false,
-        'fooof': false,
-        'irasa': false,
-        'nonlinear': false,
-        'acw': false,
-        'connectivity': false,
-        'mic': false,
-        'mim': false,
-        'gc': false,
-        'gc_tr': false,
-        'coh': false,
-        'plv': false,
-        'ciplv': false,
-        'pli': false,
-        'wpli': false,
-        'remove_non_eeg': false,
-        'exclusions': [],
-      },
-    }));
+    await job.writeAsString(
+      jsonEncode({
+        'job_type': 'inspect_fif',
+        'input': path,
+        'output': '',
+        'format': 'fif',
+        'epoch_seconds': 1.0,
+        'options': {
+          'mode': 'inspect',
+          'start_seconds': 0.0,
+          'end_seconds': 0.0,
+          'bin_seconds': 1.0,
+          'psd': false,
+          'fooof': false,
+          'irasa': false,
+          'nonlinear': false,
+          'acw': false,
+          'connectivity': false,
+          'mic': false,
+          'mim': false,
+          'gc': false,
+          'gc_tr': false,
+          'coh': false,
+          'plv': false,
+          'ciplv': false,
+          'pli': false,
+          'wpli': false,
+          'remove_non_eeg': false,
+          'exclusions': [],
+        },
+      }),
+    );
 
     final process = await Process.run(executable, [job.path]);
     try {
@@ -48,7 +50,8 @@ class FifLoader {
 
     if (process.exitCode != 0) {
       throw FormatException(
-          'Engine failed to inspect FIF file: ${process.stderr}');
+        'Engine failed to inspect FIF file: ${process.stderr}',
+      );
     }
 
     final jsonStr = process.stdout
@@ -71,7 +74,9 @@ class FifLoader {
     final previewList = data['preview'] as List;
     final preview = <Float32List>[
       for (final ch in previewList)
-        Float32List.fromList([for (final val in ch as List) (val as num).toDouble()]),
+        Float32List.fromList([
+          for (final val in ch as List) (val as num).toDouble(),
+        ]),
     ];
 
     final markers = data['markers'] == null
@@ -89,7 +94,7 @@ class FifLoader {
       sampleCount: sampleCount,
       format: 'fif',
       epochCount: epochCount,
-      pointsPerEpoch: pointsPerEpoch,
+      pointsPerEpoch: data['is_epoched'] == false ? null : pointsPerEpoch,
       epochLabels: epochLabels,
       markers: markers,
     );

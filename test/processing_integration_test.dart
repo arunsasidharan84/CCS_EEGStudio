@@ -236,7 +236,7 @@ void main() {
       expect(row[headers.indexOf('subjid')], 'S01');
       final parsed = parseFeatureCsv(csv, ['Delta_PSD'], ['Fz', 'Cz']);
       expect(parsed.epochEndSeconds, {1: 1.0, 2: 1.5, 3: 2.0, 4: 2.5});
-      expect(File('$csv.analysis.json').existsSync(), isTrue);
+      expect(File('$csv.ccsanalysis').existsSync(), isTrue);
     },
     skip: !engine.existsSync(),
   );

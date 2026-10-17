@@ -10,6 +10,7 @@ Map<String, dynamic> erpProtocolJson(AnalysisConfig config) => {
   'epoching': {
     'markers': config.stimMarkers,
     'marker_groups': config.stimMarkerGroups,
+    'response_rules': config.stimResponseRules,
     'pattern': config.stimPattern,
     'tmin': config.stimTmin,
     'tmax': config.stimTmax,
@@ -45,6 +46,7 @@ void applyErpProtocol(AnalysisConfig config, Map<String, dynamic> json) {
     ..stimMarkerGroups = {
       for (final e in spec.markerGroups.entries) e.key: e.value.toList(),
     }
+    ..stimResponseRules = Map<String, dynamic>.from(spec.responseRules)
     ..stimPattern = spec.pattern
     ..stimTmin = spec.tmin
     ..stimTmax = spec.tmax
@@ -72,7 +74,7 @@ class ProtocolTools extends StatelessWidget {
         beforeSave?.call();
         final path = await FilePicker.saveFile(
           dialogTitle: 'Save epoching and averaging protocol',
-          fileName: 'erp.protocol.json',
+          fileName: 'erp.ccsprotocol',
         );
         if (path != null)
           await File(path).writeAsString(
@@ -81,7 +83,7 @@ class ProtocolTools extends StatelessWidget {
       } else {
         final pick = await FilePicker.pickFiles(
           type: FileType.custom,
-          allowedExtensions: ['json'],
+          allowedExtensions: ['ccsprotocol', 'json'],
         );
         final path = pick?.files.single.path;
         if (path == null) return;

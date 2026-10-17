@@ -59,7 +59,13 @@ class ErpWorkbenchService {
           errors.isEmpty ? 'ERP engine stopped' : errors.join('\n'),
         );
       return Map<String, dynamic>.from(
-        jsonDecode(await File('$output/erp_results.json').readAsString())
+        jsonDecode(
+              await File(
+                await File('$output/erp_results.ccserp').exists()
+                    ? '$output/erp_results.ccserp'
+                    : '$output/erp_results.json',
+              ).readAsString(),
+            )
             as Map,
       );
     } finally {
@@ -78,7 +84,9 @@ List<String> discoverErpRecordings(String directory, {int firstSubjects = 0}) {
         (p) =>
             !p.split(Platform.pathSeparator).last.startsWith('._') &&
             (p.toLowerCase().endsWith('.edf') ||
-                p.toLowerCase().endsWith('.ccseeg.json')),
+                p.toLowerCase().endsWith('.fif') ||
+                (p.toLowerCase().endsWith('.ccseeg.json') ||
+                    p.toLowerCase().endsWith('.ccseeg'))),
       )
       .toList();
   final existing = paths.toSet();
@@ -86,6 +94,7 @@ List<String> discoverErpRecordings(String directory, {int firstSubjects = 0}) {
       .where(
         (p) =>
             !p.toLowerCase().endsWith('.edf') ||
+            p.toLowerCase().endsWith('.fif') ||
             p.toLowerCase().endsWith('_cleaned.edf') ||
             !existing.contains(
               p.replaceFirst(

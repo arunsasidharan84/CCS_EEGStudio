@@ -101,6 +101,12 @@ jobs:
         run: cargo build --release
         working-directory: bridge
 
+      - name: Run native ERP and epoch-boundary regression tests
+        run: |
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked -p ccs_ica --lib
+        working-directory: bridge
+
       # ── Flutter: setup + tests ────────────────────────────────────────────
       - name: Set up Flutter (stable)
         uses: subosito/flutter-action@v2
@@ -178,6 +184,12 @@ jobs:
 
       - name: Build Rust engine (Windows release binary)
         run: cargo build --release
+        working-directory: bridge
+
+      - name: Run native ERP and epoch-boundary regression tests
+        run: |
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked -p ccs_ica --lib
         working-directory: bridge
 
       # ── Flutter: setup + tests ────────────────────────────────────────────
@@ -270,6 +282,12 @@ jobs:
           cargo build --release --target x86_64-unknown-linux-musl
           mkdir -p target/release
           cp target/x86_64-unknown-linux-musl/release/ccs-eeg-engine target/release/ccs-eeg-engine
+        working-directory: bridge
+
+      - name: Run native ERP and epoch-boundary regression tests
+        run: |
+          cargo test --release --locked --lib --test erp_workbench_parity --test epoch_preprocessing
+          cargo test --release --locked -p ccs_ica --lib
         working-directory: bridge
 
       # ── Flutter: setup + tests ────────────────────────────────────────────

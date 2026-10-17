@@ -4,6 +4,56 @@ All notable CCS EEG Studio changes are documented here. Version headings are
 also the source for GitHub Release notes, so a tagged release is rejected when
 its matching section is missing.
 
+## [Unreleased]
+
+## [1.2.17]
+
+### Recording performance and processing feedback
+
+- Move recording decoding and full-resolution display filtering off the Flutter UI isolate. Use typed buffers, reduce BrainVision/portable temporary copies, and pass existing portable files directly to native processing when possible.
+- Show immediate loading feedback, progress activity and a visible Stop action. Stage native outputs before replacing a saved recording, and prevent restart races while cancellation completes.
+- Report ICA iteration activity, reuse Infomax activation buffers and enable native thin LTO. Solver learning rules and convergence settings remain unchanged; Windows speed improvements have not yet been benchmarked.
+
+### Recording formats and unambiguous filenames
+
+- Add a persistent saved-recording format setting shared by preprocessing, crop/subepoch, source outputs and event epoching: **EDF+**, **FIF**, or **CCSEEG**. EDF+ is the default for fresh settings; an explicitly saved preference is retained.
+- Write real binary EDF+ with per-channel 16-bit amplitude scaling and native float32 FIF for continuous and epoched recordings. Native CCSEEG retains its portable JSON contents under a dedicated `.ccseeg` extension; renaming is not compression.
+- Store EDF/FIF application metadata in matching `.ccsmeta` companions. Preserve exact sample counts, padding information, original event timing, trial boundaries/labels, epoch zero, protocols and processing history. Keep the companion with its signal file. Fractional EDF rates use rational record durations; unsupported rates fail explicitly instead of changing the sample clock.
+- Use distinct JSON-content extensions for reusable ERP protocols (`.ccsprotocol`), reopenable ERP results (`.ccserp`), native processing history (`.ccshistory`), legacy preparation history (`.ccspreparation`), and feature-analysis metadata (`.ccsanalysis`). Internal engine job files remain JSON.
+- Accept legacy signal JSON, `.ccseeg.json`, protocol JSON, ERP-result JSON and old history companions. Hide non-recording metadata from signal pickers and strip repeated known signal extensions from new output names.
+- Add **Settings → Organise legacy output filenames**: preview recognised renames, refuse collisions, update exact companion source-path references and retain a `.ccsmigration` manifest. Migration does not re-encode signal samples or rename raw vendor inputs. A dry-run/apply command-line tool is also included.
+
+### Intuitive epoching and behavioral inclusion
+
+- Replace independent output-epoch checkboxes with one **Saved data structure** choice: Continuous recording, Event-based trials (ERP), or Fixed-length windows. Event windows and fixed-window overlap settings remain separate.
+- Increase waveform marker-line contrast while retaining event labels in their own lane.
+- Group preprocessing parameters into collapsible Filter/notch, Bad channels/interpolation, GEDAI, Reference, ICA/ICLabel and ASR/muscle sections. Existing method icons open the corresponding section; ICA has its own parameter action.
+- Persist response inclusion rules in reusable epoch/ERP protocols: all trials, correct-only, incorrect-only, or missed-only. Support explicit correct/incorrect feedback codes and stimulus-specific expected-button mappings such as `S20 = R1`, `S30 = R2`.
+- Use the first recognised response inside the configured time window, stopping at the next selected stimulus. Unknown response codes are ignored; missing mappings are not guessed.
+
+### Boundary-aware ICA and event timing
+
+- Permit ICA to fit a shared decomposition across epoched data while retaining trial count, sample count, labels and event timing. High-pass filtering, blink detection and blink-training selections respect trial boundaries.
+- Pool ICA training-copy ASR calibration statistics from within-trial covariance/RMS windows and reset ASR processing state at each trial. Rejected training samples do not shorten saved ERP trials. Insufficient calibration data are reported, with unrejected training data retained.
+- For continuous input, run ICA/ASR before event extraction. Reject-ASR is refused with event extraction because deleting samples would invalidate event positions; Correct-ASR preserves time. Standalone ASR and standalone muscle cleaners remain continuous-input operations.
+- Preserve original epoch protocols and parent processing provenance when cropping, subepoching, exporting and reopening saved recordings.
+- Add selectable ERP electrode panel grids and clearer 0-ms / 0-µV references; retain native condition A/B channel waveforms and participant-weighted interactive review.
+
+### Verification and practical limits
+
+- Local Flutter regression suite: **201 passed, 6 skipped**. Static analysis and macOS release compilation passed. Native checks cover saved-trial ERP parity, epoched ICA, blink-window boundaries, and time-zero alignment after 1000→250 and 256→250 Hz resampling with filtering on/off.
+- Independent MNE reads validate EDF/FIF signals, channel labels, annotations, epoch anchors and EDF quantization bounds. Export itself does not require Python or MNE.
+- Read-only Pallavi audit: 1,156,520 raw samples at 1000 Hz map to 289,130 saved samples at 250 Hz; five local checks found zero sample lag. All 483 saved Pz epochs match their cleaned continuous-source slices after baseline adjustment. Oscillatory morphology is also present in independently filtered raw-data averages; this does not certify an artifact-free ERP or determine unknown behavioral marker meanings.
+- The epoched ASR training-copy adapter is an application extension, not a claim of full clean_rawdata parity on epoched inputs. Existing outputs already misaligned by releases before 1.2.16 still require regeneration from the original data; filename migration cannot repair sample timing.
+- macOS packages are ad-hoc signed. Platform installers and `SHA256SUMS.txt` are supplied by the desktop release workflow for the in-app updater.
+
+### Guides and method references
+
+- [Recording formats, performance checks and independent format validation](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.17/docs/pallavi_performance_and_files.md)
+- [Pallavi ERP timing review, boundary-aware ICA, response rules and filename migration](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.17/docs/pallavi_erp_review.md)
+- [ERP methods, references, parity and recovery guidance](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.17/docs/erp_workbench.md)
+- [EEGLAB ICA workflow](https://eeglab.org/tutorials/06_RejectArtifacts/RunICA.html), [EEGLAB filtering guidance](https://eeglab.org/tutorials/05_Preprocess/Filtering.html), [EDF specifications](https://www.edfplus.info/specs/edf.html), [EDF+ specifications](https://www.edfplus.info/specs/edfplus.html)
+
 ## [1.2.16]
 
 ### Critical resampling/event-alignment correction

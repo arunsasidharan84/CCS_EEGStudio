@@ -55,11 +55,15 @@ fn main() -> Result<(), String> {
             erp_workbench::inspect(&erp_job.inputs, &erp_job.options)
         } else {
             erp_workbench::run(&erp_job, |path| {
-                if path.to_lowercase().ends_with(".edf") {
-                    load_edf(Path::new(path))
+                let mut rec = if path.to_lowercase().ends_with(".edf") {
+                    load_edf(Path::new(path))?
+                } else if path.to_lowercase().ends_with(".fif") {
+                    mne_fif::load_fif(Path::new(path))?
                 } else {
-                    preprocessing::load_portable(Path::new(path))
-                }
+                    preprocessing::load_portable(Path::new(path))?
+                };
+                recording_metadata::apply(&mut rec,Path::new(path))?;
+                Ok(rec)
             })?
         };
         println!("{}", serde_json::to_string(&result).map_err(err)?);
@@ -245,6 +249,7 @@ fn main() -> Result<(), String> {
             "points_per_epoch": points_per_epoch,
             "epoch_labels": rec.epoch_labels,
             "preview": preview,
+            "is_epoched":rec.source_epoch_samples.is_some(),
             "format": "fif"
         });
         println!("{}", serde_json::to_string_pretty(&json).map_err(err)?);
@@ -300,11 +305,12 @@ fn main() -> Result<(), String> {
         fieldtrip_loader::load_fieldtrip(Path::new(&job.input))?
     } else if job.format == "vhdr" || job.input.to_lowercase().ends_with(".vhdr") {
         vhdr_loader::load_vhdr(Path::new(&job.input))?
-    } else if job.format == "ccseeg" || job.input.ends_with(".ccseeg.json") {
+    } else if job.format == "ccseeg" || (job.input.ends_with(".ccseeg.json") || job.input.ends_with(".ccseeg")) {
         preprocessing::load_portable(Path::new(&job.input))?
     } else {
         load_edf(Path::new(&job.input))?
     };
+    recording_metadata::apply(&mut recording,Path::new(&job.input))?;
     if recording.channels.is_empty() {
         return Err("recording has no channels".into());
     }
@@ -706,6 +712,7 @@ fn recording_stem(path: &str) -> String {
     let lower = name.to_lowercase();
     for suffix in [
         ".ccseeg.json",
+        ".ccseeg",
         ".edf",
         ".set",
         ".fif",

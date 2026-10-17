@@ -1,6 +1,6 @@
 [package]
 name = "ccs_eeg_engine"
-version = "1.2.16"
+version = "1.2.17"
 edition = "2021"
 publish = false
 
@@ -28,3 +28,8 @@ statrs = "0.17"
 
 [dev-dependencies]
 approx = "0.5"
+
+# Optimize the complete native engine on Windows as well as Unix.
+[profile.release]
+lto = "thin"
+codegen-units = 1

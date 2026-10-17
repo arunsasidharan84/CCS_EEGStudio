@@ -3,12 +3,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'models.dart';
+import 'recording_storage.dart';
+import 'legacy_file_migration.dart';
 
 Future<bool> showProcessingSettings(
   BuildContext context,
   AnalysisConfig config,
-  String stage,
-) async {
+  String stage, {
+  String? section,
+}) async {
   final taps = TextEditingController(text: '${config.firTaps}'),
       width = TextEditingController(text: '${config.notchWidthHz}'),
       transition = TextEditingController(text: '${config.notchTransitionHz}'),
@@ -26,7 +29,9 @@ Future<bool> showProcessingSettings(
   final featureRefs = TextEditingController(
     text: config.featureReferenceChannels.join(', '),
   );
+  final gedaiThreshold = TextEditingController(text: config.gedaiThreshold);
   final sourceModel = TextEditingController(text: config.sourceModelPath);
+  var outputFormat = RecordingStorage.preferredFormat;
   var sourceMethod = config.sourceMethod;
   var featureReference = config.featureReferenceMode;
   final order = TextEditingController(text: '${config.iirOrder}');
@@ -123,214 +128,348 @@ Future<bool> showProcessingSettings(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (stage == 'Preprocessing') ...[
-                  DropdownButtonFormField<String>(
-                    initialValue: filterType,
-                    decoration: const InputDecoration(
-                      labelText: 'Bandpass filter type',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'fir',
-                        child: Text('FIR Hamming (centred)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'iir',
-                        child: Text('Butterworth IIR (forward / backward)'),
-                      ),
-                    ],
-                    onChanged: (v) => setState(() => filterType = v!),
+                DropdownButtonFormField<RecordingFileFormat>(
+                  isExpanded: true,
+                  initialValue: outputFormat,
+                  decoration: const InputDecoration(
+                    labelText: 'Saved recording format (all workflows)',
                   ),
-                  if (filterType == 'iir')
-                    field(
-                      order,
-                      'IIR order per pass (2-12, even)',
-                      help:
-                          'Forward/backward filtering squares the magnitude response.',
+                  items: const [
+                    DropdownMenuItem(
+                      value: RecordingFileFormat.ccseeg,
+                      child: Text('CCSEEG · native portable'),
                     ),
-                  if (filterType == 'fir')
-                    const Text(
-                      'FIR Hamming, centred zero-phase filtering. Order = taps − 1.',
+                    DropdownMenuItem(
+                      value: RecordingFileFormat.fif,
+                      child: Text('FIF · floating-point EEG / epochs'),
                     ),
-                  field(
-                    taps,
-                    'FIR taps (0 = automatic)',
-                    help: 'Custom taps must be odd and at least 3.',
-                  ),
-                  field(
-                    variance,
-                    'Bad-channel variance / median ratio',
-                    help: 'Flat channels are also flagged. Default 25.',
-                  ),
-                  field(stiffness, 'Spherical spline stiffness (2-8)'),
-                  field(
-                    regularization,
-                    'Spline regularization',
-                    help: 'Positive; default 0.00001.',
-                  ),
-                  field(width, 'Notch stop-band width (Hz)'),
-                  field(transition, 'Notch transition width (Hz)'),
-                  DropdownButtonFormField<String>(
-                    initialValue: reference,
-                    decoration: const InputDecoration(
-                      labelText: 'Output reference',
+                    DropdownMenuItem(
+                      value: RecordingFileFormat.edf,
+                      child: Text('EDF+ · 16-bit + .ccsmeta metadata'),
                     ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'none',
-                        child: Text('Keep cleaned reference'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'average',
-                        child: Text('Common average'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'channels',
-                        child: Text(
-                          'Selected electrode(s) / linked references',
+                  ],
+                  onChanged: (v) => setState(() => outputFormat = v!),
+                ),
+                const Text(
+                  'EDF/FIF exports include a matching .ccsmeta file (JSON contents). Keep it with the signal file for exact epoch timing, labels and processing history. EDF quantizes amplitudes to 16-bit.',
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.drive_file_rename_outline),
+                  label: const Text('Organise legacy output filenames…'),
+                  onPressed: () async {
+                    final folder = await FilePicker.getDirectoryPath();
+                    if (folder == null || !context.mounted) return;
+                    try {
+                      final plan = await LegacyFileMigration.plan(folder);
+                      if (!context.mounted) return;
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: Text('${plan.length} legacy filenames'),
+                          content: SizedBox(
+                            width: 600,
+                            child: SingleChildScrollView(
+                              child: Text(
+                                plan.isEmpty
+                                    ? 'No known legacy filenames need changing.'
+                                    : plan.entries
+                                          .map(
+                                            (e) =>
+                                                '${e.key.split(RegExp(r"[/\\]")).last} → ${e.value.split(RegExp(r"[/\\]")).last}',
+                                          )
+                                          .join('\n'),
+                              ),
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel'),
+                            ),
+                            if (plan.isNotEmpty)
+                              FilledButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Rename outputs'),
+                              ),
+                          ],
                         ),
+                      );
+                      if (confirmed == true)
+                        await LegacyFileMigration.apply(folder, plan);
+                    } catch (e) {
+                      if (context.mounted)
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  },
+                ),
+                if (stage == 'Preprocessing') ...[
+                  ExpansionTile(
+                    title: const Text('Filter and notch'),
+                    initiallyExpanded: section == 'Filter',
+                    children: [
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: filterType,
+                        decoration: const InputDecoration(
+                          labelText: 'Bandpass filter type',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'fir',
+                            child: Text('FIR Hamming (centred)'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'iir',
+                            child: Text('Butterworth IIR (forward / backward)'),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => filterType = v!),
+                      ),
+                      if (filterType == 'iir')
+                        field(
+                          order,
+                          'IIR order per pass (2-12, even)',
+                          help:
+                              'Forward/backward filtering squares the magnitude response.',
+                        ),
+                      if (filterType == 'fir')
+                        const Text(
+                          'FIR Hamming, centred zero-phase filtering. Order = taps − 1.',
+                        ),
+                      field(
+                        taps,
+                        'FIR taps (0 = automatic)',
+                        help: 'Custom taps must be odd and at least 3.',
+                      ),
+                      field(width, 'Notch stop-band width (Hz)'),
+                      field(transition, 'Notch transition width (Hz)'),
+                    ],
+                  ),
+                  ExpansionTile(
+                    title: const Text('Bad channels and interpolation'),
+                    initiallyExpanded: section == 'Bad channels',
+                    children: [
+                      field(
+                        variance,
+                        'Bad-channel variance / median ratio',
+                        help: 'Flat channels are also flagged. Default 25.',
+                      ),
+                      field(stiffness, 'Spherical spline stiffness (2-8)'),
+                      field(
+                        regularization,
+                        'Spline regularization',
+                        help: 'Positive; default 0.00001.',
                       ),
                     ],
-                    onChanged: (v) => setState(() => reference = v!),
                   ),
-                  if (reference == 'channels')
-                    field(
-                      references,
-                      'Reference channel labels',
-                      help:
-                          'Comma-separated. These channels must be included among EEG channels.',
-                    ),
-                  const Text(
-                    'GEDAI still uses its internal full-rank pseudo-average reference. The chosen output reference is applied after cleaning.',
-                  ),
-                  const Divider(height: 24),
-                  const Text(
-                    'ICA cleaning (choose the algorithm in the Preprocessing panel)',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Blink-locked ICA stage (eye / heart)'),
-                    value: icaBlink,
-                    onChanged: (v) => setState(() => icaBlink = v!),
-                  ),
-                  if (icaBlink) ...[
-                    field(
-                      icaEye,
-                      'Blink detection channel',
-                      help:
-                          'Empty = Fp1, Fp2, AFz, Fz, F7, F8, AF3 or AF4, whichever exists.',
-                    ),
-                    field(icaEpochs, 'Blink epochs for the decomposition'),
-                    field(
-                      icaBlinkHi,
-                      'Eye component threshold (start)',
-                      help:
-                          'ICLabel probability; lowered stepwise to the floor below.',
-                    ),
-                    field(icaBlinkLo, 'Eye component threshold (floor)'),
-                    CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Also remove heart (ECG) components'),
-                      value: icaRemoveEcg,
-                      onChanged: (v) => setState(() => icaRemoveEcg = v!),
-                    ),
-                  ],
-                  CheckboxListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text(
-                      'Second ICA stage (muscle / line noise / channel noise)',
-                    ),
-                    value: icaOther,
-                    onChanged: (v) => setState(() => icaOther = v!),
-                  ),
-                  if (icaOther) ...[
-                    field(
-                      icaArtefacts,
-                      'ICLabel classes to remove',
-                      help:
-                          'Comma-separated; empty = Muscle, Line Noise, Channel Noise.',
-                    ),
-                    field(icaOtherHi, 'Component threshold (start)'),
-                    field(icaOtherLo, 'Component threshold (floor)'),
-                    field(
-                      icaFitCutoff,
-                      'ASR cutoff for the ICA fit copy (SD)',
-                      help:
-                          'MATLAB ica2_BurstCriterion (default 15); burst and window rejection apply to this copy only.',
-                    ),
-                    CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Fit ICA on ASR-cleaned data'),
-                      subtitle: const Text(
-                        'As the MATLAB pipeline: bursts are rejected from the copy ICA is fitted on only.',
+                  ExpansionTile(
+                    title: const Text('GEDAI'),
+                    initiallyExpanded: section == 'GEDAI',
+                    children: [
+                      field(
+                        gedaiThreshold,
+                        'GEDAI threshold',
+                        help:
+                            'auto = balanced; auto- = conservative; numeric values are passed to GEDAI.',
                       ),
-                      value: icaFitAsr,
-                      onChanged: (v) => setState(() => icaFitAsr = v!),
-                    ),
-                  ],
-                  field(
-                    icaSeed,
-                    'ICA random seed',
-                    help: 'Fixed seed makes the decomposition reproducible.',
+                      const Text(
+                        'Saved event trials retain their own boundaries. Continuous data use the processing window set in the main panel.',
+                      ),
+                    ],
                   ),
-                  const Divider(height: 24),
-                  field(
-                    asrCutoff,
-                    'ASR burst cutoff (SD)',
-                    help:
-                        'clean_rawdata BurstCriterion: 5 aggressive, 20 conservative (default).',
+                  ExpansionTile(
+                    title: const Text('Output reference'),
+                    initiallyExpanded: section == 'Reference',
+                    children: [
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: reference,
+                        decoration: const InputDecoration(
+                          labelText: 'Output reference',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'none',
+                            child: Text('Keep cleaned reference'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'average',
+                            child: Text('Common average'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'channels',
+                            child: Text(
+                              'Selected electrode(s) / linked references',
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() => reference = v!),
+                      ),
+                      if (reference == 'channels')
+                        field(
+                          references,
+                          'Reference channel labels',
+                          help:
+                              'Comma-separated. These channels must be included among EEG channels.',
+                        ),
+                      const Text(
+                        'GEDAI still uses its internal full-rank pseudo-average reference. The chosen output reference is applied after cleaning.',
+                      ),
+                    ],
                   ),
-                  if (config.asrVariant == 'adaptive')
-                    field(
-                      asrAlpha,
-                      'Adaptive ASR update rate (0-1)',
-                      help:
-                          'Weight of each clean block in the running calibration; 0 = static ASR.',
-                    ),
-                  if (config.asrVariant == 'easr') ...[
-                    field(
-                      asrEmbedDim,
-                      'E-ASR embedding dimension',
-                      help: 'Pseudo-channels per channel (2-32).',
-                    ),
-                    field(asrEmbedTau, 'E-ASR delay (samples)', help: '1-50.'),
-                  ],
-                  if (config.asrVariant == 'vmd' || config.asrVariant == 'emd')
-                    field(
-                      asrModes,
-                      'Number of modes',
-                      help:
-                          'VMD modes / EMD components used as ASR channels (2-12).',
-                    ),
-                  if (config.muscleMethod == 'bss_cca')
-                    field(
-                      bsscaN,
-                      'BSS-CCA sources removed',
-                      help:
-                          'Lowest-autocorrelation sources dropped (1+; typical 1-10% of channels).',
-                    ),
-                  if (config.muscleMethod == 'icanclean')
-                    field(
-                      iccThr,
-                      'iCanClean R² threshold',
-                      help:
-                          'Canonical components with R² above this are removed (default 0.7).',
-                    ),
-                  if (config.muscleMethod == 'wica')
-                    field(
-                      wicaLevels,
-                      'wICA wavelet levels',
-                      help:
-                          'HAPPE wICA: coif5 SWT levels, soft threshold (default 5).',
-                    ),
+                  ExpansionTile(
+                    title: const Text('ICA and ICLabel'),
+                    initiallyExpanded: section == 'ICA',
+                    children: [
+                      const Divider(height: 24),
+                      const Text(
+                        'ICA cleaning (choose the algorithm in the Preprocessing panel)',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Blink-locked ICA stage (eye / heart)',
+                        ),
+                        value: icaBlink,
+                        onChanged: (v) => setState(() => icaBlink = v!),
+                      ),
+                      if (icaBlink) ...[
+                        field(
+                          icaEye,
+                          'Blink detection channel',
+                          help:
+                              'Empty = Fp1, Fp2, AFz, Fz, F7, F8, AF3 or AF4, whichever exists.',
+                        ),
+                        field(icaEpochs, 'Blink epochs for the decomposition'),
+                        field(
+                          icaBlinkHi,
+                          'Eye component threshold (start)',
+                          help:
+                              'ICLabel probability; lowered stepwise to the floor below.',
+                        ),
+                        field(icaBlinkLo, 'Eye component threshold (floor)'),
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Also remove heart (ECG) components',
+                          ),
+                          value: icaRemoveEcg,
+                          onChanged: (v) => setState(() => icaRemoveEcg = v!),
+                        ),
+                      ],
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Second ICA stage (muscle / line noise / channel noise)',
+                        ),
+                        value: icaOther,
+                        onChanged: (v) => setState(() => icaOther = v!),
+                      ),
+                      if (icaOther) ...[
+                        field(
+                          icaArtefacts,
+                          'ICLabel classes to remove',
+                          help:
+                              'Comma-separated; empty = Muscle, Line Noise, Channel Noise.',
+                        ),
+                        field(icaOtherHi, 'Component threshold (start)'),
+                        field(icaOtherLo, 'Component threshold (floor)'),
+                        field(
+                          icaFitCutoff,
+                          'ASR cutoff for the ICA fit copy (SD)',
+                          help:
+                              'MATLAB ica2_BurstCriterion (default 15); burst and window rejection apply to this copy only.',
+                        ),
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Fit ICA on ASR-cleaned data'),
+                          subtitle: const Text(
+                            'As the MATLAB pipeline: bursts are rejected from the copy ICA is fitted on only.',
+                          ),
+                          value: icaFitAsr,
+                          onChanged: (v) => setState(() => icaFitAsr = v!),
+                        ),
+                      ],
+                      field(
+                        icaSeed,
+                        'ICA random seed',
+                        help:
+                            'Fixed seed makes the decomposition reproducible.',
+                      ),
+                    ],
+                  ),
+                  ExpansionTile(
+                    title: const Text('ASR and muscle correction'),
+                    initiallyExpanded: section == 'ASR',
+                    children: [
+                      const Divider(height: 24),
+                      field(
+                        asrCutoff,
+                        'ASR burst cutoff (SD)',
+                        help:
+                            'clean_rawdata BurstCriterion: 5 aggressive, 20 conservative (default).',
+                      ),
+                      if (config.asrVariant == 'adaptive')
+                        field(
+                          asrAlpha,
+                          'Adaptive ASR update rate (0-1)',
+                          help:
+                              'Weight of each clean block in the running calibration; 0 = static ASR.',
+                        ),
+                      if (config.asrVariant == 'easr') ...[
+                        field(
+                          asrEmbedDim,
+                          'E-ASR embedding dimension',
+                          help: 'Pseudo-channels per channel (2-32).',
+                        ),
+                        field(
+                          asrEmbedTau,
+                          'E-ASR delay (samples)',
+                          help: '1-50.',
+                        ),
+                      ],
+                      if (config.asrVariant == 'vmd' ||
+                          config.asrVariant == 'emd')
+                        field(
+                          asrModes,
+                          'Number of modes',
+                          help:
+                              'VMD modes / EMD components used as ASR channels (2-12).',
+                        ),
+                      if (config.muscleMethod == 'bss_cca')
+                        field(
+                          bsscaN,
+                          'BSS-CCA sources removed',
+                          help:
+                              'Lowest-autocorrelation sources dropped (1+; typical 1-10% of channels).',
+                        ),
+                      if (config.muscleMethod == 'icanclean')
+                        field(
+                          iccThr,
+                          'iCanClean R² threshold',
+                          help:
+                              'Canonical components with R² above this are removed (default 0.7).',
+                        ),
+                      if (config.muscleMethod == 'wica')
+                        field(
+                          wicaLevels,
+                          'wICA wavelet levels',
+                          help:
+                              'HAPPE wICA: coif5 SWT levels, soft threshold (default 5).',
+                        ),
+                    ],
+                  ),
                 ],
                 if (stage == 'Source Space') ...[
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: sourceMethod,
                     decoration: const InputDecoration(
                       labelText: 'Inverse method',
@@ -430,6 +569,7 @@ Future<bool> showProcessingSettings(
                 ],
                 if (stage == 'Feature Extraction') ...[
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: featureReference,
                     decoration: const InputDecoration(
                       labelText: 'Feature-analysis reference',
@@ -453,6 +593,7 @@ Future<bool> showProcessingSettings(
                   if (featureReference == 'channels')
                     field(featureRefs, 'Feature reference channels'),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: average,
                     decoration: const InputDecoration(
                       labelText: 'Welch PSD estimator',
@@ -502,7 +643,7 @@ Future<bool> showProcessingSettings(
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               try {
                 if (stage == 'Preprocessing') {
                   final n = int.parse(taps.text),
@@ -627,6 +768,7 @@ Future<bool> showProcessingSettings(
                     ..badVarianceRatio = vr
                     ..splineStiffness = ss
                     ..splineRegularization = sr
+                    ..gedaiThreshold = gedaiThreshold.text.trim()
                     ..filterType = filterType
                     ..iirOrder = o
                     ..firTaps = n
@@ -722,7 +864,8 @@ Future<bool> showProcessingSettings(
                     ..psdBands = parsed
                     ..featureParameters = advancedValues;
                 }
-                Navigator.pop(context, true);
+                await RecordingStorage.setPreferredFormat(outputFormat);
+                if (context.mounted) Navigator.pop(context, true);
               } catch (e) {
                 setState(() => error = '$e');
               }
@@ -734,6 +877,7 @@ Future<bool> showProcessingSettings(
     ),
   );
   for (final c in [
+    gedaiThreshold,
     ...advanced.values,
     factors,
     variance,

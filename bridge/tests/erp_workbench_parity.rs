@@ -264,6 +264,9 @@ fn all_seven_tasks_reuse_saved_trials_without_re_epoching() {
             result["failures"]
         );
         let f = &result["files"][0];
+        assert_eq!(f["channel_a"].as_array().unwrap().len(), labels.len());
+        assert_eq!(f["channel_b"].as_array().unwrap().len(), labels.len());
+        assert_eq!(f["channel_a"][0].as_array().unwrap().len(), n);
         assert_eq!(f["n_a"], 4);
         assert_eq!(f["n_b"], 4);
         let trial_csv = std::path::Path::new(&job.output).join("erp_trial_measurements.csv");
@@ -285,7 +288,7 @@ fn saved_locking_codes_can_regroup_and_reverse_the_comparison() {
     use std::fs;
     let dir = std::env::temp_dir().join(format!("erp-regroup-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("1_ERN.ccseeg.json");
+    let path = dir.join("1_ERN.ccseeg");
     let metadata = serde_json::json!({"sample_rate":100.,"source_epoch_samples":171,"epoch_tmin":-0.5,"epoch_tmax":1.2,"epoch_labels":["Congruent","Congruent","Incongruent","Incongruent","Congruent","Incongruent"],"epoch_onsets":[10.,13.,16.,19.,22.,25.],"markers":[{"epoch_index":0,"description":"111","start_seconds":0.5},{"epoch_index":1,"description":"112","start_seconds":0.5},{"epoch_index":2,"description":"212","start_seconds":0.5},{"epoch_index":3,"description":"222","start_seconds":0.5},{"epoch_index":4,"description":"112","start_seconds":0.5},{"epoch_index":5,"description":"111","start_seconds":0.5}]});
     fs::write(&path, metadata.to_string()).unwrap();
     let mut p = profile("ERN").unwrap();

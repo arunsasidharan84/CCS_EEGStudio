@@ -13,6 +13,7 @@ class StimEpochSpec {
     this.markers = const ['S 51', 'S 52'],
     this.pattern = '',
     this.markerGroups = const {},
+    this.responseRules = const {},
     this.tmin = -0.5,
     this.tmax = 1.2,
     this.baseline = true,
@@ -31,6 +32,9 @@ class StimEpochSpec {
         for (final e in (json['marker_groups'] as Map? ?? {}).entries)
           e.key.toString(): (e.value as List).cast<String>(),
       },
+      responseRules: Map<String, dynamic>.from(
+        json['response_rules'] as Map? ?? {},
+      ),
       tmin: (json['tmin'] as num?)?.toDouble() ?? -.5,
       tmax: (json['tmax'] as num?)?.toDouble() ?? 1.2,
       baseline: baseline != null,
@@ -47,6 +51,7 @@ class StimEpochSpec {
   /// Optional extra regular expression over the marker label.
   final String pattern;
   final Map<String, List<String>> markerGroups;
+  final Map<String, dynamic> responseRules;
   final double tmin, tmax;
   final bool baseline;
   final double baselineStart, baselineEnd;
@@ -103,6 +108,8 @@ class StimEpochSpec {
     }
     bool inside(double t, List<List<double>> iv) =>
         iv.any((x) => t >= x[0] && t <= x[1]);
+    final ordered = markers.toList()
+      ..sort((a, b) => a.startSeconds.compareTo(b.startSeconds));
     final out = <(double, String)>[];
     for (final m in markers) {
       final t = m.startSeconds;
@@ -126,6 +133,60 @@ class StimEpochSpec {
           break;
         }
       }
+      final rule = responseRules[label];
+      if (rule is Map && rule['mode'] != 'all') {
+        final correct = (rule['correct'] as List? ?? []).cast<String>();
+        final incorrect = (rule['incorrect'] as List? ?? []).cast<String>();
+        final expectedMap = rule['expected_by_stimulus'] as Map? ?? {};
+        final expected = <String>[
+          for (final entry in expectedMap.entries)
+            if (markerListContains([entry.key.toString()], eventLabel(m)))
+              ...(entry.value as List).cast<String>(),
+        ];
+        final responseCodes = <String>{
+          ...correct,
+          ...incorrect,
+          for (final value in expectedMap.values)
+            ...(value as List).cast<String>(),
+        };
+        final min = (rule['min_s'] as num?)?.toDouble() ?? .15;
+        final max = (rule['max_s'] as num?)?.toDouble() ?? 1.5;
+        if ((correct.isEmpty && expected.isEmpty) ||
+            !min.isFinite ||
+            !max.isFinite ||
+            min < 0 ||
+            max <= min) {
+          throw StateError(
+            'Define correct response markers and a valid response window for "$label".',
+          );
+        }
+        final next = ordered
+            .where((e) => e.startSeconds > t && matches(e))
+            .firstOrNull;
+        EegMarker? response;
+        for (final e in ordered) {
+          final delay = e.startSeconds - t;
+          if (delay < min) continue;
+          if (delay > max ||
+              (next != null && e.startSeconds >= next.startSeconds))
+            break;
+          if (markerListContains(responseCodes.toList(), eventLabel(e))) {
+            response = e;
+            break;
+          }
+        }
+        if (rule['mode'] == 'missed') {
+          if (response != null) continue;
+          out.add((t, label));
+          continue;
+        }
+        if (response == null) continue;
+        final isCorrect = markerListContains(
+          expected.isEmpty ? correct : expected,
+          eventLabel(response),
+        );
+        if (rule['mode'] == 'correct' ? !isCorrect : isCorrect) continue;
+      }
       out.add((t, label));
     }
     out.sort((a, b) => a.$1.compareTo(b.$1));
@@ -145,6 +206,7 @@ class StimEpochSpec {
     'markers': markers,
     'pattern': pattern,
     'marker_groups': markerGroups,
+    'response_rules': responseRules,
     'tmin': tmin,
     'tmax': tmax,
     'baseline': baseline ? [baselineStart, baselineEnd] : null,

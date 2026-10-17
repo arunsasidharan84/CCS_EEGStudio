@@ -3,12 +3,14 @@ import 'topostats/topostats_engine.dart' show splitFeatureCsvLine;
 import 'recording_transform.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'models.dart';
 import 'erp/stim_epochs.dart' show markerInventory;
 import 'recording_loader.dart';
+import 'recording_storage.dart';
 
 typedef ProgressCallback = void Function(double value, String message);
 
@@ -80,9 +82,16 @@ class ExtractionOutputs {
 }
 
 class ExtractionService {
+  ExtractionService({String? enginePath}) : _enginePath = enginePath;
+  final String? _enginePath;
   Process? _activeProcess;
+  bool _cancelled = false;
+  void _checkCancelled() {
+    if (_cancelled) throw StateError('Operation cancelled by user.');
+  }
 
   void cancel() {
+    _cancelled = true;
     _activeProcess?.kill();
     _activeProcess = null;
   }
@@ -109,7 +118,9 @@ class ExtractionService {
     bool writeCombined = true,
     required ProgressCallback onProgress,
   }) async {
-    final executable = ExtractionService.findEngine();
+    _cancelled = false;
+    onProgress(0, 'Preparing input…');
+    final executable = _enginePath ?? ExtractionService.findEngine();
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_');
     final parts = <File>[];
     final writtenPerFile = <String>[];
@@ -133,16 +144,14 @@ class ExtractionService {
         String inputFormat = recording.format;
 
         if (!File(recording.path).existsSync() ||
-            recording.isEpoched ||
-            (recording.format == 'ccseeg' || recording.format == 'orb')) {
+            (recording.isEpoched && recording.format != 'ccseeg') ||
+            recording.format == 'orb') {
           final tempInput = File('${temp.path}/input_temp_$i.ccseeg.json');
           final jsonMap = {
             'format': 'ccseeg-v1',
             'sample_rate': recording.sampleRate,
             'labels': recording.labels,
-            'channels': [
-              for (final ch in recording.preview) [for (final val in ch) val],
-            ],
+            'channels': recording.preview,
             if (recording.pointsPerEpoch != null)
               'source_epoch_samples': recording.pointsPerEpoch,
             if (recording.epochLabels != null)
@@ -151,7 +160,8 @@ class ExtractionService {
             if (recording.markers.isNotEmpty)
               'markers': [for (final m in recording.markers) m.toJson()],
           };
-          await tempInput.writeAsString(jsonEncode(jsonMap));
+          await _writeSignalInput(tempInput.path, jsonMap);
+          _checkCancelled();
           inputPath = tempInput.path;
           inputFormat = 'ccseeg';
         }
@@ -178,7 +188,9 @@ class ExtractionService {
             'rejected_intervals': selection.rejectedIntervals,
           }),
         );
+        _checkCancelled();
         final process = await Process.start(executable, [job.path]);
+        if (_cancelled) process.kill();
         _activeProcess = process;
         final errors = <String>[];
         process.stdout
@@ -210,6 +222,7 @@ class ExtractionService {
             });
         final code = await process.exitCode;
         _activeProcess = null;
+        _checkCancelled();
         if (code != 0) {
           throw StateError(
             errors.isEmpty
@@ -285,7 +298,7 @@ class ExtractionService {
       };
       for (final path in [...writtenPerFile, ?combined])
         await File(
-          '$path.analysis.json',
+          '$path.ccsanalysis',
         ).writeAsString(jsonEncode(analysisMetadata));
       return ExtractionOutputs(
         combinedCsv: combined,
@@ -322,7 +335,9 @@ class ExtractionService {
         'epoch_length_seconds': null,
       });
     }
-    final executable = ExtractionService.findEngine();
+    _cancelled = false;
+    onProgress(0, 'Preparing input…');
+    final executable = _enginePath ?? ExtractionService.findEngine();
     // Stimulus-locked epochs: pick the events from the raw markers here; the
     // engine cuts them after filtering and before GEDAI. Interval selections
     // then filter events instead of removing samples (which would shift the
@@ -358,21 +373,24 @@ class ExtractionService {
       onProgress(0, 'Input is already epoched; stimulus epoching skipped.');
     }
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_pre_');
+    final requestedOutputPath = outputPath;
+    if (outputPath.toLowerCase().endsWith('.edf') ||
+        outputPath.toLowerCase().endsWith('.fif'))
+      outputPath = '${temp.path}/staged_clean.ccseeg';
+    final engineOutputPath = '${temp.path}/clean.ccseeg.json';
     try {
       String inputPath = recording.path;
       String inputFormat = recording.format;
 
       if (!File(recording.path).existsSync() ||
-          recording.isEpoched ||
-          (recording.format == 'ccseeg' || recording.format == 'orb')) {
+          (recording.isEpoched && recording.format != 'ccseeg') ||
+          recording.format == 'orb') {
         final tempInput = File('${temp.path}/input_temp.ccseeg.json');
         final jsonMap = {
           'format': 'ccseeg-v1',
           'sample_rate': recording.sampleRate,
           'labels': recording.labels,
-          'channels': [
-            for (final ch in recording.preview) [for (final val in ch) val],
-          ],
+          'channels': recording.preview,
           if (recording.pointsPerEpoch != null)
             'source_epoch_samples': recording.pointsPerEpoch,
           if (recording.epochLabels != null)
@@ -381,7 +399,8 @@ class ExtractionService {
           if (recording.markers.isNotEmpty)
             'markers': [for (final m in recording.markers) m.toJson()],
         };
-        await tempInput.writeAsString(jsonEncode(jsonMap));
+        await _writeSignalInput(tempInput.path, jsonMap);
+        _checkCancelled();
         inputPath = tempInput.path;
         inputFormat = 'ccseeg';
       }
@@ -392,7 +411,7 @@ class ExtractionService {
           'job_type': 'preprocess',
           'input': inputPath,
           'recording_path': recording.path,
-          'output': outputPath,
+          'output': engineOutputPath,
           'format': inputFormat,
           'data_path': recording.dataPath,
           'sample_rate': recording.sampleRate,
@@ -408,7 +427,9 @@ class ExtractionService {
           'rejected_intervals': sel.rejectedIntervals,
         }),
       );
+      _checkCancelled();
       final process = await Process.start(executable, [job.path]);
+      if (_cancelled) process.kill();
       _activeProcess = process;
       final stderr = <String>[];
       process.stderr
@@ -429,6 +450,7 @@ class ExtractionService {
       final stdout = await process.stdout.transform(utf8.decoder).join();
       final code = await process.exitCode;
       _activeProcess = null;
+      _checkCancelled();
       if (code != 0) {
         throw StateError(
           stderr.isEmpty
@@ -436,6 +458,8 @@ class ExtractionService {
               : stderr.join('\n'),
         );
       }
+      _checkCancelled();
+      await File(engineOutputPath).copy(outputPath);
       if (stdout.trim().isNotEmpty) {
         final summary = jsonDecode(stdout) as Map<String, dynamic>;
         final bad = (summary['bad_channels'] as List?)?.join(', ') ?? '';
@@ -479,6 +503,7 @@ class ExtractionService {
       final resultSummary = stdout.trim().isEmpty
           ? <String, dynamic>{}
           : jsonDecode(stdout) as Map<String, dynamic>;
+      resultSummary['output'] = outputPath;
       final outputRate =
           (resultSummary['sample_rate'] as num?)?.toDouble() ??
           recording.sampleRate;
@@ -579,11 +604,15 @@ class ExtractionService {
                 if (index < recording.epochStartSeconds.length)
                   recording.epochStartSeconds[index],
             ];
-      await File('$outputPath.preprocessing.json').writeAsString(
+      await File('$outputPath.ccshistory').writeAsString(
         jsonEncode({
           'source_path': recording.path,
-          if (stimulusOnsets.isNotEmpty || (stim == null && (recording.isEpoched || preserveTimeline)))
-            'epoch_start_seconds': stimulusOnsets.isNotEmpty ? stimulusOnsets : outputOnsets,
+          'parent_provenance': recording.provenance,
+          if (stimulusOnsets.isNotEmpty ||
+              (stim == null && (recording.isEpoched || preserveTimeline)))
+            'epoch_start_seconds': stimulusOnsets.isNotEmpty
+                ? stimulusOnsets
+                : outputOnsets,
           'source_duration_seconds': recording.sourceDurationSeconds,
           'preprocessing': options.toJson(),
           'summary': resultSummary,
@@ -616,7 +645,7 @@ class ExtractionService {
             'windowed_after_cleaning': true,
           },
         );
-        final sidecar = File('$outputPath.preprocessing.json');
+        final sidecar = File('$outputPath.ccshistory');
         final meta =
             jsonDecode(await sidecar.readAsString()) as Map<String, dynamic>;
         meta['epoch_start_seconds'] = cleaned.epochStartSeconds;
@@ -628,6 +657,24 @@ class ExtractionService {
         meta['output_overlap_seconds'] = outputOverlapSeconds;
         await sidecar.writeAsString(jsonEncode(meta));
         cleaned = await RecordingLoader().load(outputPath);
+      }
+      _checkCancelled();
+      if (requestedOutputPath != outputPath) {
+        onProgress(
+          .98,
+          'Exporting ${requestedOutputPath.toLowerCase().endsWith('.edf') ? 'EDF+ and metadata' : 'FIF and metadata'}…',
+        );
+        final provenance =
+            jsonDecode(await File('$outputPath.ccshistory').readAsString())
+                as Map<String, dynamic>;
+        (provenance['summary'] as Map?)?['output'] = requestedOutputPath;
+        await RecordingStorage.save(
+          cleaned,
+          requestedOutputPath,
+          provenance: provenance,
+        );
+        _checkCancelled();
+        cleaned = await RecordingLoader().load(requestedOutputPath);
       }
       return cleaned;
     } finally {
@@ -2442,3 +2489,6 @@ class RecordingLoaderShim {
     return await RecordingLoader().load(path);
   }
 }
+
+Future<File> _writeSignalInput(String path, Map<String, dynamic> data) =>
+    Isolate.run(() => File(path).writeAsString(jsonEncode(data)));

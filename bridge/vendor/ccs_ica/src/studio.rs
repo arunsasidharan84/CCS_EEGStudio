@@ -32,6 +32,8 @@ pub struct StudioIcaOpts {
     /// ASR burst-rejection cutoff applied to the ICA-2 fit data (`pop_clean_rawdata` step); `None` = off.
     pub fit_asr_cutoff: Option<f64>,
     pub seed: u32,
+    /// Trial length; temporal operations never bridge adjacent trials.
+    pub epoch_samples: Option<usize>,
 }
 
 impl Default for StudioIcaOpts {
@@ -51,6 +53,7 @@ impl Default for StudioIcaOpts {
             maxsig2rem: 0.3,
             fit_asr_cutoff: Some(15.0),
             seed: 1,
+            epoch_samples: None,
         }
     }
 }
@@ -113,9 +116,9 @@ fn pick_eye_channel(locs: &[ChanLoc], wanted: &Option<String>) -> usize {
 }
 
 /// Blink-locked epochs (`[-1 1]` s, `round(2*srate)` samples) of the high-passed data, at most `nepochs`, random subset.
-fn blink_epochs(hp: &Mat, events_1based: &[usize], srate: f64, nepochs: usize, rng: &mut dyn Rng) -> (Mat, usize, usize) {
-    let pnts = (2.0 * srate).round() as usize;
-    let half = (srate).round() as i64;
+fn blink_epochs(hp: &Mat, events_1based: &[usize], srate: f64, nepochs: usize, epoch_samples: Option<usize>, rng: &mut dyn Rng) -> (Mat, usize, usize) {
+    let pnts = epoch_samples.unwrap_or(usize::MAX).min((2.0 * srate).round() as usize);
+    let half = (pnts / 2) as i64;
     let total = hp.ncols() as i64;
     let mut starts: Vec<usize> = vec![];
     if events_1based.is_empty() {
@@ -127,12 +130,20 @@ fn blink_epochs(hp: &Mat, events_1based: &[usize], srate: f64, nepochs: usize, r
         }
     } else {
         for &e in events_1based {
-            let s = e as i64 - 1 - half;
+            let mut s = e as i64 - 1 - half;
+            if let Some(n) = epoch_samples {
+                let first = ((e.saturating_sub(1) / n) * n) as i64;
+                let last = (first + n as i64).min(total) - pnts as i64;
+                if last < first { continue; }
+                s = s.clamp(first, last);
+            }
             if s >= 0 && s + pnts as i64 <= total {
                 starts.push(s as usize);
             }
         }
     }
+    if let Some(n) = epoch_samples { starts.retain(|&s| s / n == (s + pnts - 1) / n); }
+    starts.sort_unstable(); starts.dedup();
     let trials = starts.len();
     let take = nepochs.min(trials);
     let perm = rng.randperm(trials);
@@ -168,10 +179,14 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
     if o.blink_stage {
         let eye = pick_eye_channel(locs, &o.eye_chan);
         rep.eye_chan = locs[eye].label.clone();
-        let groups = eyeblink_detection(&target[eye], srate)?;
-        let events: Vec<usize> = groups.iter().flat_map(|g| g.iter().cloned()).collect();
+        let mut events = Vec::new();
+        let boundary = o.epoch_samples.unwrap_or(target[eye].len());
+        for (trial, samples) in target[eye].chunks(boundary).enumerate() {
+            let groups = eyeblink_detection(samples, srate)?;
+            events.extend(groups.iter().flatten().map(|&e| e + trial * boundary));
+        }
         rep.blink_events = events.len();
-        let (epochs, pnts, trials) = blink_epochs(&hpm, &events, srate, o.nepochs, &mut rng);
+        let (epochs, pnts, trials) = blink_epochs(&hpm, &events, srate, o.nepochs, o.epoch_samples, &mut rng);
         rep.blink_epochs_used = trials;
         if trials < 2 {
             rep.stage1.note = "too few blink epochs; blink ICA skipped".into();
@@ -204,10 +219,17 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
             Some(cut) if hpm.ncols() as f64 > 10.0 * srate => {
                 let rows = from_mat(&hpm);
                 let params = AsrParams::clean_artifacts(cut);
-                let (rep_data, _) = clean_asr(&rows, srate, &params)?;
-                let br = burst_rejection(&rows, &rep_data);
+                let cleaned = if let Some(points) = o.epoch_samples {
+                    match crate::asr::epoched_asr_fit(&rows,srate,cut,points) {
+                        Ok(fit) => fit,
+                        Err(e) => { rep.notes.push(format!("ICA training ASR unavailable: {e}; retaining the fit samples")); rows.clone() }
+                    }
+                } else {
+                    let (repaired, _) = clean_asr(&rows,srate,&params)?;
+                    let br=burst_rejection(&rows,&repaired);
+                    clean_windows(&br.data,srate,0.25,[f64::NEG_INFINITY,7.0],1.0).0
+                };
                 // pop_clean_rawdata(.., 'BurstRejection','on') also keeps its default WindowCriterion 0.25 / [-inf 7]
-                let (cleaned, _) = clean_windows(&br.data, srate, 0.25, [f64::NEG_INFINITY, 7.0], 1.0);
                 if !cleaned.is_empty() && cleaned[0].len() as f64 > 0.5 * srate * 10.0 {
                     to_mat(&cleaned)
                 } else {
@@ -300,6 +322,8 @@ pub struct VariantOpts {
     pub wica_levels: usize,
     pub wica_mult: f64,
     pub seed: u32,
+    /// Trial length; temporal operations never bridge adjacent trials.
+    pub epoch_samples: Option<usize>,
 }
 impl Default for VariantOpts {
     fn default() -> Self {
@@ -307,6 +331,7 @@ impl Default for VariantOpts {
             asr_variant: "standard".into(), adapt_alpha: 0.05, adapt_block_seconds: 2.0, embed_dim: 8, embed_tau: 2, n_modes: 4,
             dbscan_top_k: 5, muscle_method: String::new(), bsscca_n_remove: 3, bsscca_rho: 0.0, icc_threshold: 0.7, icc_segment: 2.0,
             icc_stop_lo: 1.0, icc_stop_hi: 8.0, wica_levels: 5, wica_mult: 1.0, seed: 1,
+            epoch_samples: None,
         }
     }
 }
@@ -395,5 +420,22 @@ pub fn extra_clean(data: &[Vec<f64>], srate: f64, v: &VariantOpts) -> Result<(Ve
             Ok((y, serde_json::json!({"method": "wica", "levels": v.wica_levels, "threshold_mult": v.wica_mult})))
         }
         other => Err(format!("unknown muscle method '{other}'")),
+    }
+}
+
+#[cfg(test)]
+mod epoch_boundary_tests {
+    use super::*;
+    #[test]
+    fn blink_training_windows_never_span_trials() {
+        let hp = Mat::from_fn(4, 600, |_, t| (t / 150) as f64);
+        let mut rng = NativeRng::new(1);
+        let (epochs, points, trials) = blink_epochs(&hp, &[76, 151, 226, 301, 376, 451, 526], 100., 20, Some(150), &mut rng);
+        assert_eq!(points, 150);
+        assert!(trials >= 2);
+        for trial in 0..trials {
+            let first = epochs[(0, trial * points)];
+            for t in 0..points { assert_eq!(epochs[(0, trial * points + t)], first); }
+        }
     }
 }

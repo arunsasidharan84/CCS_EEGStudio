@@ -75,8 +75,10 @@ class EegRecording {
     this.completedStages = const [],
     this.epochStartSeconds = const [],
     this.sourceDurationSeconds,
+    this.provenance = const {},
   });
 
+  final Map<String, dynamic> provenance;
   final List<String> completedStages;
   final List<double> epochStartSeconds;
   final double? sourceDurationSeconds;
@@ -556,6 +558,7 @@ class AnalysisConfig {
   List<String> stimMarkers = const [];
   String stimPattern = '';
   Map<String, List<String>> stimMarkerGroups = {};
+  Map<String, dynamic> stimResponseRules = {};
   double stimTmin = -0.5;
   double stimTmax = 1.2;
   bool stimBaseline = true;
@@ -572,6 +575,7 @@ class AnalysisConfig {
             ...stimMarkerGroups.values.expand((v) => v),
           }.toList(),
           markerGroups: stimMarkerGroups,
+          responseRules: stimResponseRules,
           pattern: stimPattern,
           tmin: stimTmin,
           tmax: stimTmax,

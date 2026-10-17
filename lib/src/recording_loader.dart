@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'edf_loader.dart';
 import 'fieldtrip_mat_loader.dart';
@@ -66,7 +67,9 @@ class RecordingLoader {
         throw StateError(
           'Could not load full-resolution data: ${result.stderr}',
         );
-      final full = _loadPortable(output);
+      final full = await Isolate.run(
+        () => RecordingLoader()._loadPortable(output),
+      );
       if (full.sampleCount != recording.sampleCount)
         throw StateError(
           'Full-resolution export does not match the input sample count.',
@@ -85,6 +88,7 @@ class RecordingLoader {
         epochTmin: recording.epochTmin,
         markers: recording.markers,
         completedStages: recording.completedStages,
+        provenance: recording.provenance,
         epochStartSeconds: recording.epochStartSeconds,
         sourceDurationSeconds: recording.sourceDurationSeconds,
       );
@@ -93,8 +97,14 @@ class RecordingLoader {
     }
   }
 
-  Future<EegRecording> load(String path) async {
-    if (path.toLowerCase().endsWith('.ccseeg.json') ||
+  Future<EegRecording> load(String path) => Isolate.run(() async {
+    final loader = RecordingLoader();
+    return loader._restoreExternalMetadata(await loader._loadInWorker(path));
+  });
+
+  Future<EegRecording> _loadInWorker(String path) async {
+    if (path.toLowerCase().endsWith('.ccseeg') ||
+        path.toLowerCase().endsWith('.ccseeg.json') ||
         path.toLowerCase().endsWith('.json'))
       return _loadPortable(path);
     if (path.toLowerCase().endsWith('.fif')) {
@@ -116,7 +126,6 @@ class RecordingLoader {
     // EDF / EDF+
     final eeg = EdfLoader().load(path);
     final sampleCount = eeg.channelSamples.first.length;
-    const stride = 1;
     return EegRecording(
       path: path,
       sampleRate: eeg.sampleRateHz,
@@ -124,7 +133,7 @@ class RecordingLoader {
       preview: [
         for (final channel in eeg.channelSamples)
           Float32List.fromList([
-            for (var i = 0; i < channel.length; i += stride) channel[i],
+            for (var i = 0; i < channel.length; i++) channel[i],
           ]),
       ],
       sampleCount: sampleCount,
@@ -133,18 +142,75 @@ class RecordingLoader {
     );
   }
 
+  EegRecording _restoreExternalMetadata(EegRecording rec) {
+    final sidecar = File('${rec.path}.ccsmeta');
+    if (!sidecar.existsSync()) return rec;
+    final m = jsonDecode(sidecar.readAsStringSync()) as Map<String, dynamic>;
+    if (m['schema'] != 'ccs-recording-metadata-v1' ||
+        m['data_bytes'] != File(rec.path).lengthSync()) {
+      throw const FormatException(
+        'The .ccsmeta sidecar does not match this recording. Restore the matching signal/metadata pair.',
+      );
+    }
+    final labels = (m['labels'] as List).cast<String>();
+    final count = (m['sample_count'] as num).toInt();
+    final pts = (m['source_epoch_samples'] as num?)?.toInt();
+    final rate = (m['sample_rate'] as num).toDouble();
+    if (!rate.isFinite || rate <= 0)
+      throw const FormatException('Invalid metadata sampling rate.');
+    if (labels.length != rec.labels.length ||
+        count <= 0 ||
+        count > rec.sampleCount ||
+        (pts != null && (pts <= 0 || count % pts != 0))) {
+      throw const FormatException('Invalid recording metadata dimensions.');
+    }
+    return EegRecording(
+      path: rec.path,
+      dataPath: rec.dataPath,
+      format: rec.format,
+      sampleRate: rate,
+      labels: labels,
+      sampleCount: count,
+      preview: [
+        for (final ch in rec.preview)
+          ch.length == rec.sampleCount && count < ch.length
+              ? Float32List.sublistView(ch, 0, count)
+              : ch,
+      ],
+      epochCount: pts == null ? 1 : count ~/ pts,
+      pointsPerEpoch: pts,
+      epochLabels: (m['epoch_labels'] as List?)?.cast<String>(),
+      epochTmin: (m['epoch_tmin'] as num?)?.toDouble(),
+      markers: [
+        for (final v in m['markers'] as List? ?? [])
+          EegMarker.fromJson(Map<String, dynamic>.from(v as Map)),
+      ],
+      provenance: Map<String, dynamic>.from(m['provenance'] as Map? ?? {}),
+      completedStages: (m['completed_stages'] as List? ?? []).cast<String>(),
+      epochStartSeconds: [
+        for (final v in m['epoch_start_seconds'] as List? ?? [])
+          (v as num).toDouble(),
+      ],
+      sourceDurationSeconds: (m['source_duration_seconds'] as num?)?.toDouble(),
+    );
+  }
+
   EegRecording _loadPortable(String path) {
     final json =
         jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
     if (json['format'] != 'ccseeg-v1') {
-      throw const FormatException('Unsupported portable EEG file.');
+      throw const FormatException(
+        'This JSON is not an EEG recording. Choose a signal file rather than settings, a protocol or a metadata sidecar.',
+      );
     }
     final labels = [
       for (final value in json['labels'] as List) value as String,
     ];
     final channels = [
       for (final channel in json['channels'] as List)
-        [for (final value in channel as List) (value as num).toDouble()],
+        Float32List.fromList([
+          for (final value in channel as List) (value as num).toDouble(),
+        ]),
     ];
     final sampleRate = (json['sample_rate'] as num).toDouble();
     final sampleCount = channels.isEmpty ? 0 : channels.first.length;
@@ -171,16 +237,24 @@ class RecordingLoader {
     final stages =
         (json['completed_stages'] as List?)?.cast<String>().toList() ??
         <String>[];
-    if (File('$path.preprocessing.json').existsSync() ||
-        RegExp(
-          r'(_clean|_preprocessed)\.ccseeg\.json$',
-          caseSensitive: false,
-        ).hasMatch(path)) {
+    if (!json.containsKey('completed_stages') &&
+        (File('$path.ccshistory').existsSync() ||
+            File('$path.preprocessing.json').existsSync() ||
+            RegExp(
+              r'(_clean|_preprocessed)\.ccseeg(?:\.json)?$',
+              caseSensitive: false,
+            ).hasMatch(path))) {
       if (!stages.contains('preprocess')) stages.add('preprocess');
     }
-    Map<String, dynamic> provenance = {};
-    final sidecar = File('$path.preprocessing.json');
-    if (sidecar.existsSync()) {
+    Map<String, dynamic> provenance = Map<String, dynamic>.from(
+      json['provenance'] as Map? ?? {},
+    );
+    final sidecar = File(
+      File('$path.ccshistory').existsSync()
+          ? '$path.ccshistory'
+          : '$path.preprocessing.json',
+    );
+    if (sidecar.existsSync() && !json.containsKey('provenance')) {
       try {
         provenance =
             jsonDecode(sidecar.readAsStringSync()) as Map<String, dynamic>;
@@ -198,10 +272,10 @@ class RecordingLoader {
           EegMarker.fromJson(Map<String, dynamic>.from(marker as Map)),
       ];
     }
-    const stride = 1;
     return EegRecording(
       path: path,
       completedStages: stages,
+      provenance: provenance,
       epochStartSeconds:
           onsets?.map((value) => (value as num).toDouble()).toList() ??
           const [],
@@ -212,12 +286,7 @@ class RecordingLoader {
               ?.toDouble(),
       sampleRate: sampleRate,
       labels: labels,
-      preview: [
-        for (final channel in channels)
-          Float32List.fromList([
-            for (var i = 0; i < channel.length; i += stride) channel[i],
-          ]),
-      ],
+      preview: channels,
       sampleCount: sampleCount,
       format: 'ccseeg',
       epochCount: epochCount,

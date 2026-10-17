@@ -12,3 +12,5 @@ pub mod stats;
 
 pub mod erp_math;
 pub mod erp_workbench;
+
+pub mod recording_metadata;

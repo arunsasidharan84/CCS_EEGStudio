@@ -241,11 +241,12 @@ pub fn read_events(path: &Path) -> Result<(Vec<Event>, String), String> {
         events.sort_by(|a, b| a.onset.total_cmp(&b.onset));
         return Ok((events, "EEGLAB .evt (seconds)".into()));
     }
-    if path.extension().and_then(|s| s.to_str()) == Some("json") {
-        let mut v: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    let companion=crate::recording_metadata::read(path)?;
+    if companion.is_some() || matches!(path.extension().and_then(|s| s.to_str()), Some("json" | "ccseeg")) {
+        let mut v = if let Some(m)=companion {m} else {portable_metadata(path)?};
         if v["markers"].as_array().is_none_or(|a| a.is_empty()) {
-            let sidecar = PathBuf::from(format!("{}.preprocessing.json", path.display()));
+            let modern = PathBuf::from(format!("{}.ccshistory", path.display()));
+            let sidecar = if modern.exists() { modern } else { PathBuf::from(format!("{}.preprocessing.json", path.display())) };
             if let Ok(bytes) = fs::read(sidecar) {
                 if let Ok(side) = serde_json::from_slice::<Value>(&bytes) {
                     if side["timeline_preserved"] == true && side["markers"].is_array() {
@@ -551,18 +552,49 @@ fn timing_audit(path: &str, _events: &[Event]) -> Option<Value> {
         json!({"sequence_match":true,"native_source":source,"median_delta_ms":deltas[deltas.len()/2],"max_abs_delta_ms":deltas.iter().map(|v|v.abs()).fold(0.,f64::max),"note":"Sidecar minus native event time; no automatic adjustment is applied"}),
     )
 }
+// Stream past sample arrays when only events/protocol metadata are needed.
+// Large portable recordings must not allocate a second Value tree of every sample.
+fn portable_metadata(path: &Path) -> Result<Value, String> {
+    struct Metadata;
+    impl<'de> serde::de::Visitor<'de> for Metadata {
+        type Value = Value;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("portable EEG metadata object")
+        }
+        fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Value, M::Error> {
+            let mut values = serde_json::Map::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "channels" {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                } else {
+                    values.insert(key, map.next_value::<Value>()?);
+                }
+            }
+            Ok(Value::Object(values))
+        }
+    }
+    use serde::de::Deserializer;
+    let reader = std::io::BufReader::with_capacity(256 * 1024, fs::File::open(path).map_err(|e|e.to_string())?);
+    let mut parser = serde_json::Deserializer::from_reader(reader);
+    let result = (&mut parser).deserialize_map(Metadata).map_err(|e|e.to_string())?;
+    parser.end().map_err(|e|e.to_string())?;
+    Ok(result)
+}
 fn epoch_metadata(path: &str) -> Option<Value> {
-    if !path.to_lowercase().ends_with(".json") {
+    if let Ok(Some(m))=crate::recording_metadata::read(Path::new(path)) {
+        return if m["source_epoch_samples"].as_u64().unwrap_or(0)>0 {Some(m)}else{None};
+    }
+    if !path.to_lowercase().ends_with(".json") && !path.to_lowercase().ends_with(".ccseeg") {
         return None;
     }
-    let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    let value = portable_metadata(Path::new(path)).ok()?;
     if value["source_epoch_samples"].as_u64().unwrap_or(0) == 0 {
         return None;
     }
     Some(value)
 }
 fn original_epoch_codes(path: &str, meta: &Value) -> BTreeMap<usize, String> {
-    let sidecar: Value = fs::read(format!("{}.preprocessing.json", path))
+    let sidecar: Value = fs::read(format!("{}.ccshistory", path)).or_else(|_| fs::read(format!("{}.preprocessing.json", path)))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
@@ -743,6 +775,8 @@ pub struct FileResult {
     pub topo_difference: Vec<f64>,
     /// Full-resolution condition difference for interactive window topographies.
     pub channel_difference: Vec<Vec<f64>>,
+    pub channel_a: Vec<Vec<f64>>,
+    pub channel_b: Vec<Vec<f64>>,
     pub gfp_a: Vec<f64>,
     pub gfp_b: Vec<f64>,
     pub regression: Option<Value>,
@@ -1194,6 +1228,8 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
             .zip(&mean_a)
             .map(|(b, a)| b.iter().zip(a).map(|(b, a)| b - a).collect())
             .collect(),
+        channel_a: mean_a.clone(),
+        channel_b: mean_b.clone(),
         gfp_a: gfp(&mean_a),
         gfp_b: gfp(&mean_b),
         regression,
@@ -1976,7 +2012,7 @@ where
     }
     let result = json!({"schema":"ccs-erp-workbench-v1","options":job.options,"files":files,"groups":groups,"failures":failures,"output":job.output});
     fs::write(
-        Path::new(&job.output).join("erp_results.json"),
+        Path::new(&job.output).join("erp_results.ccserp"),
         serde_json::to_vec(&result).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;

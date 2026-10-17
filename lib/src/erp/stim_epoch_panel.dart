@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import 'stim_epochs.dart';
 import 'event_group_editor.dart';
+import 'response_rule_editor.dart';
 
 const _textMuted = Color(0xFF94A3B8);
 const _accent = Color(0xFFA855F7);
@@ -19,6 +20,7 @@ class StimEpochPanel extends StatefulWidget {
     required this.config,
     this.markers = const [],
     this.enabled = true,
+    this.showEnableControl = true,
     this.onChanged,
   });
 
@@ -27,6 +29,7 @@ class StimEpochPanel extends StatefulWidget {
   /// Markers of the loaded raw recording (single-recording mode).
   final List<EegMarker> markers;
   final bool enabled;
+  final bool showEnableControl;
   final VoidCallback? onChanged;
 
   @override
@@ -172,28 +175,29 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          visualDensity: VisualDensity.compact,
-          value: c.stimEpochs,
-          onChanged: widget.enabled
-              ? (v) {
-                  c.stimEpochs = v ?? false;
-                  if (c.stimEpochs) c.epochBeforeGedai = false;
-                  widget.onChanged?.call();
-                  setState(() {});
-                }
-              : null,
-          title: const Text(
-            'Event-based trials (ERP)',
-            style: TextStyle(fontSize: 12, color: Colors.white),
+        if (widget.showEnableControl)
+          CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            value: c.stimEpochs,
+            onChanged: widget.enabled
+                ? (v) {
+                    c.stimEpochs = v ?? false;
+                    if (c.stimEpochs) c.epochBeforeGedai = false;
+                    widget.onChanged?.call();
+                    setState(() {});
+                  }
+                : null,
+            title: const Text(
+              'Event-based trials (ERP)',
+              style: TextStyle(fontSize: 12, color: Colors.white),
+            ),
+            subtitle: const Text(
+              'Choose events and labels first. Each event becomes one trial after filtering; GEDAI uses these same trials.',
+              style: TextStyle(fontSize: 10, color: _textMuted),
+            ),
           ),
-          subtitle: const Text(
-            'Choose events and labels first. Each event becomes one trial after filtering; GEDAI uses these same trials.',
-            style: TextStyle(fontSize: 10, color: _textMuted),
-          ),
-        ),
         if (c.stimEpochs)
           Padding(
             padding: const EdgeInsets.only(left: 24, bottom: 6),
@@ -258,6 +262,17 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
                       ...c.stimMarkers,
                       ...groups.values.expand((v) => v),
                     }.join(', ');
+                    _sync();
+                  },
+                ),
+                ResponseRuleEditor(
+                  groups: c.stimMarkerGroups.keys.toList(),
+                  markers: inv.keys.map(markerShortName).toSet().toList()
+                    ..sort(),
+                  rules: c.stimResponseRules,
+                  enabled: widget.enabled,
+                  onChanged: (rules) {
+                    c.stimResponseRules = rules;
                     _sync();
                   },
                 ),

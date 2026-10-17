@@ -52,7 +52,7 @@ void main() {
   test('derived names do not accumulate clean and epoch suffixes', () {
     expect(
       erpOutputName('/tmp/39_ERN_cleaned.edf', epoched: true, cleaned: true),
-      '39_ERN_cleaned-epo_clean.ccseeg.json',
+      '39_ERN_cleaned-epo_clean.ccseeg',
     );
     expect(
       erpOutputName(
@@ -60,11 +60,11 @@ void main() {
         epoched: true,
         cleaned: true,
       ),
-      '39_ERN-epo_clean.ccseeg.json',
+      '39_ERN-epo_clean.ccseeg',
     );
     expect(
       erpOutputName('39_ERN-epo.ccseeg.json', epoched: true, cleaned: true),
-      '39_ERN-epo_clean.ccseeg.json',
+      '39_ERN-epo_clean.ccseeg',
     );
   });
   test(

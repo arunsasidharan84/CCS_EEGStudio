@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import '../group_statistics.dart';
 import 'workbench_figures.dart';
 import 'review_math.dart';
+import 'channel_grid.dart';
 
 class ErpReviewWorkspace extends StatefulWidget {
   const ErpReviewWorkspace({
@@ -460,6 +461,12 @@ class _ErpReviewWorkspaceState extends State<ErpReviewWorkspace> {
                         ),
                       ),
                     ),
+                  ErpChannelGrid(
+                    files: selectedFiles,
+                    profile: profile,
+                    negativeUp: _negativeUp,
+                    smoothingMs: _smooth,
+                  ),
                   Row(
                     children: [
                       const Text('Measurement window (ms)  '),

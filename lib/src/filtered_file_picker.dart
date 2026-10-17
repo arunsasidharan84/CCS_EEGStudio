@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -20,12 +21,36 @@ bool matchesFilename(String path, String patterns) {
   });
 }
 
+/// Check a small header, never decode a multi-hundred-MB signal just to list it.
+bool isEegRecordingFile(String path) {
+  final lower = path.toLowerCase();
+  if (lower.endsWith('.ccsmeta') || lower.endsWith('.ccssettings'))
+    return false;
+  if (!lower.endsWith('.json')) return true;
+  if (RegExp(
+    r'\.(?:preprocessing|preparation|analysis)\.json$',
+  ).hasMatch(lower))
+    return false;
+  try {
+    final file = File(path).openSync();
+    try {
+      final header = utf8.decode(file.readSync(65536), allowMalformed: true);
+      return RegExp(r'"format"\s*:\s*"ccseeg-v1"').hasMatch(header);
+    } finally {
+      file.closeSync();
+    }
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<FilePickerResult?> pickFilteredFiles(
   BuildContext context, {
   bool allowMultiple = false,
   FileType type = FileType.custom,
   List<String>? allowedExtensions,
   String? dialogTitle,
+  bool recordingsOnly = false,
 }) async {
   final pattern = TextEditingController(text: '*');
   var paths = <String>[];
@@ -65,7 +90,13 @@ Future<FilePickerResult?> pickFilteredFiles(
                           paths = pick.files
                               .map((f) => f.path)
                               .whereType<String>()
+                              .where(
+                                (p) => !recordingsOnly || isEegRecordingFile(p),
+                              )
                               .toList();
+                          error = paths.isEmpty
+                              ? 'No EEG recordings selected. Settings and metadata JSON files are hidden.'
+                              : null;
                           selected
                             ..clear()
                             ..addAll(paths);
@@ -93,6 +124,10 @@ Future<FilePickerResult?> pickFilteredFiles(
                                         ),
                                       ),
                                 )
+                                .where(
+                                  (p) =>
+                                      !recordingsOnly || isEegRecordingFile(p),
+                                )
                                 .toList()
                               ..sort();
                         if (context.mounted)
@@ -108,6 +143,11 @@ Future<FilePickerResult?> pickFilteredFiles(
                   ),
                 ],
               ),
+              if (recordingsOnly)
+                const Text(
+                  'EEG recordings only · settings, protocols and metadata are hidden',
+                  style: TextStyle(fontSize: 11),
+                ),
               if (error != null) Text(error!),
               Expanded(
                 child: ListView(
@@ -118,6 +158,13 @@ Future<FilePickerResult?> pickFilteredFiles(
                       CheckboxListTile(
                         dense: true,
                         title: Text(p.split(RegExp(r'[\\/]')).last),
+                        subtitle: recordingsOnly
+                            ? Text(
+                                p.toLowerCase().endsWith('.json')
+                                    ? 'EEG recording · legacy JSON'
+                                    : 'EEG recording',
+                              )
+                            : null,
                         value: selected.contains(p),
                         onChanged: (v) => setState(() {
                           if (!allowMultiple) selected.clear();

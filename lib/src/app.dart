@@ -14,6 +14,7 @@ import 'topostats/topostats_batch.dart';
 import 'report/feature_report.dart';
 import 'topostats/topostats_engine.dart' show TopoStatsSettings;
 import 'recording_loader.dart';
+import 'recording_storage.dart';
 import 'recording_preparation_dialog.dart';
 import 'filtered_file_picker.dart';
 import 'group_statistics.dart';
@@ -48,10 +49,11 @@ const _rawExtensions = [
   'mat',
   'vhdr',
   'json',
+  'ccseeg',
   'orb',
   'signal',
 ];
-const _processedExtensions = ['json', 'fif'];
+const _processedExtensions = ['ccseeg', 'json', 'fif', 'edf'];
 const _anyInputExtensions = [
   'edf',
   'set',
@@ -59,6 +61,7 @@ const _anyInputExtensions = [
   'mat',
   'vhdr',
   'json',
+  'ccseeg',
   'orb',
   'signal',
 ];
@@ -383,6 +386,7 @@ class _FeatureHomeState extends State<FeatureHome>
 
   bool _running = false;
   double _progress = 0;
+  bool _stopRequested = false;
 
   // ── Sub-accordion state ──────────────────────────────────────────────────
   bool _step1OptsExpanded = false;
@@ -410,6 +414,9 @@ class _FeatureHomeState extends State<FeatureHome>
   @override
   void initState() {
     super.initState();
+    RecordingStorage.loadPreferences().then((_) {
+      if (mounted) setState(() {});
+    });
     _pipeline = List.of(_presets['continuous']!.modules);
     _selectedModule = _Module.loadRaw;
     _preLow.addListener(_syncConfigFromControllers);
@@ -513,7 +520,7 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   void _log(String value) {
-    if (value.isEmpty) return;
+    if (value.isEmpty || !mounted) return;
     setState(() {
       _logs.add(value);
       if (_logs.length > 400) _logs.removeAt(0);
@@ -584,13 +591,20 @@ class _FeatureHomeState extends State<FeatureHome>
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _rawExtensions,
+      recordingsOnly: true,
     );
     if (pick == null || pick.files.isEmpty) return;
     final path = pick.files.first.path;
     if (path == null) return;
+    setState(() {
+      _running = true;
+      _stopRequested = false;
+      _progress = 0;
+    });
     try {
       _log('Loading ${_shortName(path)}…');
       final rec = await _loader.load(path);
+      if (_stopRequested || !mounted) return;
       _restoreSavedEpochProtocol(rec);
       setState(() {
         for (final existing in _stageRecordings) {
@@ -619,12 +633,26 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('✓ Loaded ${_shortName(path)}');
     } catch (e) {
       _log('✗ ERROR ${_shortName(path)}: $e');
+    } finally {
+      if (mounted) setState(() => _running = false);
     }
   }
 
   void _restoreSavedEpochProtocol(EegRecording recording) {
     if (!recording.isEpoched) return;
-    for (final suffix in ['.preparation.json', '.preprocessing.json']) {
+    final embedded =
+        recording.provenance['epoch_protocol'] ??
+        (recording.provenance['preprocessing'] as Map?)?['stim_epochs_spec'];
+    if (embedded is Map) {
+      applyErpProtocol(_cfg, {...erpProtocolJson(_cfg), 'epoching': embedded});
+      return;
+    }
+    for (final suffix in [
+      '.ccspreparation',
+      '.ccshistory',
+      '.preparation.json',
+      '.preprocessing.json',
+    ]) {
       final file = File('${recording.path}$suffix');
       if (!file.existsSync()) continue;
       try {
@@ -670,6 +698,7 @@ class _FeatureHomeState extends State<FeatureHome>
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _processedExtensions,
+      recordingsOnly: true,
     );
     if (pick == null || pick.files.isEmpty) return;
     final path = pick.files.first.path;
@@ -701,6 +730,7 @@ class _FeatureHomeState extends State<FeatureHome>
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: _anyInputExtensions,
+      recordingsOnly: true,
     );
     if (pick == null || pick.files.isEmpty) return;
     final path = pick.files.first.path;
@@ -735,10 +765,10 @@ class _FeatureHomeState extends State<FeatureHome>
   }
 
   void _cancel() {
+    setState(() => _stopRequested = true);
     if (_batchProgressActive) _batchCancelRequested = true;
     _service.cancel();
-    setState(() => _running = false);
-    _log('Operation cancelled by user.');
+    _log('Stopping operation… wait for it to finish before restarting.');
   }
 
   void _clearPipeline() {
@@ -804,22 +834,24 @@ class _FeatureHomeState extends State<FeatureHome>
       dialogTitle: 'Save cleaned EEG file',
       fileName: erpOutputName(
         input.path,
+        extension: RecordingStorage.extension,
         epoched: input.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai,
         cleaned: true,
       ),
-      allowedExtensions: ['json'],
+      allowedExtensions: [RecordingStorage.extension],
       type: FileType.custom,
     );
     if (path == null) return;
     setState(() {
       _running = true;
+      _stopRequested = false;
       _progress = 0;
       _logVisible = true;
     });
     try {
       final cleaned = await _service.preprocess(
         recording: input,
-        outputPath: path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json',
+        outputPath: RecordingStorage.withExtension(path),
         selection: _selection,
         outputOverlapSeconds: (_cfg.stimEpochs || !_cfg.epochBeforeGedai)
             ? 0
@@ -858,20 +890,21 @@ class _FeatureHomeState extends State<FeatureHome>
     }
     final path = await FilePicker.saveFile(
       dialogTitle: 'Save source localized EEG file',
-      fileName: '${_stem(input.path)}_source.ccseeg.json',
-      allowedExtensions: ['json'],
+      fileName: '${_stem(input.path)}_source.${RecordingStorage.extension}',
+      allowedExtensions: [RecordingStorage.extension],
       type: FileType.custom,
     );
     if (path == null) return;
     setState(() {
       _running = true;
+      _stopRequested = false;
       _progress = 0;
       _logVisible = true;
     });
     try {
       final sourced = await _service.preprocess(
         recording: input,
-        outputPath: path.endsWith('.ccseeg.json') ? path : '$path.ccseeg.json',
+        outputPath: RecordingStorage.withExtension(path),
         selection: _selection,
         options: _cfg.toPreprocessingOptions(
           nonEegChannels: _channels.nonEegChannels,
@@ -945,6 +978,7 @@ class _FeatureHomeState extends State<FeatureHome>
 
     setState(() {
       _running = true;
+      _stopRequested = false;
       _progress = 0;
       _logVisible = true;
     });
@@ -1001,6 +1035,7 @@ class _FeatureHomeState extends State<FeatureHome>
     }
     setState(() {
       _running = true;
+      _stopRequested = false;
       _progress = 0;
       _logVisible = true;
     });
@@ -1064,7 +1099,11 @@ class _FeatureHomeState extends State<FeatureHome>
       var reportPrep = _cfg.toPreprocessingOptions(
         nonEegChannels: excludedChannels,
       );
-      final provenance = File('${rec.path}.preprocessing.json');
+      final provenance = File(
+        File('${rec.path}.ccshistory').existsSync()
+            ? '${rec.path}.ccshistory'
+            : '${rec.path}.preprocessing.json',
+      );
       if (provenance.existsSync()) {
         final saved =
             jsonDecode(await provenance.readAsString()) as Map<String, dynamic>;
@@ -1075,7 +1114,11 @@ class _FeatureHomeState extends State<FeatureHome>
         }
       }
       if (raw == null) {
-        final metadata = File('${rec.path}.preprocessing.json');
+        final metadata = File(
+          File('${rec.path}.ccshistory').existsSync()
+              ? '${rec.path}.ccshistory'
+              : '${rec.path}.preprocessing.json',
+        );
         String? source;
         if (metadata.existsSync()) {
           final saved =
@@ -2091,6 +2134,13 @@ class _FeatureHomeState extends State<FeatureHome>
                   'Choose locking events, give related codes a condition name, then set the trial and baseline windows. These settings are shared with Preprocess. Saving trials does not run cleaning.',
                 ),
                 ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+                if ((_activeRecording?.sampleRate ?? 0) > 500 &&
+                    _cfg.icaMethod != 'none')
+                  _infoBox(
+                    'High-rate recording: ${_activeRecording!.sampleRate.round()} Hz × ${_activeRecording!.labels.length} channels. ICA scans the training samples repeatedly. Consider enabling downsampling to 250–500 Hz for conventional ERP work after checking the frequencies you need. Picard is also available as an alternative solver; results can differ.',
+                    _accentAmber,
+                  ),
+
                 StimEpochPanel(
                   config: _cfg,
                   markers: input.markers,
@@ -2122,17 +2172,19 @@ class _FeatureHomeState extends State<FeatureHome>
       // Use the same selector as preprocessing, including regex and crop rules.
       final events = spec.selectEvents(input.markers);
       if (events.isEmpty) throw StateError('No events match this protocol.');
-      final path = await FilePicker.saveFile(
+      final pickedPath = await FilePicker.saveFile(
         dialogTitle: 'Save reusable event epochs',
         fileName: erpOutputName(
           input.path,
+          extension: RecordingStorage.extension,
           epoched: true,
           cleaned:
               input.completedStages.contains('preprocessing') ||
               input.path.contains('_clean'),
         ),
       );
-      if (path == null) return;
+      if (pickedPath == null) return;
+      final path = RecordingStorage.withExtension(pickedPath);
       final full = await _loader.loadFull(input);
       final selected = full.markers
           .where(
@@ -2715,15 +2767,22 @@ class _FeatureHomeState extends State<FeatureHome>
       ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: LinearProgressIndicator(
-          value: _progress,
+          value: _progress > 0 ? _progress : null,
           backgroundColor: const Color(0xFF1E293B),
           color: _accentGreen,
           minHeight: 5,
         ),
       ),
+      TextButton.icon(
+        onPressed: _stopRequested ? null : _cancel,
+        icon: const Icon(Icons.stop_circle_outlined, size: 16),
+        label: Text(_stopRequested ? 'Stopping…' : 'Stop processing'),
+      ),
       const SizedBox(height: 4),
       Text(
-        '${(_progress * 100).toStringAsFixed(0)}% complete',
+        _progress > 0
+            ? '${(_progress * 100).toStringAsFixed(0)}% · ${_logs.isEmpty ? 'Processing' : _logs.last}'
+            : 'Preparing / loading data…',
         style: const TextStyle(color: _textMuted, fontSize: 11),
       ),
     ],
@@ -2758,6 +2817,13 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
 
           ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+          if ((_activeRecording?.sampleRate ?? 0) > 500 &&
+              _cfg.icaMethod != 'none')
+            _infoBox(
+              'High-rate recording: ${_activeRecording!.sampleRate.round()} Hz × ${_activeRecording!.labels.length} channels. ICA scans the training samples repeatedly. Consider enabling downsampling to 250–500 Hz for conventional ERP work after checking the frequencies you need. Picard is also available as an alternative solver; results can differ.',
+              _accentAmber,
+            ),
+
           if (_activeRecording?.isEpoched == true)
             TextButton.icon(
               onPressed: () =>
@@ -2766,17 +2832,44 @@ class _FeatureHomeState extends State<FeatureHome>
               label: const Text("Next: average and analyse saved trials"),
             ),
           if (!_usesExistingEpochs)
+            DropdownButtonFormField<String>(
+              initialValue: _cfg.stimEpochs
+                  ? 'events'
+                  : _cfg.epochBeforeGedai
+                  ? 'fixed'
+                  : 'continuous',
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Saved data structure',
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'continuous',
+                  child: Text('Continuous recording'),
+                ),
+                DropdownMenuItem(
+                  value: 'events',
+                  child: Text('Event-based trials (ERP)'),
+                ),
+                DropdownMenuItem(
+                  value: 'fixed',
+                  child: Text('Fixed-length windows'),
+                ),
+              ],
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() {
+                      _cfg.stimEpochs = v == 'events';
+                      _cfg.epochBeforeGedai = v == 'fixed';
+                    }),
+            ),
+          if (!_usesExistingEpochs)
             StimEpochPanel(
+              showEnableControl: false,
               config: _cfg,
               markers: _raw?.markers ?? const [],
               enabled: !_running,
               onChanged: () => setState(() {}),
-            ),
-          if (!_usesExistingEpochs && !_cfg.stimEpochs)
-            _check(
-              'Save fixed-length windows',
-              _cfg.epochBeforeGedai,
-              (v) => _cfg.epochBeforeGedai = v,
             ),
           if (!_usesExistingEpochs &&
               !_cfg.stimEpochs &&
@@ -2795,7 +2888,7 @@ class _FeatureHomeState extends State<FeatureHome>
             _usesExistingEpochs
                 ? 'Preserve existing trials → clean each trial → save.'
                 : _cfg.stimEpochs
-                ? 'Filter continuous data → cut event-based trials → clean each trial → save. No fixed-window epoching is applied.'
+                ? 'Filter / ICA / ASR on continuous input → cut event trials → GEDAI per trial → save. Existing trials retain their boundaries.'
                 : _cfg.epochBeforeGedai
                 ? 'Filter → split into fixed windows → clean → save windows.'
                 : 'Filter → clean → save continuous data. GEDAI uses internal processing windows.',
@@ -2833,6 +2926,21 @@ class _FeatureHomeState extends State<FeatureHome>
             'Bad channel detection',
             _cfg.badChannels,
             (v) => _cfg.badChannels = v,
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.settings, size: 16),
+            label: const Text('ICA / ICLabel parameters'),
+            onPressed: _running
+                ? null
+                : () async {
+                    await showProcessingSettings(
+                      context,
+                      _cfg,
+                      'Preprocessing',
+                      section: 'ICA',
+                    );
+                    if (mounted) setState(() {});
+                  },
           ),
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 6),
@@ -2984,7 +3092,7 @@ class _FeatureHomeState extends State<FeatureHome>
                   _cfg.muscleMethod != 'none') &&
               (_usesExistingEpochs || _cfg.stimEpochs))
             _infoBox(
-              'ICA, ASR and muscle cleaners need continuous data and are skipped for existing or event-based trials.',
+              'ICA supports saved trials and preserves their boundaries. Standalone ASR / muscle cleaners require continuous input.',
               _accentBlue,
             ),
           if (_cfg.icaMethod != 'none' && _cfg.gedai)
@@ -3323,6 +3431,7 @@ class _FeatureHomeState extends State<FeatureHome>
       allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: _rawExtensions,
+      recordingsOnly: true,
     );
     if (pick == null) return;
     setState(() {
@@ -3374,6 +3483,9 @@ class _FeatureHomeState extends State<FeatureHome>
         .map((entity) => entity.path)
         .where((file) => allowed.any((ext) => file.toLowerCase().endsWith(ext)))
         .where((file) => matchesFilename(file, pattern))
+        .where(
+          (file) => !extensions.contains('json') || isEegRecordingFile(file),
+        )
         .toList();
     discovered.sort();
     final maxSubjects = int.tryParse(_batchSubjectLimit.text) ?? 0;
@@ -3732,6 +3844,7 @@ class _FeatureHomeState extends State<FeatureHome>
         allowMultiple: true,
         type: FileType.custom,
         allowedExtensions: _anyInputExtensions,
+        recordingsOnly: true,
       );
       if (pick == null) return;
       setState(() {
@@ -4415,6 +4528,7 @@ class _FeatureHomeState extends State<FeatureHome>
     if (standalone) {
       setState(() {
         _running = true;
+        _stopRequested = false;
         _progress = 0;
         _logVisible = true;
       });
@@ -4429,8 +4543,9 @@ class _FeatureHomeState extends State<FeatureHome>
       try {
         final dir = _batchPrepOutputDir ?? File(path).parent.path;
         final rec = await _loader.load(path);
+        if (_batchCancelRequested) break;
         final outPath =
-            '$dir${Platform.pathSeparator}${erpOutputName(path, epoched: rec.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai, cleaned: true)}';
+            '$dir${Platform.pathSeparator}${erpOutputName(path, extension: RecordingStorage.extension, epoched: rec.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai, cleaned: true)}';
         // Detect channel types per file — a batch queue can mix montages.
         final channels = ChannelTypeMap.autoDetect(rec.labels);
         if (channels.nonEegCount > 0) {
@@ -4463,7 +4578,7 @@ class _FeatureHomeState extends State<FeatureHome>
         if (_cfg.sourceLocalization) {
           final srcPath =
               '$dir${Platform.pathSeparator}'
-              '${_stem(path)}_source.ccseeg.json';
+              '${_stem(path)}_source.${RecordingStorage.extension}';
           current = await _service.preprocess(
             recording: current,
             outputPath: srcPath,
@@ -4525,7 +4640,12 @@ class _FeatureHomeState extends State<FeatureHome>
     return _batchPrepFiles.map((path) {
       final dir = _batchPrepOutputDir ?? File(path).parent.path;
       final suffix = _cfg.sourceLocalization ? '_source' : '_clean';
-      return '$dir${Platform.pathSeparator}${_stem(path)}$suffix.ccseeg.json';
+      final native =
+          '$dir${Platform.pathSeparator}${_stem(path)}$suffix.${RecordingStorage.extension}';
+      final legacy = '$native.json';
+      return !File(native).existsSync() && File(legacy).existsSync()
+          ? legacy
+          : native;
     }).toList();
   }
 
@@ -4542,6 +4662,7 @@ class _FeatureHomeState extends State<FeatureHome>
     if (standalone) {
       setState(() {
         _running = true;
+        _stopRequested = false;
         _progress = 0;
         _logVisible = true;
       });
@@ -4595,6 +4716,7 @@ class _FeatureHomeState extends State<FeatureHome>
           // Deliberately retain only one recording at a time. The psiconnect
           // corpus is ~20 GB; loading its 482 previews together exhausted RAM.
           final rec = await _loader.load(path);
+          if (_batchCancelRequested) break;
           final windowAdvice = featureWindowWarnings(_cfg, rec).join('\n');
           if (windowAdvice.isNotEmpty &&
               acknowledgedWarnings.add(windowAdvice)) {
@@ -4748,6 +4870,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _startBatchProgress('Batch plotting', inputs);
       setState(() {
         _running = true;
+        _stopRequested = false;
         _progress = 0;
         _logVisible = true;
       });
@@ -4786,6 +4909,7 @@ class _FeatureHomeState extends State<FeatureHome>
     }
     setState(() {
       _running = true;
+      _stopRequested = false;
       _progress = 0;
       _logVisible = true;
     });
@@ -5100,7 +5224,16 @@ class _FeatureHomeState extends State<FeatureHome>
                             ].contains(text)
                             ? 'Preprocessing'
                             : 'Feature Extraction';
-                        await showProcessingSettings(context, _cfg, stage);
+                        await showProcessingSettings(
+                          context,
+                          _cfg,
+                          stage,
+                          section: text == 'Bandpass + notch filter'
+                              ? 'Filter'
+                              : text == 'GEDAI denoising'
+                              ? 'GEDAI'
+                              : 'Bad channels',
+                        );
                         if (mounted) setState(() {});
                       },
               ),
@@ -5349,7 +5482,7 @@ class _FeatureHomeState extends State<FeatureHome>
   /// Filename without any known recording extension.
   String _stem(String path) => _shortName(path).replaceAll(
     RegExp(
-      r'\.(ccseeg\.json|edf|set|fif|mat|vhdr|json|orb|signal|csv)$',
+      r'(?:\.(?:ccseeg|edf|set|fif|mat|vhdr|json|orb|signal|csv))+$',
       caseSensitive: false,
     ),
     '',

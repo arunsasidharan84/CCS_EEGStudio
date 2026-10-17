@@ -13,6 +13,7 @@ import 'task_guides.dart';
 import 'protocol_tools.dart';
 import 'review_workspace.dart';
 import 'review_math.dart';
+import 'channel_grid.dart';
 
 class ErpWorkbenchView extends StatefulWidget {
   const ErpWorkbenchView({
@@ -180,7 +181,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       _paths.add(active.path);
     for (final path in (widget.batchMode ? widget.extraFiles : <String>[])) {
       if ((path.toLowerCase().endsWith('.edf') ||
-              path.toLowerCase().endsWith('.ccseeg.json')) &&
+              path.toLowerCase().endsWith('.fif') ||
+              (path.toLowerCase().endsWith('.ccseeg.json') ||
+                  path.toLowerCase().endsWith('.ccseeg'))) &&
           File(path).existsSync() &&
           !_paths.contains(path))
         _paths.add(path);
@@ -436,7 +439,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   Future<void> _openResult() async {
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['json'],
+      allowedExtensions: ['ccserp', 'json'],
     );
     if (picked == null || picked.files.single.path == null || !mounted) return;
     try {
@@ -446,7 +449,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       );
       if (value['schema'] != 'ccs-erp-workbench-v1')
         throw const FormatException(
-          'Choose erp_results.json from a workbench run',
+          'Choose erp_results.ccserp from a workbench run',
         );
       if (!mounted) return;
       setState(() {
@@ -486,7 +489,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       context,
       allowMultiple: true,
       type: FileType.custom,
-      allowedExtensions: ['edf', 'json'],
+      allowedExtensions: ['edf', 'fif', 'ccseeg', 'json'],
+      recordingsOnly: true,
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -1618,6 +1622,14 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                       ),
                     ),
                     const SizedBox(height: 12),
+                    ErpChannelGrid(
+                      files: current
+                          .where((f) => _file == null || f['path'] == _file)
+                          .toList(),
+                      profile: erpMap(d['profile']),
+                      negativeUp: _negativeUp,
+                      smoothingMs: _displaySmoothing,
+                    ),
                     const Text('Component-window topography (B - A)'),
                     SizedBox(
                       height: 280,

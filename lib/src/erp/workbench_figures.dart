@@ -132,6 +132,24 @@ class ErpWorkbenchWavePainter extends CustomPainter {
         size: 10,
       );
     }
+    if (times.first <= 0 && times.last >= 0) {
+      erpText(
+        canvas,
+        '0 ms · event',
+        Offset(x(0) + 4, ax.top - 16),
+        size: 11,
+        color: const Color(0xFF0F172A),
+      );
+    }
+    if (!decode) {
+      erpText(
+        canvas,
+        '0 µV',
+        Offset(ax.right - 35, y(0) - 16),
+        size: 10,
+        color: const Color(0xFF0F172A),
+      );
+    }
     canvas.save();
     canvas.clipRect(ax);
     if (!decode && profile['window'] is List) {
@@ -145,12 +163,16 @@ class ErpWorkbenchWavePainter extends CustomPainter {
       canvas.drawLine(
         Offset(x(0), ax.top),
         Offset(x(0), ax.bottom),
-        Paint()..color = const Color(0xFF94A3B8),
+        Paint()
+          ..color = const Color(0xFF334155)
+          ..strokeWidth = 1.8,
       );
     canvas.drawLine(
       Offset(ax.left, y(decode ? 0.5 : 0)),
       Offset(ax.right, y(decode ? 0.5 : 0)),
-      Paint()..color = const Color(0xFF94A3B8),
+      Paint()
+        ..color = const Color(0xFF334155)
+        ..strokeWidth = 1.8,
     );
     if (!decode) {
       for (var k = 0; k < arrays.length && k < bands.length; k++) {
@@ -241,14 +263,15 @@ class ErpWorkbenchWavePainter extends CustomPainter {
     }
     canvas.restore();
     for (var k = 0; k < names.length; k++)
-      erpText(
-        canvas,
-        names[k],
-        Offset(65 + k * math.max(100, (size.width - 80) / 3), 10),
-        size: 11,
-        color: colors[k],
-        maxWidth: math.max(100, (size.width - 80) / 3) - 8,
-      );
+      if (arrays[k].length == times.length)
+        erpText(
+          canvas,
+          names[k],
+          Offset(65 + k * math.max(100, (size.width - 80) / 3), 10),
+          size: 11,
+          color: colors[k],
+          maxWidth: math.max(100, (size.width - 80) / 3) - 8,
+        );
     erpText(
       canvas,
       'Time (ms)',

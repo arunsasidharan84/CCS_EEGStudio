@@ -3,11 +3,12 @@ String erpOutputName(
   String path, {
   required bool epoched,
   bool cleaned = false,
+  String extension = 'ccseeg',
 }) {
   var stem = path.split(RegExp(r'[/\\]')).last;
   stem = stem.replaceFirst(
     RegExp(
-      r'(?:\.ccseeg)?\.json$|\.(?:edf|set|vhdr|fif|mat|orb)$',
+      r'(?:\.(?:json|ccseeg|edf|set|vhdr|fif|mat|orb))+$',
       caseSensitive: false,
     ),
     '',
@@ -16,5 +17,5 @@ String erpOutputName(
     RegExp(r'(?:[-_]epo(?:ched)?|_clean)+$', caseSensitive: false),
     '',
   );
-  return '$stem${epoched ? '-epo' : ''}${cleaned ? '_clean' : ''}.ccseeg.json';
+  return '$stem${epoched ? '-epo' : ''}${cleaned ? '_clean' : ''}.$extension';
 }

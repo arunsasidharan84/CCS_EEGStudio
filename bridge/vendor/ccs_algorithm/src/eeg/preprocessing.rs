@@ -306,6 +306,9 @@ pub fn run(
     if !options.asr_cutoff.is_finite() || options.asr_cutoff < 1.0 || options.asr_cutoff > 200.0 { return Err("ASR cutoff must be between 1 and 200".into()); }
     if !options.ica_fit_asr_cutoff.is_finite() || options.ica_fit_asr_cutoff < 1.0 || options.ica_fit_asr_cutoff > 200.0 { return Err("ICA fit ASR cutoff must be between 1 and 200".into()); }
     if !(options.ica_blink_threshold <= 1.0 && options.ica_blink_threshold_floor > 0.0 && options.ica_other_threshold <= 1.0 && options.ica_other_threshold_floor > 0.0) { return Err("ICLabel thresholds must be in (0, 1]".into()); }
+    if options.asr_mode == "reject" && options.stim_epochs.as_ref().is_some_and(|s| !s.onsets.is_empty()) {
+        return Err("ASR reject removes time samples and cannot precede event-locked epoching; use ASR correct to preserve event timing".into());
+    }
     let mut warnings = Vec::new();
     let mut ica_report: Option<serde_json::Value> = None;
     normalize_channel_set(rec, &options.non_eeg_channels);
@@ -380,6 +383,36 @@ pub fn run(
         });
     }
 
+    let bad_channels = if options.badchannel {
+        detect_bad_channels_configured(rec,options.bad_variance_ratio)
+    } else {
+        Vec::new()
+    };
+    let ica_on = matches!(options.ica_method.as_str(), "runica" | "picard");
+    let asr_on = matches!(options.asr_mode.as_str(), "correct" | "reject");
+    let muscle_on = matches!(options.muscle_method.as_str(), "bss_cca" | "icanclean" | "wica");
+    if ica_on || asr_on || muscle_on {
+        {
+            let mut trial_options = options.clone();
+            if rec.source_epoch_samples.is_some() {
+                trial_options.asr_mode = "off".into();
+                trial_options.muscle_method = "none".into();
+                if asr_on || muscle_on { warnings.push("Standalone ASR / muscle cleaning skipped for epoched input; ICA keeps trial boundaries and uses ASR only on its training copy".into()); }
+            }
+            match run_ica_asr(&mut f64_channels, rec.rate, &rec.labels, &bad_channels, &trial_options, rec.source_epoch_samples, &mut warnings) {
+                Ok((report, keep_mask)) => {
+                    if let Some(mask) = keep_mask {
+                        for ch in f64_channels.iter_mut() {
+                            let kept: Vec<f64> = ch.iter().zip(mask.iter()).filter(|(_, &k)| k).map(|(v, _)| *v).collect();
+                            *ch = kept;
+                        }
+                    }
+                    ica_report = Some(report);
+                }
+                Err(e) => warnings.push(format!("ICA/ASR skipped: {e}")),
+            }
+        }
+    }
     let mut epoch_meta: Option<EpochMeta> = None;
     if let Some(stim) = options.stim_epochs.as_ref().filter(|s| !s.onsets.is_empty()) {
         if rec.source_epoch_samples.is_some() {
@@ -387,7 +420,7 @@ pub fn run(
         } else {
             let (epochs, labels, n, meta) = cut_stim_epochs(&f64_channels, rec.rate, stim)?;
             eprintln!(
-                "PROGRESS 43 Cut {} stimulus-locked epochs ({} samples, {:.3}..{:.3} s){}",
+                "PROGRESS 53 Cut {} stimulus-locked epochs ({} samples, {:.3}..{:.3} s){}",
                 labels.len(),
                 n,
                 meta.epoch_tmin,
@@ -411,32 +444,6 @@ pub fn run(
         }
     }
 
-    let bad_channels = if options.badchannel {
-        detect_bad_channels_configured(rec,options.bad_variance_ratio)
-    } else {
-        Vec::new()
-    };
-    let ica_on = matches!(options.ica_method.as_str(), "runica" | "picard");
-    let asr_on = matches!(options.asr_mode.as_str(), "correct" | "reject");
-    let muscle_on = matches!(options.muscle_method.as_str(), "bss_cca" | "icanclean" | "wica");
-    if ica_on || asr_on || muscle_on {
-        if rec.source_epoch_samples.is_some() {
-            warnings.push("ICA / ASR / muscle cleaners need continuous data; skipped for epoched input".into());
-        } else {
-            match run_ica_asr(&mut f64_channels, rec.rate, &rec.labels, &bad_channels, options, &mut warnings) {
-                Ok((report, keep_mask)) => {
-                    if let Some(mask) = keep_mask {
-                        for ch in f64_channels.iter_mut() {
-                            let kept: Vec<f64> = ch.iter().zip(mask.iter()).filter(|(_, &k)| k).map(|(v, _)| *v).collect();
-                            *ch = kept;
-                        }
-                    }
-                    ica_report = Some(report);
-                }
-                Err(e) => warnings.push(format!("ICA/ASR skipped: {e}")),
-            }
-        }
-    }
     // Already-epoched data (stimulus epochs, -epo.fif, epoched .set) keeps its
     // own epochs: re-chunking would break the trial alignment and labels.
     if rec.source_epoch_samples.is_none()
@@ -454,7 +461,7 @@ pub fn run(
                     ch.truncate(valid_pts);
                 }
                 rec.source_epoch_samples = Some(pts);
-                eprintln!("PROGRESS 44 Epoched continuous recording into {} epochs of {} samples before GEDAI", valid_pts / pts, pts);
+                eprintln!("PROGRESS 54 Epoched continuous recording into {} epochs of {} samples before GEDAI", valid_pts / pts, pts);
             }
         }
     }
@@ -481,7 +488,7 @@ pub fn run(
                 }
             }
             eprintln!(
-                "PROGRESS 44 GEDAI on {} epochs ({} samples per window)",
+                "PROGRESS 55 GEDAI on {} epochs ({} samples per window)",
                 orig_len / epoched.unwrap(),
                 win
             );
@@ -979,17 +986,17 @@ fn gedai(
         }
     }
     let ref_cov = leadfield_cov(labels).unwrap_or_else(|| DMatrix::identity(n, n));
-    eprintln!("PROGRESS 45 GEDAI: computing broadband spatial separation...");
+    eprintln!("PROGRESS 56 GEDAI: computing broadband spatial separation...");
     let (broad, _, broad_score, broad_threshold) =
         gedai_per_band(&data, rate, epoch_seconds, &ref_cov, threshold_type, true)?;
-    eprintln!("PROGRESS 50 GEDAI: decomposing signal into MODWT MRA bands...");
+    eprintln!("PROGRESS 60 GEDAI: decomposing signal into MODWT MRA bands...");
     let bands = modwt_mra_all(&broad, 3);
     let exclude = (600.0 / rate).ceil() as usize;
     let process_bands = bands.len().saturating_sub(exclude).max(1).min(bands.len());
     let mut clean_sum = vec![vec![0.0; broad[0].len()]; n];
     let mut thresholds = vec![broad_threshold];
     for (i, band) in bands.iter().take(process_bands).enumerate() {
-        let pct = 50 + (25 * (i + 1) / process_bands);
+        let pct = 60 + (15 * (i + 1) / process_bands);
         eprintln!(
             "PROGRESS {} GEDAI: cleaning MRA frequency band {}/{}...",
             pct,
@@ -1863,6 +1870,7 @@ fn run_ica_asr(
     labels: &[String],
     bad_channels: &[String],
     options: &PreprocessOptions,
+    epoch_samples: Option<usize>,
     warnings: &mut Vec<String>,
 ) -> Result<(serde_json::Value, Option<Vec<bool>>), String> {
     use ccs_ica::pipeline::IcaMethod;
@@ -1889,7 +1897,7 @@ fn run_ica_asr(
         let hp: Vec<Vec<f64>> = if options.filter && options.low_hz >= 1.0 {
             target.clone()
         } else {
-            target.par_iter().map(|ch| { let mut c = ch.clone(); fir_bandpass_custom(&mut c, rate, 1.0, 0.0, options.fir_taps); c }).collect()
+            target.par_iter().map(|ch| { let mut c = ch.clone(); for trial in c.chunks_mut(epoch_samples.unwrap_or(ch.len())) { fir_bandpass_custom(trial, rate, 1.0, 0.0, options.fir_taps); } c }).collect()
         };
         let locs: Vec<_> = good.iter().map(|&i| locs_all[i].clone()).collect();
         let mut o = StudioIcaOpts::default();
@@ -1904,6 +1912,7 @@ fn run_ica_asr(
         o.other_threshold = vec![options.ica_other_threshold, options.ica_other_threshold_floor];
         o.fit_asr_cutoff = if options.ica_fit_asr { Some(options.ica_fit_asr_cutoff) } else { None };
         o.seed = options.ica_seed;
+        o.epoch_samples = epoch_samples;
         eprintln!("PROGRESS 48 ICA ({}): blink detection, decomposition and ICLabel...", options.ica_method);
         let (clean, rep) = clean_ica(&target, &hp, &locs, rate, &o)?;
         for (k, &i) in good.iter().enumerate() {

@@ -280,6 +280,7 @@ pub fn default_spectral_filter(srate: f64) -> Result<(Vec<f64>, Vec<f64>), Strin
 
 fn calibrate_impl(
     riemann: bool,
+    epoch_samples: Option<usize>,
     x_in: &Chans,
     srate: f64,
     cutoff: f64,
@@ -300,19 +301,28 @@ fn calibrate_impl(
     let mut x: Chans = x_in.iter().map(|ch| ch.iter().map(|&v| if v.is_finite() { v } else { 0.0 }).collect()).collect();
     let mut iir = vec![];
     for ch in x.iter_mut() {
-        let (y, zf) = filter(&b, &a, ch, None);
+        let mut y = Vec::with_capacity(ch.len());
+        let mut last = Vec::new();
+        for trial in ch.chunks(epoch_samples.unwrap_or(ch.len())) {
+            let (v, zf) = filter(&b, &a, trial, None);
+            y.extend(v); last = zf;
+        }
         *ch = y;
-        iir.push(zf);
+        iir.push(last);
     }
     if x.iter().any(|ch| ch.iter().any(|v| !v.is_finite())) {
         return Err("The IIR filter diverged on your data. Please try using either a more conservative filter or removing some bad sections/channels from the calibration data.".into());
     }
     // U: block covariance accumulation
-    let nrows = (s + blocksize - 1) / blocksize;
+    let blocks: Vec<(usize,usize)> = (0..s).step_by(epoch_samples.unwrap_or(s)).flat_map(|start| {
+        let end=(start+epoch_samples.unwrap_or(s)).min(s);
+        (start..end).step_by(blocksize).map(move |b| (b,(b+blocksize).min(end)))
+    }).collect();
+    let nrows = blocks.len();
     let mut u: Vec<Vec<f64>> = vec![vec![0.0; c * c]; nrows];
     for k in 1..=blocksize {
         for r in 0..nrows {
-            let idx = (k + r * blocksize).min(s) - 1;
+            let idx = (blocks[r].0 + k).min(blocks[r].1) - 1;
             for c2 in 0..c {
                 let v2 = x[c2][idx];
                 for c1 in 0..c {
@@ -337,8 +347,11 @@ fn calibrate_impl(
     // X = abs(X*V): projections (S x C)
     let mut mu = vec![0.0; c];
     let mut sig = vec![0.0; c];
-    let offsets = offsets_for(s, n, window_overlap);
-    if offsets.len() <= 1 {
+    let offsets: Vec<usize> = (0..s).step_by(epoch_samples.unwrap_or(s)).flat_map(|start| {
+        let len=(s-start).min(epoch_samples.unwrap_or(s));
+        if len < n { vec![] } else { offsets_for(len,n,window_overlap).into_iter().map(|o|o+start).collect() }
+    }).collect();
+    if offsets.len() <= 1 || (epoch_samples.is_some() && offsets.len() < 12) {
         return Err("No enough reference data, call the function from the command line and try changing the 'BurstCriterionRefTolerances' parameters".into());
     }
     let betas = shape_range();
@@ -365,6 +378,33 @@ fn calibrate_impl(
 }
 
 
+/// Pool calibration statistics across trials while resetting spectral filters,
+/// covariance blocks and RMS windows at trial boundaries. Only the ICA fit copy
+/// is shortened; original trial data and event latencies are never removed.
+pub fn epoched_asr_fit(signal: &Chans, srate: f64, cutoff: f64, points: usize) -> Result<Chans,String> {
+    if points < srate.ceil() as usize { return Err("ASR fit needs trials at least one second long".into()); }
+    let calibrated=calibrate_impl(false,Some(points),signal,srate,cutoff,None,0.5,0.66,0.1,0.25,64.)?;
+    let mut kept=vec![Vec::new();signal.len()];
+    let ext=(0.25*srate).round() as usize;
+    for start in (0..signal[0].len()).step_by(points) {
+        let end=(start+points).min(signal[0].len());
+        let trial:Chans=signal.iter().map(|c|c[start..end].to_vec()).collect();
+        if end-start <= ext { continue; }
+        let extended:Chans=trial.iter().map(|c| {
+            let mut v=c.clone(); let last=c[c.len()-1];
+            for k in 1..=ext { v.push(2.*last-c[c.len()-1-k]); } v
+        }).collect();
+        let mut state=calibrated.clone();
+        state.iir=vec![vec![0.; state.a.len().max(state.b.len())-1];signal.len()];
+        let out=asr_process(&extended,srate,&mut state,Some(0.5),Some(0.25),None,0.66,64.)?;
+        let carry=state.carry.as_ref().map(|c|c[0].len()).unwrap_or(0);
+        let repaired:Chans=out.iter().map(|c|c[carry..].to_vec()).collect();
+        let br=burst_rejection(&trial,&repaired);
+        for (dest,src) in kept.iter_mut().zip(br.data) {dest.extend(src);}
+    }
+    Ok(kept)
+}
+
 /// `asr_calibrate` (Euclidean ASR).
 pub fn asr_calibrate(
     x_in: &Chans,
@@ -377,12 +417,12 @@ pub fn asr_calibrate(
     min_clean_fraction: f64,
     maxmem: f64,
 ) -> Result<AsrState, String> {
-    calibrate_impl(false, x_in, srate, cutoff, ba, window_len, window_overlap, max_dropout_fraction, min_clean_fraction, maxmem)
+    calibrate_impl(false, None, x_in, srate, cutoff, ba, window_len, window_overlap, max_dropout_fraction, min_clean_fraction, maxmem)
 }
 
 /// `asr_calibrate_r` (Riemannian ASR of Blum et al., EEGLAB clean_rawdata): defaults window 0.1 s, overlap 0.5, min clean 0.3.
 pub fn rasr_calibrate(x_in: &Chans, srate: f64, cutoff: f64, maxmem: f64) -> Result<AsrState, String> {
-    calibrate_impl(true, x_in, srate, cutoff, None, 0.1, 0.5, 0.1, 0.3, maxmem)
+    calibrate_impl(true, None, x_in, srate, cutoff, None, 0.1, 0.5, 0.1, 0.3, maxmem)
 }
 
 /// Eigen-decomposition used by `rasr_nonlinear_eigenspace(L, k=nchan)`: with k equal to the dimension the Grassmann

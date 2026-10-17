@@ -47,7 +47,8 @@ class VhdrLoader {
           if (k == 'DataFile') dataFile = v;
           if (k == 'DataOrientation') orientation = v.toUpperCase();
           if (k == 'NumberOfChannels') numChannels = int.tryParse(v) ?? 0;
-          if (k == 'SamplingInterval') samplingIntervalUs = int.tryParse(v) ?? 0;
+          if (k == 'SamplingInterval')
+            samplingIntervalUs = int.tryParse(v) ?? 0;
         case 'Binary Infos':
           if (k == 'BinaryFormat') binaryFormat = v.toUpperCase();
         case 'Channel Infos':
@@ -58,7 +59,8 @@ class VhdrLoader {
               final parts = v.split(',');
               channelNames[idx] = parts.isNotEmpty ? parts[0].trim() : 'Ch$idx';
               if (parts.length >= 3 && parts[2].trim().isNotEmpty) {
-                channelResolutions[idx] = double.tryParse(parts[2].trim()) ?? 1.0;
+                channelResolutions[idx] =
+                    double.tryParse(parts[2].trim()) ?? 1.0;
               } else {
                 channelResolutions[idx] = 1.0;
               }
@@ -114,23 +116,23 @@ class VhdrLoader {
       // Each channel is stored contiguously: [ch0_t0, ch0_t1, ..., ch1_t0, ...]
       for (var c = 0; c < numChannels; c++) {
         final res = resolutions[c];
-        final channelValues = <double>[];
+        final channelValues = Float32List(totalSamples);
         for (var s = 0; s < totalSamples; s += stride) {
           final offset = (c * totalSamples + s) * bytesPerSample;
-          channelValues.add(_readSample(bd, offset, binaryFormat, res));
+          channelValues[s] = _readSample(bd, offset, binaryFormat, res);
         }
-        preview.add(Float32List.fromList(channelValues));
+        preview.add(channelValues);
       }
     } else {
       // MULTIPLEXED: [ch0_t0, ch1_t0, ..., chN_t0, ch0_t1, ch1_t1, ...]
       for (var c = 0; c < numChannels; c++) {
         final res = resolutions[c];
-        final channelValues = <double>[];
+        final channelValues = Float32List(totalSamples);
         for (var s = 0; s < totalSamples; s += stride) {
           final offset = (s * numChannels + c) * bytesPerSample;
-          channelValues.add(_readSample(bd, offset, binaryFormat, res));
+          channelValues[s] = _readSample(bd, offset, binaryFormat, res);
         }
-        preview.add(Float32List.fromList(channelValues));
+        preview.add(channelValues);
       }
     }
 
@@ -149,8 +151,10 @@ class VhdrLoader {
   }
 
   List<EegMarker> _loadVmrk(String vhdrPath, double sampleRate) {
-    final vmrkPath =
-        vhdrPath.replaceAll(RegExp(r'\.vhdr$', caseSensitive: false), '.vmrk');
+    final vmrkPath = vhdrPath.replaceAll(
+      RegExp(r'\.vhdr$', caseSensitive: false),
+      '.vmrk',
+    );
     final file = File(vmrkPath);
     if (!file.existsSync()) return const [];
 
@@ -178,30 +182,39 @@ class VhdrLoader {
           final type = parts[0].trim();
           final desc = parts[1].trim();
           final posSamples = int.tryParse(parts[2].trim()) ?? 1;
-          final sizeSamples =
-              parts.length >= 4 ? (int.tryParse(parts[3].trim()) ?? 0) : 0;
-          final chNum =
-              parts.length >= 5 ? (int.tryParse(parts[4].trim()) ?? 0) : 0;
+          final sizeSamples = parts.length >= 4
+              ? (int.tryParse(parts[3].trim()) ?? 0)
+              : 0;
+          final chNum = parts.length >= 5
+              ? (int.tryParse(parts[4].trim()) ?? 0)
+              : 0;
 
           final startSec = (posSamples - 1) / sampleRate;
           final durSec = sizeSamples / sampleRate;
 
-          markers.add(EegMarker(
-            type: type,
-            description: desc,
-            startSeconds: startSec > 0 ? startSec : 0.0,
-            durationSeconds: durSec > 0 ? durSec : 0.0,
-            channelIndex: chNum > 0 ? chNum - 1 : null,
-          ));
+          markers.add(
+            EegMarker(
+              type: type,
+              description: desc,
+              startSeconds: startSec > 0 ? startSec : 0.0,
+              durationSeconds: durSec > 0 ? durSec : 0.0,
+              channelIndex: chNum > 0 ? chNum - 1 : null,
+            ),
+          );
         }
       }
     }
     return markers;
   }
 
-
-  double _readSample(ByteData bd, int offset, String format, double resolution) {
-    if (offset + (format == 'INT_16' || format == 'UINT_16' ? 2 : 4) > bd.lengthInBytes) {
+  double _readSample(
+    ByteData bd,
+    int offset,
+    String format,
+    double resolution,
+  ) {
+    if (offset + (format == 'INT_16' || format == 'UINT_16' ? 2 : 4) >
+        bd.lengthInBytes) {
       return 0.0;
     }
     return switch (format) {

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:isolate';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -92,7 +93,7 @@ class _EegViewerState extends State<EegViewer> {
   int _currentEpochIndex = 0;
   bool _stitchEpochs = false;
   double _accumulatedDragDx = 0.0;
-  String? _cachedFilterKey;
+  String? _cachedFilterKey, _pendingFilterKey;
   List<Float32List>? _cachedFilterPreview;
 
   final Set<String> _disabledMarkerLabels = {};
@@ -102,108 +103,47 @@ class _EegViewerState extends State<EegViewer> {
       : widget.recording;
 
   List<Float32List> _getEffectivePreview(EegRecording eeg) {
-    if (!_bandpassEnabled && !_notchEnabled) return eeg.preview;
-    final key = '${eeg.path}_${_showRaw}_${_bandpassEnabled}_${_notchEnabled}';
+    if (!_bandpassEnabled && !_notchEnabled) {
+      _pendingFilterKey = null;
+      return eeg.preview;
+    }
+    final key =
+        '${identityHashCode(eeg)}_${_showRaw}_${_bandpassEnabled}_${_notchEnabled}_${widget.lowHz}_${widget.highHz}_${widget.notchHz}';
     if (_cachedFilterPreview != null && _cachedFilterKey == key) {
       return _cachedFilterPreview!;
     }
-    _cachedFilterKey = key;
-    final out = <Float32List>[];
-    for (var chIdx = 0; chIdx < eeg.preview.length; chIdx++) {
-      out.add(
-        Float32List.fromList(_applyFiltersToSeries(eeg.preview[chIdx], eeg)),
-      );
+    if (_pendingFilterKey != key) {
+      _pendingFilterKey = key;
+      final bandpass = _bandpassEnabled, notch = _notchEnabled;
+      final low = widget.lowHz,
+          high = widget.highHz,
+          frequency = widget.notchHz;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+      _filterViewerPreview(eeg, bandpass, notch, low, high, frequency)
+          .then((out) {
+            if (!mounted || _pendingFilterKey != key) return;
+            setState(() {
+              _cachedFilterKey = key;
+              _cachedFilterPreview = out;
+              _pendingFilterKey = null;
+            });
+          })
+          .catchError((Object error) {
+            if (!mounted || _pendingFilterKey != key) return;
+            setState(() {
+              _pendingFilterKey = null;
+              _bandpassEnabled = false;
+              _notchEnabled = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Display filtering failed: $error')),
+            );
+          });
     }
-    _cachedFilterPreview = out;
-    return out;
-  }
-
-  List<double> _applyFiltersToSeries(Float32List raw, EegRecording eeg) {
-    if (raw.length < 3 || (!_bandpassEnabled && !_notchEnabled)) {
-      return raw.map((v) => v.toDouble()).toList();
-    }
-    var out = raw.map((v) => v.toDouble()).toList();
-    final effectiveRate =
-        (eeg.sampleCount > 0 &&
-            eeg.preview.isNotEmpty &&
-            eeg.preview.first.isNotEmpty)
-        ? eeg.sampleRate * (eeg.preview.first.length / eeg.sampleCount)
-        : eeg.sampleRate;
-    final dt = 1.0 / effectiveRate;
-
-    final chunkLen = eeg.isEpoched
-        ? (eeg.pointsPerEpoch ?? out.length)
-        : out.length;
-
-    for (var start = 0; start < out.length; start += chunkLen) {
-      final end = math.min(out.length, start + chunkLen);
-      if (end - start < 2) continue;
-
-      // 1. High-pass filter (based on widget.lowHz)
-      if (_bandpassEnabled) {
-        final lowHz = widget.lowHz;
-        if (lowHz > 0.0) {
-          final rcHP = 1.0 / (2 * math.pi * lowHz);
-          final alphaHP = rcHP / (rcHP + dt);
-          double prevX = out[start];
-          double prevY = 0.0;
-          out[start] = 0.0;
-          for (var i = start + 1; i < end; i++) {
-            final x = out[i];
-            final y = alphaHP * (prevY + x - prevX);
-            prevX = x;
-            prevY = y;
-            out[i] = y;
-          }
-        }
-      }
-
-      // 2. Low-pass filter (EMA, based on widget.highHz)
-      if (_bandpassEnabled) {
-        final highHz = widget.highHz;
-        final rcLP = 1.0 / (2 * math.pi * highHz);
-        final alphaLP = dt / (rcLP + dt);
-
-        // Forward pass
-        for (var i = start + 1; i < end; i++) {
-          out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i - 1];
-        }
-        // Backward pass for zero-phase shift (approximate bidir filter)
-        for (var i = end - 2; i >= start; i--) {
-          out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i + 1];
-        }
-      }
-
-      // 3. Notch filter (based on widget.notchHz)
-      if (_notchEnabled) {
-        final notchHz = widget.notchHz;
-        final double w0 = 2 * math.pi * notchHz / effectiveRate;
-        final double r = 0.95; // Bandwidth parameter
-        final double cosW0 = math.cos(w0);
-        final double a1 = -2.0 * cosW0;
-        final double b1 = -2.0 * r * cosW0;
-        final double b2 = r * r;
-
-        double x1 = out[start], x2 = out[start];
-        double y1 = out[start], y2 = out[start];
-        for (var i = start + 2; i < end; i++) {
-          final x = out[i];
-          final y = x + a1 * x1 + x2 - b1 * y1 - b2 * y2;
-          x2 = x1;
-          x1 = x;
-          y2 = y1;
-          y1 = y;
-          out[i] = y;
-        }
-      }
-
-      // 4. Baseline Correction (mean subtraction)
-      var chunkMean = 0.0;
-      for (var i = start; i < end; i++) chunkMean += out[i];
-      chunkMean /= (end - start);
-      for (var i = start; i < end; i++) out[i] -= chunkMean;
-    }
-    return out;
+    // Keep navigation responsive while full-resolution display filters run.
+    return eeg.preview;
   }
 
   @override
@@ -514,6 +454,11 @@ class _EegViewerState extends State<EegViewer> {
                     _badge(
                       '${(eeg.durationSeconds / 60).toStringAsFixed(1)} min',
                       const Color(0xFF22C55E),
+                    ),
+                  if (_pendingFilterKey != null)
+                    _badge(
+                      'Display filters running · raw preview',
+                      const Color(0xFFF59E0B),
                     ),
                   if (eeg.isEpoched) ...[
                     const SizedBox(width: 4),
@@ -2110,8 +2055,8 @@ class _EegSignalPainter extends CustomPainter {
         }
 
         final linePaint = Paint()
-          ..color = color.withOpacity(0.23)
-          ..strokeWidth = 0.8;
+          ..color = color.withOpacity(0.8)
+          ..strokeWidth = 1.3;
         canvas.drawLine(Offset(x, 0), Offset(x, drawH), linePaint);
       }
     }
@@ -2410,3 +2355,117 @@ Color _markerColor(String label) {
   ];
   return palette[hash % palette.length];
 }
+
+List<double> _filterViewerSeries(
+  Float32List raw,
+  EegRecording eeg,
+  bool bandpass,
+  bool notch,
+  double low,
+  double high,
+  double frequency,
+) {
+  if (raw.length < 3 || (!bandpass && !notch)) {
+    return Float64List.fromList(raw);
+  }
+  final out = Float64List.fromList(raw);
+  final effectiveRate =
+      (eeg.sampleCount > 0 &&
+          eeg.preview.isNotEmpty &&
+          eeg.preview.first.isNotEmpty)
+      ? eeg.sampleRate * (eeg.preview.first.length / eeg.sampleCount)
+      : eeg.sampleRate;
+  final dt = 1.0 / effectiveRate;
+
+  final chunkLen = eeg.isEpoched
+      ? (eeg.pointsPerEpoch ?? out.length)
+      : out.length;
+
+  for (var start = 0; start < out.length; start += chunkLen) {
+    final end = math.min(out.length, start + chunkLen);
+    if (end - start < 2) continue;
+
+    // 1. High-pass filter (based on low)
+    if (bandpass) {
+      final lowHz = low;
+      if (lowHz > 0.0) {
+        final rcHP = 1.0 / (2 * math.pi * lowHz);
+        final alphaHP = rcHP / (rcHP + dt);
+        double prevX = out[start];
+        double prevY = 0.0;
+        out[start] = 0.0;
+        for (var i = start + 1; i < end; i++) {
+          final x = out[i];
+          final y = alphaHP * (prevY + x - prevX);
+          prevX = x;
+          prevY = y;
+          out[i] = y;
+        }
+      }
+    }
+
+    // 2. Low-pass filter (EMA, based on high)
+    if (bandpass) {
+      final highHz = high;
+      final rcLP = 1.0 / (2 * math.pi * highHz);
+      final alphaLP = dt / (rcLP + dt);
+
+      // Forward pass
+      for (var i = start + 1; i < end; i++) {
+        out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i - 1];
+      }
+      // Backward pass for zero-phase shift (approximate bidir filter)
+      for (var i = end - 2; i >= start; i--) {
+        out[i] = alphaLP * out[i] + (1 - alphaLP) * out[i + 1];
+      }
+    }
+
+    // 3. Notch filter (based on frequency)
+    if (notch) {
+      final notchHz = frequency;
+      final double w0 = 2 * math.pi * notchHz / effectiveRate;
+      final double r = 0.95; // Bandwidth parameter
+      final double cosW0 = math.cos(w0);
+      final double a1 = -2.0 * cosW0;
+      final double b1 = -2.0 * r * cosW0;
+      final double b2 = r * r;
+
+      double x1 = out[start], x2 = out[start];
+      double y1 = out[start], y2 = out[start];
+      for (var i = start + 2; i < end; i++) {
+        final x = out[i];
+        final y = x + a1 * x1 + x2 - b1 * y1 - b2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        out[i] = y;
+      }
+    }
+
+    // 4. Baseline Correction (mean subtraction)
+    var chunkMean = 0.0;
+    for (var i = start; i < end; i++) chunkMean += out[i];
+    chunkMean /= (end - start);
+    for (var i = start; i < end; i++) out[i] -= chunkMean;
+  }
+  return out;
+}
+
+// A top-level launch boundary prevents the isolate closure from retaining the
+// widget State/context through Dart's shared closure contexts.
+Future<List<Float32List>> _filterViewerPreview(
+  EegRecording eeg,
+  bool bandpass,
+  bool notch,
+  double low,
+  double high,
+  double frequency,
+) => Isolate.run(
+  () => [
+    for (final raw in eeg.preview)
+      Float32List.fromList(
+        _filterViewerSeries(raw, eeg, bandpass, notch, low, high, frequency),
+      ),
+  ],
+);

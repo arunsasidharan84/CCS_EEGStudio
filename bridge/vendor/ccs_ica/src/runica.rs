@@ -307,17 +307,27 @@ pub fn runica(data_in: &Mat, o: &RunicaOpts, rng: &mut dyn Rng) -> Result<Runica
     let mut olddelta = DVector::<f64>::zeros(chans * ncomps);
 
     let mut xblk = Mat::zeros(chans, block);
+    let mut u = Mat::zeros(ncomps, block);
 
+    let mut last_update = std::time::Instant::now();
     while step < maxsteps {
+        if last_update.elapsed().as_secs() >= 2 {
+            eprintln!("PROGRESS 48 ICA iteration {}/{} (convergence dependent)", step + 1, maxsteps);
+            last_update = std::time::Instant::now();
+        }
         let timeperm = rng.randperm(datalength);
         let mut t = 1usize;
         while t <= lastt {
+            if blockno % 256 == 0 && last_update.elapsed().as_secs() >= 2 {
+                eprintln!("PROGRESS 48 ICA iteration {}/{}, training block {}/{}", step + 1, maxsteps, t, lastt);
+                last_update = std::time::Instant::now();
+            }
             // gather block of data columns (MATLAB: data(:, timeperm(t:t+block-1)))
             for b in 0..block {
                 let col = timeperm[t - 1 + b];
                 xblk.set_column(b, &data.column(col));
             }
-            let mut u = &weights * &xblk;
+            u.gemm(1.0, &weights, &xblk, 0.0);
             if biasflag {
                 for b in 0..block {
                     for i in 0..ncomps {

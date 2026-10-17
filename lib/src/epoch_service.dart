@@ -176,6 +176,7 @@ class EpochService {
     ];
 
     return EegRecording(
+      provenance: recording.provenance,
       path:
           '${recording.path.replaceFirst(RegExp(r"(?:\.ccseeg)?\.json$"), "")}-epo.ccseeg.json',
       completedStages: recording.completedStages,

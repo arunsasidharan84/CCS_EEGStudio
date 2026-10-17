@@ -198,7 +198,12 @@ pub fn core_picard(x: &Mat, ortho: bool, extended: bool, m: usize, max_iter: usi
     let mut direction = Mat::zeros(n, n);
     let mut g_old = Mat::zeros(n, n);
     let mut n_done = 0;
+    let mut last_update = std::time::Instant::now();
     for it in 0..max_iter {
+        if last_update.elapsed().as_secs() >= 2 {
+            eprintln!("PROGRESS 48 ICA iteration {}/{} (convergence dependent)", it + 1, max_iter);
+            last_update = std::time::Instant::now();
+        }
         n_done = it;
         let psi_y = y.map(|v| v.tanh());
         let mut psid_y = psi_y.map(|p| 1.0 - p * p);

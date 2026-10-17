@@ -1,8 +1,7 @@
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'models.dart';
+import 'recording_storage.dart';
 
 /// Cropping and sliding subepochs operate on original parent epochs, never
 /// on the concatenation of adjacent trials.
@@ -237,6 +236,7 @@ class RecordingTransform {
     double? sourceDurationSeconds,
   }) => EegRecording(
     path: '${input.path}_prepared',
+    provenance: input.provenance,
     completedStages: input.completedStages,
     epochStartSeconds: epochStartSeconds,
     sourceDurationSeconds: sourceDurationSeconds,
@@ -258,28 +258,10 @@ class RecordingTransform {
     required String sourcePath,
     required Map<String, dynamic> operations,
   }) async {
-    await File(path).writeAsString(
-      jsonEncode({
-        'format': 'ccseeg-v1',
-        'sample_rate': input.sampleRate,
-        'labels': input.labels,
-        'channels': [for (final ch in input.preview) ch.toList()],
-        'source_epoch_samples': input.pointsPerEpoch,
-        'epoch_labels': input.epochLabels,
-        'markers': [for (final marker in input.markers) marker.toJson()],
-        'completed_stages': input.completedStages,
-        'epoch_start_seconds': input.epochStartSeconds,
-        if (input.epochTmin != null)
-          'epoch_onsets': [
-            for (final start in input.epochStartSeconds)
-              start - input.epochTmin!,
-          ],
-        'source_duration_seconds': input.sourceDurationSeconds,
-        if (input.epochTmin != null) 'epoch_tmin': input.epochTmin,
-      }),
+    await RecordingStorage.save(
+      input,
+      path,
+      provenance: {'source_path': sourcePath, ...operations},
     );
-    await File(
-      '$path.preparation.json',
-    ).writeAsString(jsonEncode({'source_path': sourcePath, ...operations}));
   }
 }
