@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.20</b> ·
+  <b>Current version: 1.2.21</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -132,7 +132,7 @@ sudo update-ccs-eeg-studio
 
 ---
 
-## What's new in 1.2.20
+## What's new in 1.2.21
 
 ### Server updates without sudo and multiple instances
 

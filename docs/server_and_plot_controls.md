@@ -2,7 +2,7 @@
 
 ## Linux without sudo
 
-Version 1.2.20 adds `CCSEEGStudio-linux-x86_64.tar.gz` to every desktop release.
+Version 1.2.21 adds `CCSEEGStudio-linux-x86_64.tar.gz` to every desktop release.
 The in-app updater uses a GitHub API SHA-256 digest or the checksum file from the
 same release tag, rejecting mismatches before installation. Old installers remain
 available; the portable bundle avoids needing dpkg/rpm extraction tools.

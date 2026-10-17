@@ -6,7 +6,9 @@ its matching section is missing.
 
 ## [Unreleased]
 
-## [1.2.20]
+## [1.2.21]
+
+- Supersede the unpublished v1.2.20 build tag after correcting the Linux portable-package workflow.
 
 ### ERP display and preprocessing controls
 
@@ -30,7 +32,7 @@ its matching section is missing.
 - Isolate group-statistics scripts, Matplotlib caches and copied-plot files in unique temporary directories, avoiding cross-account and cross-instance temporary-file collisions.
 - Add ERP axis-control, epoch/stitched-window label, per-user installer, portable-asset selection and checksum-rejection tests.
 - Exercise two successive rootless installs and verify the first version remains intact while the launcher selects the second.
-- See [server installation, multiple instances and ERP display controls](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.20/docs/server_and_plot_controls.md).
+- See [server installation, multiple instances and ERP display controls](https://github.com/arunsasidharan84/CCS_EEGStudio/blob/v1.2.21/docs/server_and_plot_controls.md).
 
 
 ## [1.2.19]

@@ -337,7 +337,6 @@ jobs:
           bash scripts/package_linux_rpm.sh \
             build/linux/x64/release/bundle \
             dist/CCSEEGStudio-linux-x86_64.rpm
-            dist/CCSEEGStudio-linux-x86_64.tar.gz
 
       # ── Smoke test: AlmaLinux 9 Docker ───────────────────────────────────
       - name: Validate RPM installer on AlmaLinux 9
