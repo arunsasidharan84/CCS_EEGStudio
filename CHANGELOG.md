@@ -6,6 +6,20 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.23]
+
+### Independent app instances
+
+- Make the toolbar launcher discoverable with a labeled **New instance** button and a tooltip explaining independent analyses and output folders.
+- Launch macOS application bundles through Launch Services with `open -n`, explicitly requesting a separate process. Linux and Windows launch the current executable directly; Linux retains `G_APPLICATION_NON_UNIQUE` so desktop activation does not merge processes.
+- Report launch failures in the activity log and a visible notification instead of leaving an unhandled asynchronous error.
+- Each instance starts with its own recording and analysis state. Use different output folders for concurrent work; shared output files are not merged automatically. Per-user Linux updates continue to retain the release directories used by running processes.
+
+### Release maintenance
+
+- Align Flutter, Windows installer and native engine version metadata for reproducible desktop packaging.
+- Include the multi-condition ERP, individual ERP gallery and publication plotting changes documented in 1.2.22.
+
 - Fix administrator Linux updates failing with `curl: (23)` when a previous user owns the fixed package filename in `/tmp`. Package downloads and optional engine rebuilds now use a private temporary directory, cleaned on success or failure. The generated updater also cleans its downloaded installer. Existing updater commands fetch this fix from `main`; no application reinstall is needed.
 
 ## [1.2.22]

@@ -1,4 +1,5 @@
 import 'feature_window_warnings.dart';
+import 'app_instance.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
@@ -531,6 +532,20 @@ class _FeatureHomeState extends State<FeatureHome>
         _batchProgressLog.removeRange(0, 250);
       }
       _batchProgressPulse.value++;
+    }
+  }
+
+  Future<void> _openAppInstance() async {
+    try {
+      await openAppInstance();
+      _log('Opened another independent app instance.');
+    } catch (error) {
+      _log('Unable to open another instance: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open another instance: $error')),
+        );
+      }
     }
   }
 
@@ -1333,10 +1348,14 @@ class _FeatureHomeState extends State<FeatureHome>
                 setState(() => _sidebarCollapsed = !_sidebarCollapsed),
           ),
           const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Open another independent instance',
-            icon: const Icon(Icons.open_in_new, size: 18),
-            onPressed: () => Process.start(Platform.resolvedExecutable, const [], mode: ProcessStartMode.detached),
+          Tooltip(
+            message: 'Open an independent app window for another recording or analysis. '
+                'Use a separate output folder for simultaneous analyses.',
+            child: TextButton.icon(
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: const Text('New instance'),
+              onPressed: _openAppInstance,
+            ),
           ),
           // Pipeline preset dropdown
           Container(

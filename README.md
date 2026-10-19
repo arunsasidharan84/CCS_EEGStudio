@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.22</b> ·
+  <b>Current version: 1.2.23</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -134,6 +134,14 @@ The updater fetches the current installer on each run. Downloads use a private t
 | ⬆️ | Built-in update checker downloads and installs verified packages directly from GitHub Releases |
 
 ---
+
+## What's new in 1.2.23
+
+Click **New instance** in the top toolbar to open another independent app window on Linux, Windows or macOS. Each window can load different recordings and run its own analysis. Closing one window leaves the other processes running. Choose separate output folders for simultaneous jobs.
+
+On macOS you can also run `open -n -a "CCS EEG Studio"`. On Linux or Windows, launch the installed executable again. Linux permits multiple instances under the same account; per-user updates preserve files needed by already running instances. For shared servers, set `RAYON_NUM_THREADS` before launch to control CPU use per process. See [server and instance guidance](docs/server_and_plot_controls.md).
+
+This release also includes the administrator updater temporary-file permission fix and the ERP improvements listed below.
 
 ## What's new in 1.2.22
 
