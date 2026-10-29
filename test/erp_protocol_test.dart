@@ -15,6 +15,7 @@ void main() {
     'protocol preserves named events, baseline and averaging without paths',
     () {
       final config = AnalysisConfig()
+        ..erpEpochFirst = true
         ..stimMarkers = ['11', '21']
         ..stimMarkerGroups = {
           'Correct': ['11'],
@@ -38,6 +39,10 @@ void main() {
       applyErpProtocol(restored, saved);
       expect(restored.stimEpochSpec!.markerGroups, config.stimMarkerGroups);
       expect(restored.stimTmin, -.3);
+      expect(restored.erpEpochFirst, true);
+      final legacy = {...saved}..remove('epoch_before_cleaning');
+      applyErpProtocol(restored, legacy);
+      expect(restored.erpEpochFirst, false);
       expect(restored.erpAnalysisProtocol, config.erpAnalysisProtocol);
       expect(restored.epochBeforeGedai, false);
       expect(

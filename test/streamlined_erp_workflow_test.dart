@@ -29,6 +29,23 @@ void main() {
       await tester.tap(find.text('ERP Analysis').last);
       await tester.pumpAndSettle();
       expect(find.text('Epochs'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Preprocess')).dy,
+        lessThan(tester.getTopLeft(find.text('Epochs')).dy),
+      );
+      await tester.tap(find.byKey(const ValueKey('erp-order-false')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Epoch → Clean').last);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('Epochs')).dy,
+        lessThan(tester.getTopLeft(find.text('Preprocess')).dy),
+      );
+      await tester.tap(find.byKey(const ValueKey('erp-order-true')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clean → Epoch').last);
+      await tester.pumpAndSettle();
+
       await tester.tap(find.text('Preprocess'));
       await tester.pumpAndSettle();
       expect(find.text('Next: Epochs (skip cleaning)'), findsOneWidget);

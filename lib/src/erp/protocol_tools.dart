@@ -7,6 +7,7 @@ import '../models.dart';
 /// Portable settings only: recordings and participant paths are never exported.
 Map<String, dynamic> erpProtocolJson(AnalysisConfig config) => {
   'schema': 'ccs-erp-protocol-v1',
+  'epoch_before_cleaning': config.erpEpochFirst,
   'epoching': {
     'markers': config.stimMarkers,
     'marker_groups': config.stimMarkerGroups,
@@ -40,6 +41,7 @@ void applyErpProtocol(AnalysisConfig config, Map<String, dynamic> json) {
   }
   final analysis = Map<String, dynamic>.from(json['analysis'] as Map? ?? {});
   config
+    ..erpEpochFirst = json['epoch_before_cleaning'] as bool? ?? false
     ..stimEpochs = true
     ..epochBeforeGedai = false
     ..stimMarkers = spec.markers.toList()

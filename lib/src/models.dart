@@ -502,6 +502,7 @@ class ExtractionOptions {
 /// of the flags inline and silently omitted connectivity, duration mode and
 /// source localisation.
 class AnalysisConfig {
+  bool erpEpochFirst = false;
   Map<String, dynamic> erpAnalysisProtocol = {};
   // ── Preprocessing ────────────────────────────────────────────────────────
   bool downsample = true;

@@ -8,11 +8,13 @@ class EventGroupEditor extends StatelessWidget {
     required this.markers,
     required this.onChanged,
     this.enabled = true,
+    this.compact = false,
   });
   final Map<String, List<String>> groups;
   final List<String> markers;
   final ValueChanged<Map<String, List<String>>> onChanged;
   final bool enabled;
+  final bool compact;
   Future<void> _edit(BuildContext context, [String? old]) async {
     var name = old ?? '';
     final selected = {...?groups[old]};
@@ -102,20 +104,21 @@ class EventGroupEditor extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        'Named event groups',
-        style: TextStyle(fontWeight: FontWeight.w600),
+      Text(
+        compact ? 'Conditions' : 'Named event groups',
+        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
-      const Text(
-        'Optional: combine codes under a condition label. Original event codes remain in the saved annotations.',
-        style: TextStyle(fontSize: 11),
-      ),
+      if (!compact)
+        const Text(
+          'Optional: combine codes under a condition label. Original event codes remain in the saved annotations.',
+          style: TextStyle(fontSize: 11),
+        ),
       for (final e in groups.entries)
         ListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
-          title: Text(e.key),
-          subtitle: Text(e.value.join(', ')),
+          title: Text(compact ? '${e.key} · ${e.value.join(', ')}' : e.key),
+          subtitle: compact ? null : Text(e.value.join(', ')),
           onTap: enabled ? () => _edit(context, e.key) : null,
           trailing: IconButton(
             tooltip: 'Remove group',
@@ -128,7 +131,7 @@ class EventGroupEditor extends StatelessWidget {
       TextButton.icon(
         onPressed: enabled && markers.isNotEmpty ? () => _edit(context) : null,
         icon: const Icon(Icons.add),
-        label: const Text('Add labeled group…'),
+        label: Text(compact ? 'Add condition…' : 'Add labeled group…'),
       ),
     ],
   );

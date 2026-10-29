@@ -979,7 +979,12 @@ class _FeatureHomeState extends State<FeatureHome>
         _channels = _channels.rebaseOnto(cleaned.labels);
         _selection = const ViewerSelection.empty();
       });
-      if (_presetKey == 'erp') setState(() => _selectedModule = _Module.epochs);
+      if (_presetKey == 'erp')
+        setState(
+          () => _selectedModule = cleaned.isEpoched
+              ? _Module.erpAnalysis
+              : _Module.epochs,
+        );
       _log('✓ Preprocessed: ${cleaned.path}');
     } catch (e) {
       _log('✗ ERROR: $e');
@@ -1617,6 +1622,40 @@ class _FeatureHomeState extends State<FeatureHome>
 
   // ── Pipeline sidebar ────────────────────────────────────────────────────
 
+  List<_Module> get _orderedPipeline {
+    final modules = List<_Module>.of(_pipeline);
+    if (_cfg.erpEpochFirst &&
+        modules.contains(_Module.epochs) &&
+        modules.contains(_Module.preprocess)) {
+      modules.remove(_Module.epochs);
+      modules.insert(modules.indexOf(_Module.preprocess), _Module.epochs);
+    }
+    return modules;
+  }
+
+  Widget _erpOrderChoice() => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    child: DropdownButtonFormField<bool>(
+      key: ValueKey('erp-order-${_cfg.erpEpochFirst}'),
+      initialValue: _cfg.erpEpochFirst,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'ERP preparation order',
+        isDense: true,
+      ),
+      items: const [
+        DropdownMenuItem(value: false, child: Text('Clean → Epoch')),
+        DropdownMenuItem(value: true, child: Text('Epoch → Clean')),
+      ],
+      onChanged: _running
+          ? null
+          : (value) => setState(() => _cfg.erpEpochFirst = value ?? false),
+    ),
+  );
+
+  _Module get _afterEpochs =>
+      _cfg.erpEpochFirst ? _Module.preprocess : _Module.erpAnalysis;
+
   Widget _buildPipelineSidebar() {
     return Column(
       children: [
@@ -1639,25 +1678,27 @@ class _FeatureHomeState extends State<FeatureHome>
                 ),
               ),
               Text(
-                '${_pipeline.length} modules',
+                '${_orderedPipeline.length} modules',
                 style: const TextStyle(color: _textMuted, fontSize: 10),
               ),
             ],
           ),
         ),
+        if (_pipeline.contains(_Module.epochs)) _erpOrderChoice(),
         const Divider(color: _borderColor, height: 1),
         // Module list
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-            itemCount: _pipeline.length,
+            itemCount: _orderedPipeline.length,
             itemBuilder: (context, i) {
-              final mod = _pipeline[i];
+              final mod = _orderedPipeline[i];
               final selected = mod == _selectedModule;
               final color = _moduleColor(mod);
               // Status indicators
               final hasOutput = switch (mod) {
                 _Module.loadRaw => _raw != null,
+                _Module.epochs => _activeRecording?.isEpoched == true,
                 _Module.preprocess =>
                   _preprocessed != null ||
                       (_raw?.completedStages.contains('preprocess') ?? false),
@@ -1920,7 +1961,7 @@ class _FeatureHomeState extends State<FeatureHome>
               spacing: 12,
               runSpacing: 12,
               children: [
-                for (final (index, module) in _pipeline.indexed)
+                for (final (index, module) in _orderedPipeline.indexed)
                   SizedBox(
                     width: width,
                     child: InkWell(
@@ -2251,8 +2292,10 @@ class _FeatureHomeState extends State<FeatureHome>
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          const Text(
-            '1. Open raw or preprocessed continuous EEG.\n2. Select events and name condition groups.\n3. Set the trial/baseline window and save.\n4. Average the saved condition groups in ERP Analysis.',
+          Text(
+            _cfg.erpEpochFirst
+                ? '1. Open continuous EEG.\n2. Define events, named groups and trial windows.\n3. Save trials, then clean them in Preprocess.\n4. Average the saved groups in ERP Analysis.'
+                : '1. Open raw or preprocessed continuous EEG.\n2. Select events and name condition groups.\n3. Set the trial/baseline window and save.\n4. Average the saved condition groups in ERP Analysis.',
           ),
           const SizedBox(height: 12),
           TextButton.icon(
@@ -2267,7 +2310,7 @@ class _FeatureHomeState extends State<FeatureHome>
             const SizedBox(height: 12),
             _infoBox(
               recording.isEpoched
-                  ? '${recording.epochCount} saved trials ready. Reuse them directly for averaging; no new epoching is needed.'
+                  ? '${recording.epochCount} saved trials ready. ${_cfg.erpEpochFirst ? 'Clean these saved trials next, or skip cleaning if already preprocessed.' : 'Reuse them directly for averaging; no new epoching is needed.'}'
                   : 'Epoching preserves existing cleaning and annotations. Filtering, ICA, ASR and GEDAI do not run in this step.',
               _accentBlue,
             ),
@@ -2278,10 +2321,20 @@ class _FeatureHomeState extends State<FeatureHome>
               ),
               label: Text(
                 recording.isEpoched
-                    ? 'Next: Average & analyse'
+                    ? (_cfg.erpEpochFirst
+                          ? 'Next: Clean saved trials'
+                          : 'Next: Average & analyse')
                     : 'Define events & save epochs…',
               ),
             ),
+            if (recording.isEpoched && _cfg.erpEpochFirst)
+              TextButton(
+                onPressed: _running
+                    ? null
+                    : () =>
+                          setState(() => _selectedModule = _Module.erpAnalysis),
+                child: const Text('Already cleaned? Average & analyse'),
+              ),
           ] else
             _infoBox(
               'Open a recording to begin. Settings and protocol files are not EEG recordings.',
@@ -2296,14 +2349,14 @@ class _FeatureHomeState extends State<FeatureHome>
     final input = _activeRecording;
     if (input == null || _running) return;
     if (input.isEpoched) {
-      setState(() => _selectedModule = _Module.erpAnalysis);
+      setState(() => _selectedModule = _afterEpochs);
       return;
     }
     _cfg.stimEpochs = true;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('1  Define ERP trials'),
+        title: const Text('Define ERP trials'),
         content: SizedBox(
           width: 520,
           child: SingleChildScrollView(
@@ -2311,18 +2364,13 @@ class _FeatureHomeState extends State<FeatureHome>
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Choose locking events, name the condition groups, then set the trial and baseline windows. Save this protocol to reuse it in single or batch analysis. Saving trials preserves existing cleaning.',
+                  'Name each condition and choose its event codes. Set the time window below; existing cleaning is preserved.',
                 ),
                 ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
-                if ((_activeRecording?.sampleRate ?? 0) > 500 &&
-                    _cfg.icaMethod != 'none')
-                  _infoBox(
-                    'High-rate recording: ${_activeRecording!.sampleRate.round()} Hz × ${_activeRecording!.labels.length} channels. ICA scans the training samples repeatedly. Consider enabling downsampling to 250–500 Hz for conventional ERP work after checking the frequencies you need. Picard is also available as an alternative solver; results can differ.',
-                    _accentAmber,
-                  ),
-
                 StimEpochPanel(
                   config: _cfg,
+                  compact: true,
+                  showEnableControl: false,
                   markers: input.markers,
                   onChanged: () => setState(() {}),
                 ),
@@ -2378,19 +2426,17 @@ class _FeatureHomeState extends State<FeatureHome>
             (m) => events.any((e) => (e.$1 - m.startSeconds).abs() < .000001),
           )
           .toList();
-      final epochs = await Isolate.run(
-        () => EpochService().generateEpochs(
-          recording: full,
-          selectedMarkers: selected,
-          options: EpochOptions(
-            targetEvents: const [],
-            markerGroups: spec.markerGroups,
-            tmin: spec.tmin,
-            tmax: spec.tmax,
-            applyBaseline: spec.baseline,
-            baselineMin: spec.baselineStart,
-            baselineMax: spec.baselineEnd,
-          ),
+      final epochs = await generateEpochsInWorker(
+        recording: full,
+        selectedMarkers: selected,
+        options: EpochOptions(
+          targetEvents: const [],
+          markerGroups: spec.markerGroups,
+          tmin: spec.tmin,
+          tmax: spec.tmax,
+          applyBaseline: spec.baseline,
+          baselineMin: spec.baselineStart,
+          baselineMax: spec.baselineEnd,
         ),
       );
       if (_stopRequested || !mounted) return;
@@ -2406,10 +2452,10 @@ class _FeatureHomeState extends State<FeatureHome>
       setState(() {
         _openedRecordings.add(saved);
         _directInput = saved;
-        _selectedModule = _Module.erpAnalysis;
+        _selectedModule = _afterEpochs;
       });
       _log(
-        '✓ Saved ${saved.epochCount} event trials: $path. Choose condition groups, then average and analyse.',
+        '✓ Saved ${saved.epochCount} event trials: $path. ${_cfg.erpEpochFirst ? 'Clean these trials in Preprocess, then average.' : 'Choose condition groups, then average and analyse.'}',
       );
     } catch (e) {
       _log('✗ Epoching: $e');
@@ -2497,7 +2543,7 @@ class _FeatureHomeState extends State<FeatureHome>
             ),
 
           if (_raw != null)
-            _recordingChip(_raw!, active: _activeStage == _Stage.raw)
+            _recordingChip(_activeRecording!, active: true)
           else
             _infoBox(
               'Open a raw or preprocessed recording first.',
@@ -2511,15 +2557,28 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           if (_presetKey == 'erp') ...[
             _infoBox(
-              'Optional: clean this recording, then continue to Epochs. Already preprocessed? Skip this step.',
+              _activeRecording?.isEpoched == true
+                  ? 'Clean the saved trials and retain their event labels and boundaries, then continue to ERP Analysis.'
+                  : _cfg.erpEpochFirst
+                  ? 'You chose Epoch → Clean. Create trials in Epochs first, then return here to clean the saved trials.'
+                  : 'Optional: clean this recording, then continue to Epochs. Already preprocessed? Skip this step.',
               _accentBlue,
             ),
             TextButton.icon(
               onPressed: _running
                   ? null
-                  : () => setState(() => _selectedModule = _Module.epochs),
+                  : () => setState(
+                      () =>
+                          _selectedModule = _activeRecording?.isEpoched == true
+                          ? _Module.erpAnalysis
+                          : _Module.epochs,
+                    ),
               icon: const Icon(Icons.arrow_forward),
-              label: const Text('Next: Epochs (skip cleaning)'),
+              label: Text(
+                _activeRecording?.isEpoched == true
+                    ? 'Next: ERP Analysis (skip cleaning)'
+                    : 'Next: Epochs (skip cleaning)',
+              ),
             ),
           ],
           if (_step1OptsExpanded) _buildPreprocessingOptions(),

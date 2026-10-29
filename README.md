@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.24</b> ·
+  <b>Current version: 1.2.25</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -135,15 +135,17 @@ The updater fetches the current installer on each run. Downloads use a private t
 
 ---
 
-## What's new in 1.2.24: recording and ERP workflow
+## What's new in 1.2.25: recording and ERP workflow
 
-Update from the app using **Updates → Check for updates**, then download and install v1.2.24. The updater selects the package for your platform and verifies its checksum. Linux per-user installations update without sudo.
+Update from the app using **Updates → Check for updates**, then download and install v1.2.25. The updater selects the package for your platform and verifies its checksum. Linux per-user installations update without sudo.
 
-Choose **ERP Analysis** in the workflow selector. The sidebar follows this order:
+Choose **ERP Analysis** in the workflow selector. Use **ERP preparation order** above the sidebar to choose **Clean → Epoch** or **Epoch → Clean**. The sidebar and next-step buttons follow your choice, and saved protocols retain it. Cleaning saved trials preserves their event labels and boundaries. Internal GEDAI processing windows are cleaning blocks, not another event-epoching step. Standalone ASR requires continuous data.
+
+The default clean-first route is:
 
 1. **Open Recording** — open raw EEG, preprocessed continuous EEG, or saved epochs. Supported inputs include EDF/EDF+, BrainVision VHDR, SET, FIF, MAT, CCSEEG, ORB and XDF.
 2. **Preprocess (optional)** — filter, re-reference and clean. In this ERP workflow, continuous input stays continuous; event trials are created in the next step. Skip cleaning when the input is already preprocessed.
-3. **Epochs** — choose locking events, name condition groups, set trial and baseline windows, and save reusable trials. Protocols can be saved and reused. Existing saved epochs proceed directly to averaging.
+3. **Epochs** — add named conditions and select their event codes, then set trial and baseline windows and save reusable trials. Raw-code selection, response rules, advanced matching and range limits are collapsed to keep the normal path compact. Protocols can be saved and reused. Existing saved epochs proceed directly to averaging.
 4. **ERP Analysis** — use **Open preprocessed EEG / saved epochs…** to start directly from an existing recording, or use the current recording. Choose saved condition groups, ROI and measurement windows, then average and analyse. Continuous recordings link back to **Epochs**.
 
 The header displays the installed app version. Loading runs in a cancellable worker: use **Cancel loading** to stop parsing; the app remains responsive. XDF shows byte-reading progress; other readers show their current phase without inventing a percentage. The recording picker hides companion metadata, settings, protocols and analysis results and labels signal files by their likely next step. Open the signal file (`.edf`, `.fif`, `.ccseeg`, etc.), keeping its `.ccsmeta` companion beside it.

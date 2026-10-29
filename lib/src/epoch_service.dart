@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:isolate';
 import 'models.dart';
 import 'erp/erp_engine.dart' show ErpCondition;
 
@@ -197,3 +198,17 @@ class EpochService {
     );
   }
 }
+
+/// This top-level boundary captures only signal data and plain options, never
+/// the widget State/BuildContext that requested epoch creation.
+Future<EegRecording> generateEpochsInWorker({
+  required EegRecording recording,
+  required List<EegMarker> selectedMarkers,
+  required EpochOptions options,
+}) => Isolate.run(
+  () => EpochService().generateEpochs(
+    recording: recording,
+    selectedMarkers: selectedMarkers,
+    options: options,
+  ),
+);

@@ -6,7 +6,22 @@ its matching section is missing.
 
 ## [Unreleased]
 
-## [1.2.24]
+## [1.2.25]
+
+- Supersede the unpublished v1.2.24 build after Windows tests caught a file-handle lifetime race during load cancellation. Wait for the parsing worker's exit notification before reporting completion or cancellation, so its file can be reopened or removed immediately.
+
+
+### Epoch creation and compact condition editing
+
+- Fix event epoch creation failing with an unsendable WidgetsFlutterBinding/isolate-message error. Pass only recording samples, event data and epoch options through a top-level worker boundary; do not capture widget State.
+- Simplify the dedicated Epochs dialog: show named conditions and their codes, clear event-relative start/end fields and baseline settings. Hide the redundant enable checkbox and collapse raw-code selection, response rules, advanced matching and recording-range limits.
+- Hide system markers from normal condition choices, remove stale condition-name entries from the code picker, and deselect codes when a compact condition group is deleted. Preserve original event annotations in the saved trials.
+
+### Flexible ERP preparation order
+
+- Add **ERP preparation order** in the workflow sidebar: **Clean → Epoch** or **Epoch → Clean**. Reorder the sidebar and overview to match; both routes use the same event-group and trial-window protocol.
+- Route newly saved epochs to Preprocess when epoch-first is chosen, and cleaned saved epochs directly to ERP averaging. Keep an explicit skip-cleaning route for already preprocessed trials. The preprocessing panel identifies the active trials rather than showing their continuous parent.
+- Save the preparation-order choice in reusable ERP protocols. Older protocols retain clean-first behavior. Internal GEDAI cleaning windows remain distinct from saved event trials; standalone ASR still requires continuous input.
 
 ### Clearer recording-to-ERP workflow
 

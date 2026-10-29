@@ -88,7 +88,7 @@ void main() {
     );
     expect(
       find.text(
-        '2 events match in this recording. Saved as <name>-epo_clean.ccseeg.json with epoch labels and times.',
+        '2 events match in this recording. Saved with condition labels and event times; choose the filename and output format when saving.',
       ),
       findsOneWidget,
     );

@@ -115,6 +115,7 @@ class RecordingLoader {
   }) async {
     final port = ReceivePort();
     final done = Completer<EegRecording>();
+    final exited = Completer<void>();
     // Cancellation may arrive while spawn is pending. Observe early errors now;
     // the same error is still forwarded by the await below.
     done.future.ignore();
@@ -127,6 +128,15 @@ class RecordingLoader {
 
     _pendingLoads.add(cancel);
     final subscription = port.listen((message) {
+      if (message == null) {
+        if (!exited.isCompleted) exited.complete();
+        if (!done.isCompleted) {
+          done.completeError(
+            StateError('File loader stopped before returning a recording'),
+          );
+        }
+        return;
+      }
       if (done.isCompleted) return;
       if (message is List && message.first == 'progress') {
         onProgress?.call(message[1] as double?, message[2] as String);
@@ -136,10 +146,6 @@ class RecordingLoader {
         done.completeError(FormatException(message[1] as String));
       } else if (message is List) {
         done.completeError(StateError(message.first.toString()));
-      } else if (message == null) {
-        done.completeError(
-          StateError('File loader stopped before returning a recording'),
-        );
       }
     });
     try {
@@ -154,6 +160,9 @@ class RecordingLoader {
     } finally {
       _pendingLoads.remove(cancel);
       worker?.kill(priority: Isolate.immediate);
+      // Windows cannot reopen/delete a file until the parsing worker has exited.
+      // Keep the exit port alive even when the result was cancelled earlier.
+      if (worker != null) await exited.future;
       await subscription.cancel();
       port.close();
     }

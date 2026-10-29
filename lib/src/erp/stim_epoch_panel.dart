@@ -21,6 +21,7 @@ class StimEpochPanel extends StatefulWidget {
     this.markers = const [],
     this.enabled = true,
     this.showEnableControl = true,
+    this.compact = false,
     this.onChanged,
   });
 
@@ -30,6 +31,7 @@ class StimEpochPanel extends StatefulWidget {
   final List<EegMarker> markers;
   final bool enabled;
   final bool showEnableControl;
+  final bool compact;
   final VoidCallback? onChanged;
 
   @override
@@ -200,66 +202,144 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
           ),
         if (c.stimEpochs)
           Padding(
-            padding: const EdgeInsets.only(left: 24, bottom: 6),
+            padding: EdgeInsets.only(
+              left: widget.showEnableControl ? 24 : 0,
+              bottom: 6,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (inv.isNotEmpty) ...[
-                  const Text(
-                    'Markers in this recording (tap to add / remove)',
-                    style: TextStyle(fontSize: 10, color: _textMuted),
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
+                if (widget.compact)
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Select raw event codes instead (optional)',
+                      style: TextStyle(fontSize: 12),
+                    ),
                     children: [
-                      for (final e
-                          in (inv.entries.toList()
-                            ..sort((a, b) => a.key.compareTo(b.key))))
-                        FilterChip(
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          label: Text(
-                            '${markerShortName(e.key)}  ×${e.value}',
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                          selected: markerListContains(c.stimMarkers, e.key),
-                          selectedColor: _accent.withValues(alpha: 0.35),
-                          onSelected: widget.enabled
-                              ? (_) => _toggleMarker(e.key)
-                              : null,
+                      if (inv.isNotEmpty) ...[
+                        const Text(
+                          'Markers in this recording (tap to add / remove)',
+                          style: TextStyle(fontSize: 10, color: _textMuted),
                         ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: [
+                            for (final e
+                                in (inv.entries.toList()
+                                  ..sort((a, b) => a.key.compareTo(b.key))))
+                              FilterChip(
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                label: Text(
+                                  '${markerShortName(e.key)}  ×${e.value}',
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                                selected: markerListContains(
+                                  c.stimMarkers,
+                                  e.key,
+                                ),
+                                selectedColor: _accent.withValues(alpha: 0.35),
+                                onSelected: widget.enabled
+                                    ? (_) => _toggleMarker(e.key)
+                                    : null,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      TextField(
+                        controller: _markers,
+                        enabled: widget.enabled,
+                        onChanged: (_) => _sync(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Epoch on markers (comma separated)',
+                          helperText:
+                              'e.g. S 51, S 52 — matches "Stimulus/S 51", "S51"',
+                          helperStyle: TextStyle(
+                            color: _textMuted,
+                            fontSize: 10,
+                          ),
+                          isDense: true,
+                        ),
+                      ),
                     ],
+                  )
+                else ...[
+                  if (inv.isNotEmpty) ...[
+                    const Text(
+                      'Markers in this recording (tap to add / remove)',
+                      style: TextStyle(fontSize: 10, color: _textMuted),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        for (final e
+                            in (inv.entries.toList()
+                              ..sort((a, b) => a.key.compareTo(b.key))))
+                          FilterChip(
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            label: Text(
+                              '${markerShortName(e.key)}  ×${e.value}',
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                            selected: markerListContains(c.stimMarkers, e.key),
+                            selectedColor: _accent.withValues(alpha: 0.35),
+                            onSelected: widget.enabled
+                                ? (_) => _toggleMarker(e.key)
+                                : null,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  TextField(
+                    controller: _markers,
+                    enabled: widget.enabled,
+                    onChanged: (_) => _sync(),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    decoration: const InputDecoration(
+                      labelText: 'Epoch on markers (comma separated)',
+                      helperText:
+                          'e.g. S 51, S 52 — matches "Stimulus/S 51", "S51"',
+                      helperStyle: TextStyle(color: _textMuted, fontSize: 10),
+                      isDense: true,
+                    ),
                   ),
-                  const SizedBox(height: 6),
                 ],
-                TextField(
-                  controller: _markers,
-                  enabled: widget.enabled,
-                  onChanged: (_) => _sync(),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                  decoration: const InputDecoration(
-                    labelText: 'Epoch on markers (comma separated)',
-                    helperText:
-                        'e.g. S 51, S 52 — matches "Stimulus/S 51", "S51"',
-                    helperStyle: TextStyle(color: _textMuted, fontSize: 10),
-                    isDense: true,
-                  ),
-                ),
                 const SizedBox(height: 4),
                 EventGroupEditor(
+                  compact: widget.compact,
                   groups: c.stimMarkerGroups,
                   markers: {
-                    for (final e in inv.keys) markerShortName(e),
-                    ...c.stimMarkers,
+                    for (final e in inv.keys)
+                      if (!widget.compact ||
+                          !RegExp(
+                            r'^(new segment|lostsamples|boundary)',
+                            caseSensitive: false,
+                          ).hasMatch(markerShortName(e)))
+                        markerShortName(e),
+                    if (inv.isEmpty)
+                      ...c.stimMarkers.where(
+                        (code) => !c.stimMarkerGroups.containsKey(code),
+                      ),
                   }.toList()..sort(),
                   enabled: widget.enabled,
                   onChanged: (groups) {
                     c.stimMarkerGroups = groups;
                     _markers.text = {
-                      ...c.stimMarkers,
+                      if (!widget.compact) ...c.stimMarkers,
                       ...groups.values.expand((v) => v),
                     }.join(', ');
                     _sync();
@@ -300,9 +380,21 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Expanded(child: _num(_tmin, 'tmin', suffix: 's')),
+                    Expanded(
+                      child: _num(
+                        _tmin,
+                        widget.compact ? 'Start relative to event' : 'tmin',
+                        suffix: 's',
+                      ),
+                    ),
                     const SizedBox(width: 6),
-                    Expanded(child: _num(_tmax, 'tmax', suffix: 's')),
+                    Expanded(
+                      child: _num(
+                        _tmax,
+                        widget.compact ? 'End relative to event' : 'tmax',
+                        suffix: 's',
+                      ),
+                    ),
                   ],
                 ),
                 CheckboxListTile(
@@ -330,28 +422,37 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
                     ],
                   ),
                 const SizedBox(height: 6),
-                Row(
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Limit recording range (optional)',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextField(
-                        controller: _crop,
-                        enabled: widget.enabled,
-                        onChanged: (_) => _sync(),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: TextField(
+                            controller: _crop,
+                            enabled: widget.enabled,
+                            onChanged: (_) => _sync(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Only from marker (optional)',
+                              isDense: true,
+                            ),
+                          ),
                         ),
-                        decoration: const InputDecoration(
-                          labelText: 'Only from marker (optional)',
-                          isDense: true,
+                        const SizedBox(width: 6),
+                        Expanded(
+                          flex: 2,
+                          child: _num(_cropMin, 'for', suffix: 'min'),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      flex: 2,
-                      child: _num(_cropMin, 'for', suffix: 'min'),
+                      ],
                     ),
                   ],
                 ),
@@ -360,7 +461,8 @@ class _StimEpochPanelState extends State<StimEpochPanel> {
                   [
                     if (matched != null)
                       '$matched events match in this recording.',
-                    'Saved as <name>${c.cleanSuffix}.ccseeg.json with epoch labels and times.',
+                    if (!widget.compact)
+                      'Saved with condition labels and event times; choose the filename and output format when saving.',
                   ].join(' '),
                   style: TextStyle(
                     fontSize: 10,
