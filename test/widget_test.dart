@@ -58,7 +58,7 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    await tester.tap(find.text('Load Raw'));
+    await tester.tap(find.text('Open Recording'));
     await tester.pumpAndSettle();
     expect(find.text('Open Recording…'), findsOneWidget);
     expect(find.text('Preprocessing Options'), findsNothing);

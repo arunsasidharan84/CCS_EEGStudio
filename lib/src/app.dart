@@ -1,5 +1,8 @@
 import 'feature_window_warnings.dart';
 import 'app_instance.dart';
+import 'xdf_loader.dart';
+import 'dart:isolate';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
@@ -49,6 +52,7 @@ const _rawExtensions = [
   'fif',
   'mat',
   'vhdr',
+  'xdf',
   'json',
   'ccseeg',
   'orb',
@@ -61,6 +65,7 @@ const _anyInputExtensions = [
   'fif',
   'mat',
   'vhdr',
+  'xdf',
   'json',
   'ccseeg',
   'orb',
@@ -71,6 +76,7 @@ const _anyInputExtensions = [
 enum _Module {
   loadRaw,
   preprocess,
+  epochs,
   sourceSpace,
   featureExtraction,
   plotsReport,
@@ -106,7 +112,7 @@ const _presets = <String, _PipelinePreset>{
     'ERP Analysis',
     'Epoch and analyse event responses',
     Icons.show_chart,
-    [_Module.loadRaw, _Module.preprocess, _Module.erpAnalysis],
+    [_Module.loadRaw, _Module.preprocess, _Module.epochs, _Module.erpAnalysis],
   ),
   'full': _PipelinePreset(
     'Full Pipeline',
@@ -118,6 +124,7 @@ const _presets = <String, _PipelinePreset>{
       _Module.sourceSpace,
       _Module.featureExtraction,
       _Module.plotsReport,
+      _Module.epochs,
       _Module.erpAnalysis,
       _Module.topoStats,
       _Module.microstates,
@@ -134,7 +141,8 @@ const _presets = <String, _PipelinePreset>{
 
 String _moduleLabel(_Module m) => switch (m) {
   _Module.groupStatistics => 'Group Statistics',
-  _Module.loadRaw => 'Load Raw',
+  _Module.loadRaw => 'Open Recording',
+  _Module.epochs => 'Epochs',
   _Module.preprocess => 'Preprocess',
   _Module.sourceSpace => 'Source Space',
   _Module.featureExtraction => 'Feature Extraction',
@@ -146,7 +154,8 @@ String _moduleLabel(_Module m) => switch (m) {
 
 String _moduleSubtitle(_Module m) => switch (m) {
   _Module.groupStatistics => 'Metadata, LMM / GLM, contrasts',
-  _Module.loadRaw => 'EDF, SET, FIF, VHDR',
+  _Module.loadRaw => 'Raw, preprocessed or saved epochs',
+  _Module.epochs => 'Events → named condition trials',
   _Module.preprocess => 'Filter, re-reference, clean',
   _Module.sourceSpace => 'Minimum-norm source analysis',
   _Module.featureExtraction => 'Spectral, connectivity, non-linear',
@@ -159,6 +168,7 @@ String _moduleSubtitle(_Module m) => switch (m) {
 IconData _moduleIcon(_Module m) => switch (m) {
   _Module.groupStatistics => Icons.groups,
   _Module.loadRaw => Icons.file_open,
+  _Module.epochs => Icons.content_cut,
   _Module.preprocess => Icons.cleaning_services,
   _Module.sourceSpace => Icons.psychology,
   _Module.featureExtraction => Icons.analytics,
@@ -171,6 +181,7 @@ IconData _moduleIcon(_Module m) => switch (m) {
 Color _moduleColor(_Module m) => switch (m) {
   _Module.groupStatistics => _accentPurple,
   _Module.loadRaw => _accentBlue,
+  _Module.epochs => _accentGreen,
   _Module.preprocess => _accentPurple,
   _Module.sourceSpace => _accentBlue,
   _Module.featureExtraction => _accentGreen,
@@ -181,7 +192,10 @@ Color _moduleColor(_Module m) => switch (m) {
 };
 
 bool _moduleHasViewer(_Module m) => switch (m) {
-  _Module.loadRaw || _Module.preprocess || _Module.sourceSpace => true,
+  _Module.loadRaw ||
+  _Module.preprocess ||
+  _Module.epochs ||
+  _Module.sourceSpace => true,
   _ => false,
 };
 
@@ -241,7 +255,7 @@ class CcsEegApp extends StatelessWidget {
 //
 //  Analysis modules (parallel, composable):
 //    PREPROCESS & VIEW  — Load raw EEG, preprocess, inspect waveforms.
-//    ERP ANALYSIS       — Raw → Epoch → Preprocess → ERP stats.
+//    ERP ANALYSIS       — Open → optional cleaning → Epochs → ERP stats.
 //    FEATURE ANALYSIS   — Preprocessed EEG → epoch-level features.
 //    EEG MICROSTATES    — (Coming soon) Microstate segmentation.
 //    PLOTS & REPORT     — Topomaps & line plots from feature CSVs.
@@ -386,6 +400,9 @@ class _FeatureHomeState extends State<FeatureHome>
   final List<String> _batchFeatOutputs = [];
 
   bool _running = false;
+  bool _loadingRecording = false;
+  String _loadingMessage = '';
+  String _appVersion = '';
   double _progress = 0;
   bool _stopRequested = false;
 
@@ -415,6 +432,11 @@ class _FeatureHomeState extends State<FeatureHome>
   @override
   void initState() {
     super.initState();
+    PackageInfo.fromPlatform()
+        .then((info) {
+          if (mounted) setState(() => _appVersion = 'v${info.version}');
+        })
+        .catchError((Object _) {});
     RecordingStorage.loadPreferences().then((_) {
       if (mounted) setState(() {});
     });
@@ -516,6 +538,7 @@ class _FeatureHomeState extends State<FeatureHome>
     ]) {
       c.dispose();
     }
+    _loader.cancelPendingLoads();
     _batchProgressPulse.dispose();
     super.dispose();
   }
@@ -600,7 +623,7 @@ class _FeatureHomeState extends State<FeatureHome>
 
   /// Opens a raw recording and keeps previously opened files available in the
   /// viewer switcher. Selecting a different input resets only derived outputs.
-  Future<void> _loadRaw() async {
+  Future<void> _loadRaw({_Module? destination}) async {
     final pick = await pickFilteredFiles(
       context,
       allowMultiple: false,
@@ -618,7 +641,7 @@ class _FeatureHomeState extends State<FeatureHome>
     });
     try {
       _log('Loading ${_shortName(path)}…');
-      final rec = await _loader.load(path);
+      final rec = await _loadRecordingWithFeedback(path);
       if (_stopRequested || !mounted) return;
       _restoreSavedEpochProtocol(rec);
       setState(() {
@@ -629,7 +652,7 @@ class _FeatureHomeState extends State<FeatureHome>
         _openedRecordings.removeWhere((item) => item.path == rec.path);
         _openedRecordings.add(rec);
         _raw = rec;
-        _selectedModule = _Module.loadRaw;
+        _selectedModule = destination ?? _Module.loadRaw;
         _preprocessed = null;
         _source = null;
         _directInput = null;
@@ -720,7 +743,7 @@ class _FeatureHomeState extends State<FeatureHome>
     if (path == null) return;
     try {
       _log('Loading ${_shortName(path)} into Stage 2…');
-      final rec = await _loader.load(path);
+      final rec = await _loadRecordingWithFeedback(path);
       setState(() {
         _preprocessed = rec;
         _source = null;
@@ -752,7 +775,7 @@ class _FeatureHomeState extends State<FeatureHome>
     if (path == null) return;
     try {
       _log('Loading ${_shortName(path)} into Stage 3…');
-      final rec = await _loader.load(path);
+      final rec = await _loadRecordingWithFeedback(path);
       setState(() {
         _directInput = rec;
         _featuresCsv = null;
@@ -779,9 +802,67 @@ class _FeatureHomeState extends State<FeatureHome>
     }
   }
 
+  Future<EegRecording> _loadRecordingWithFeedback(String path) async {
+    final wasRunning = _running;
+    setState(() {
+      _running = true;
+      _loadingRecording = true;
+      _stopRequested = false;
+      _progress = 0;
+      _loadingMessage = 'Opening ${_shortName(path)}…';
+    });
+    // Paint the busy controls before starting parsing/stream inspection.
+    await Future<void>.delayed(Duration.zero);
+    try {
+      int? streamId;
+      if (path.toLowerCase().endsWith('.xdf')) {
+        final streams = await Isolate.run(() => XdfLoader().inspect(path));
+        if (_stopRequested || !mounted)
+          throw StateError('File loading cancelled');
+        if (streams.length > 1) {
+          streamId = await showDialog<int>(
+            context: context,
+            builder: (ctx) => SimpleDialog(
+              title: const Text('Choose the XDF signal stream'),
+              children: [
+                for (final stream in streams)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(ctx, stream.id),
+                    child: Text('$stream'),
+                  ),
+              ],
+            ),
+          );
+          if (streamId == null)
+            throw StateError('XDF stream selection cancelled');
+        } else if (streams.length == 1) {
+          streamId = streams.single.id;
+        }
+      }
+      return await _loader.load(
+        path,
+        xdfStreamId: streamId,
+        onProgress: (p, message) {
+          if (mounted)
+            setState(() {
+              _progress = p ?? 0;
+              _loadingMessage = message;
+            });
+        },
+      );
+    } finally {
+      if (mounted)
+        setState(() {
+          _running = wasRunning;
+          _loadingRecording = false;
+        });
+    }
+  }
+
   void _cancel() {
     setState(() => _stopRequested = true);
     if (_batchProgressActive) _batchCancelRequested = true;
+    _loader.cancelPendingLoads();
     _service.cancel();
     _log('Stopping operation… wait for it to finish before restarting.');
   }
@@ -816,7 +897,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _log(error);
       return;
     }
-    if (_cfg.stimEpochs && !input.isEpoched) {
+    if (_presetKey != 'erp' && _cfg.stimEpochs && !input.isEpoched) {
       final spec = _cfg.stimEpochSpec!;
       var count = 0;
       String? selectionError;
@@ -850,7 +931,9 @@ class _FeatureHomeState extends State<FeatureHome>
       fileName: erpOutputName(
         input.path,
         extension: RecordingStorage.extension,
-        epoched: input.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai,
+        epoched:
+            input.isEpoched ||
+            (_presetKey != 'erp' && (_cfg.stimEpochs || _cfg.epochBeforeGedai)),
         cleaned: true,
       ),
       allowedExtensions: [RecordingStorage.extension],
@@ -868,13 +951,20 @@ class _FeatureHomeState extends State<FeatureHome>
         recording: input,
         outputPath: RecordingStorage.withExtension(path),
         selection: _selection,
-        outputOverlapSeconds: (_cfg.stimEpochs || !_cfg.epochBeforeGedai)
+        outputOverlapSeconds:
+            (_presetKey == 'erp' || _cfg.stimEpochs || !_cfg.epochBeforeGedai)
             ? 0
             : _cfg.preprocessingOverlapSeconds,
         outputWindowSeconds: _cfg.gedaiEpochSeconds,
-        options: _cfg.toPreprocessingOptions(
-          nonEegChannels: _channels.nonEegChannels,
-        ),
+        options: PreprocessingOptions.fromJson({
+          ..._cfg
+              .toPreprocessingOptions(nonEegChannels: _channels.nonEegChannels)
+              .toJson(),
+          if (_presetKey == 'erp') ...{
+            'stim_epochs': null,
+            'epoch_before_gedai': false,
+          },
+        }),
         onProgress: (p, m) {
           _log(m);
           setState(() => _progress = p);
@@ -889,6 +979,7 @@ class _FeatureHomeState extends State<FeatureHome>
         _channels = _channels.rebaseOnto(cleaned.labels);
         _selection = const ViewerSelection.empty();
       });
+      if (_presetKey == 'erp') setState(() => _selectedModule = _Module.epochs);
       _log('✓ Preprocessed: ${cleaned.path}');
     } catch (e) {
       _log('✗ ERROR: $e');
@@ -1325,6 +1416,14 @@ class _FeatureHomeState extends State<FeatureHome>
               fontWeight: FontWeight.w500,
             ),
           ),
+          if (_appVersion.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Text(
+                _appVersion,
+                style: const TextStyle(color: _textMuted, fontSize: 11),
+              ),
+            ),
           const SizedBox(width: 8),
           IconButton(
             icon: Icon(
@@ -1349,7 +1448,8 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const SizedBox(width: 8),
           Tooltip(
-            message: 'Open an independent app window for another recording or analysis. '
+            message:
+                'Open an independent app window for another recording or analysis. '
                 'Use a separate output folder for simultaneous analyses.',
             child: TextButton.icon(
               icon: const Icon(Icons.open_in_new, size: 18),
@@ -1716,6 +1816,7 @@ class _FeatureHomeState extends State<FeatureHome>
     switch (mod) {
       case _Module.loadRaw:
       case _Module.preprocess:
+      case _Module.epochs:
       case _Module.sourceSpace:
         // These modules share the EEG viewer layout
         return _buildViewerLayout(mod);
@@ -1726,7 +1827,8 @@ class _FeatureHomeState extends State<FeatureHome>
       case _Module.erpAnalysis:
         return ErpAnalysisView(
           config: _cfg,
-          onPrepare: () => setState(() => _selectedModule = _Module.preprocess),
+          onPrepare: () => setState(() => _selectedModule = _Module.epochs),
+          onOpenRecording: () => _loadRaw(destination: _Module.erpAnalysis),
           onOpenBatch: () => setState(() {
             _batchProfile = 'ERP';
             _batchMaximized = true;
@@ -1903,7 +2005,7 @@ class _FeatureHomeState extends State<FeatureHome>
                 const SizedBox(width: 12),
                 const Expanded(
                   child: Text(
-                    'Start with Load Raw for a connected workflow, or open a standalone analysis module and choose files there.',
+                    'Start with Open Recording for a connected workflow, or open a standalone analysis module and choose files there.',
                     style: TextStyle(color: _textMuted, fontSize: 12),
                   ),
                 ),
@@ -1933,6 +2035,7 @@ class _FeatureHomeState extends State<FeatureHome>
                 children: [
                   if (activeModule == _Module.loadRaw) _buildLoadRawContent(),
                   if (activeModule == _Module.preprocess) _buildStage1Content(),
+                  if (activeModule == _Module.epochs) _buildEpochsContent(),
                   if (activeModule == _Module.preprocess) _buildChannelsCard(),
                   if (activeModule == _Module.sourceSpace)
                     _buildStage2Content(),
@@ -2080,7 +2183,7 @@ class _FeatureHomeState extends State<FeatureHome>
                       ),
                       const SizedBox(height: 12),
                       const Text(
-                        'Load an EDF, SET, or CCSEEG file to preview signals',
+                        'Open EEG: EDF, XDF, BrainVision, SET, FIF, MAT or CCSEEG',
                         style: TextStyle(color: _textMuted, fontSize: 13),
                       ),
                     ],
@@ -2136,6 +2239,59 @@ class _FeatureHomeState extends State<FeatureHome>
 
   // ── Stage 1 ─────────────────────────────────────────────────────────────
 
+  Widget _buildEpochsContent() {
+    final recording = _activeRecording;
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Create trials for ERP averaging',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '1. Open raw or preprocessed continuous EEG.\n2. Select events and name condition groups.\n3. Set the trial/baseline window and save.\n4. Average the saved condition groups in ERP Analysis.',
+          ),
+          const SizedBox(height: 12),
+          TextButton.icon(
+            onPressed: _running
+                ? null
+                : () => _loadRaw(destination: _Module.epochs),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Open recording / preprocessed EEG…'),
+          ),
+          if (recording != null) ...[
+            _recordingChip(recording),
+            const SizedBox(height: 12),
+            _infoBox(
+              recording.isEpoched
+                  ? '${recording.epochCount} saved trials ready. Reuse them directly for averaging; no new epoching is needed.'
+                  : 'Epoching preserves existing cleaning and annotations. Filtering, ICA, ASR and GEDAI do not run in this step.',
+              _accentBlue,
+            ),
+            FilledButton.icon(
+              onPressed: _running ? null : _epochActiveRecording,
+              icon: Icon(
+                recording.isEpoched ? Icons.arrow_forward : Icons.content_cut,
+              ),
+              label: Text(
+                recording.isEpoched
+                    ? 'Next: Average & analyse'
+                    : 'Define events & save epochs…',
+              ),
+            ),
+          ] else
+            _infoBox(
+              'Open a recording to begin. Settings and protocol files are not EEG recordings.',
+              _accentBlue,
+            ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _epochActiveRecording() async {
     final input = _activeRecording;
     if (input == null || _running) return;
@@ -2155,7 +2311,7 @@ class _FeatureHomeState extends State<FeatureHome>
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Choose locking events, give related codes a condition name, then set the trial and baseline windows. These settings are shared with Preprocess. Saving trials does not run cleaning.',
+                  'Choose locking events, name the condition groups, then set the trial and baseline windows. Save this protocol to reuse it in single or batch analysis. Saving trials preserves existing cleaning.',
                 ),
                 ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
                 if ((_activeRecording?.sampleRate ?? 0) > 500 &&
@@ -2209,32 +2365,43 @@ class _FeatureHomeState extends State<FeatureHome>
       );
       if (pickedPath == null) return;
       final path = RecordingStorage.withExtension(pickedPath);
+      setState(() {
+        _running = true;
+        _stopRequested = false;
+        _progress = 0;
+      });
+      _log('Preparing event epochs…');
+      await Future<void>.delayed(Duration.zero);
       final full = await _loader.loadFull(input);
       final selected = full.markers
           .where(
             (m) => events.any((e) => (e.$1 - m.startSeconds).abs() < .000001),
           )
           .toList();
-      final epochs = EpochService().generateEpochs(
-        recording: full,
-        selectedMarkers: selected,
-        options: EpochOptions(
-          targetEvents: const [],
-          markerGroups: spec.markerGroups,
-          tmin: spec.tmin,
-          tmax: spec.tmax,
-          applyBaseline: spec.baseline,
-          baselineMin: spec.baselineStart,
-          baselineMax: spec.baselineEnd,
+      final epochs = await Isolate.run(
+        () => EpochService().generateEpochs(
+          recording: full,
+          selectedMarkers: selected,
+          options: EpochOptions(
+            targetEvents: const [],
+            markerGroups: spec.markerGroups,
+            tmin: spec.tmin,
+            tmax: spec.tmax,
+            applyBaseline: spec.baseline,
+            baselineMin: spec.baselineStart,
+            baselineMax: spec.baselineEnd,
+          ),
         ),
       );
+      if (_stopRequested || !mounted) return;
+      _log('Saving reusable event epochs…');
       await RecordingTransform.save(
         epochs,
         path,
         sourcePath: input.path,
         operations: {'epoch_protocol': spec.toJson()},
       );
-      final saved = await _loader.load(path);
+      final saved = await _loadRecordingWithFeedback(path);
       if (!mounted) return;
       setState(() {
         _openedRecordings.add(saved);
@@ -2242,10 +2409,12 @@ class _FeatureHomeState extends State<FeatureHome>
         _selectedModule = _Module.erpAnalysis;
       });
       _log(
-        '✓ Saved ${saved.epochCount} event trials: $path. Choose groups A/B, then average and analyse.',
+        '✓ Saved ${saved.epochCount} event trials: $path. Choose condition groups, then average and analyse.',
       );
     } catch (e) {
       _log('✗ Epoching: $e');
+    } finally {
+      if (mounted) setState(() => _running = false);
     }
   }
 
@@ -2330,16 +2499,33 @@ class _FeatureHomeState extends State<FeatureHome>
           if (_raw != null)
             _recordingChip(_raw!, active: _activeStage == _Stage.raw)
           else
-            _infoBox('Choose an input in Load Raw first.', _accentPurple),
+            _infoBox(
+              'Open a raw or preprocessed recording first.',
+              _accentPurple,
+            ),
           const SizedBox(height: 6),
           _subAccordionHeader(
             'Preprocessing Options',
             _step1OptsExpanded,
             () => setState(() => _step1OptsExpanded = !_step1OptsExpanded),
           ),
+          if (_presetKey == 'erp') ...[
+            _infoBox(
+              'Optional: clean this recording, then continue to Epochs. Already preprocessed? Skip this step.',
+              _accentBlue,
+            ),
+            TextButton.icon(
+              onPressed: _running
+                  ? null
+                  : () => setState(() => _selectedModule = _Module.epochs),
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('Next: Epochs (skip cleaning)'),
+            ),
+          ],
           if (_step1OptsExpanded) _buildPreprocessingOptions(),
           const SizedBox(height: 8),
-          if (_cfg.stimEpochs &&
+          if (_presetKey != 'erp' &&
+              _cfg.stimEpochs &&
               _activeRecording != null &&
               !_activeRecording!.isEpoched) ...[
             _infoBox(
@@ -2358,7 +2544,10 @@ class _FeatureHomeState extends State<FeatureHome>
             const SizedBox(height: 8),
           ],
           _stageRunButton(
-            label: _cfg.stimEpochs && !(_activeRecording?.isEpoched ?? false)
+            label:
+                _presetKey != 'erp' &&
+                    _cfg.stimEpochs &&
+                    !(_activeRecording?.isEpoched ?? false)
                 ? 'Clean + epoch (additional cleaning)'
                 : 'Run Preprocessing',
             icon: Icons.cleaning_services,
@@ -2800,13 +2989,21 @@ class _FeatureHomeState extends State<FeatureHome>
       TextButton.icon(
         onPressed: _stopRequested ? null : _cancel,
         icon: const Icon(Icons.stop_circle_outlined, size: 16),
-        label: Text(_stopRequested ? 'Stopping…' : 'Stop processing'),
+        label: Text(
+          _stopRequested
+              ? 'Stopping…'
+              : _loadingRecording
+              ? 'Cancel loading'
+              : 'Stop processing',
+        ),
       ),
       const SizedBox(height: 4),
       Text(
-        _progress > 0
+        _loadingRecording
+            ? '${_progress > 0 ? '${(_progress * 100).toStringAsFixed(0)}% · ' : ''}$_loadingMessage'
+            : _progress > 0
             ? '${(_progress * 100).toStringAsFixed(0)}% · ${_logs.isEmpty ? 'Processing' : _logs.last}'
-            : 'Preparing / loading data…',
+            : (_logs.isEmpty ? 'Preparing data…' : _logs.last),
         style: const TextStyle(color: _textMuted, fontSize: 11),
       ),
     ],
@@ -2855,7 +3052,7 @@ class _FeatureHomeState extends State<FeatureHome>
               icon: const Icon(Icons.arrow_forward),
               label: const Text("Next: average and analyse saved trials"),
             ),
-          if (!_usesExistingEpochs)
+          if (!_usesExistingEpochs && _presetKey != 'erp')
             DropdownButtonFormField<String>(
               initialValue: _cfg.stimEpochs
                   ? 'events'
@@ -2887,7 +3084,7 @@ class _FeatureHomeState extends State<FeatureHome>
                       _cfg.epochBeforeGedai = v == 'fixed';
                     }),
             ),
-          if (!_usesExistingEpochs)
+          if (!_usesExistingEpochs && _presetKey != 'erp')
             StimEpochPanel(
               showEnableControl: false,
               config: _cfg,
@@ -2896,6 +3093,7 @@ class _FeatureHomeState extends State<FeatureHome>
               onChanged: () => setState(() {}),
             ),
           if (!_usesExistingEpochs &&
+              _presetKey != 'erp' &&
               !_cfg.stimEpochs &&
               _cfg.epochBeforeGedai) ...[
             _field(
@@ -2909,7 +3107,9 @@ class _FeatureHomeState extends State<FeatureHome>
             _field(_prepOverlap, 'Fixed window overlap', suffix: 's'),
           ],
           _infoBox(
-            _usesExistingEpochs
+            _presetKey == 'erp' && !_usesExistingEpochs
+                ? 'Clean → save continuous EEG → continue to Epochs. Your event protocol is retained for the Epochs step.'
+                : _usesExistingEpochs
                 ? 'Preserve existing trials → clean each trial → save.'
                 : _cfg.stimEpochs
                 ? 'Filter / ICA / ASR on continuous input → cut event trials → GEDAI per trial → save. Existing trials retain their boundaries.'
@@ -4604,7 +4804,7 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('[${i + 1}/${_batchPrepFiles.length}] ${_shortName(path)}');
       try {
         final dir = _batchPrepOutputDir ?? File(path).parent.path;
-        final rec = await _loader.load(path);
+        final rec = await _loadRecordingWithFeedback(path);
         if (_batchCancelRequested) break;
         final outPath =
             '$dir${Platform.pathSeparator}${erpOutputName(path, extension: RecordingStorage.extension, epoched: rec.isEpoched || _cfg.stimEpochs || _cfg.epochBeforeGedai, cleaned: true)}';
@@ -4777,7 +4977,7 @@ class _FeatureHomeState extends State<FeatureHome>
         try {
           // Deliberately retain only one recording at a time. The psiconnect
           // corpus is ~20 GB; loading its 482 previews together exhausted RAM.
-          final rec = await _loader.load(path);
+          final rec = await _loadRecordingWithFeedback(path);
           if (_batchCancelRequested) break;
           final windowAdvice = featureWindowWarnings(_cfg, rec).join('\n');
           if (windowAdvice.isNotEmpty &&

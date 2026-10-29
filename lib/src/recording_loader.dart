@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -11,6 +12,7 @@ import 'extraction_service.dart' show ExtractionService;
 import 'orbit_loader.dart';
 import 'set_loader.dart';
 import 'vhdr_loader.dart';
+import 'xdf_loader.dart';
 
 class RecordingLoader {
   final _setLoader = SetLoader();
@@ -97,12 +99,77 @@ class RecordingLoader {
     }
   }
 
-  Future<EegRecording> load(String path) => Isolate.run(() async {
-    final loader = RecordingLoader();
-    return loader._restoreExternalMetadata(await loader._loadInWorker(path));
-  });
+  final _pendingLoads = <void Function()>[];
 
-  Future<EegRecording> _loadInWorker(String path) async {
+  /// Stop actual parsing, not just discard its result after it finishes.
+  void cancelPendingLoads() {
+    for (final cancel in List.of(_pendingLoads)) {
+      cancel();
+    }
+  }
+
+  Future<EegRecording> load(
+    String path, {
+    int? xdfStreamId,
+    void Function(double?, String)? onProgress,
+  }) async {
+    final port = ReceivePort();
+    final done = Completer<EegRecording>();
+    // Cancellation may arrive while spawn is pending. Observe early errors now;
+    // the same error is still forwarded by the await below.
+    done.future.ignore();
+    Isolate? worker;
+    void cancel() {
+      worker?.kill(priority: Isolate.immediate);
+      if (!done.isCompleted)
+        done.completeError(StateError('File loading cancelled'));
+    }
+
+    _pendingLoads.add(cancel);
+    final subscription = port.listen((message) {
+      if (done.isCompleted) return;
+      if (message is List && message.first == 'progress') {
+        onProgress?.call(message[1] as double?, message[2] as String);
+      } else if (message is EegRecording) {
+        done.complete(message);
+      } else if (message is List && message.first == 'error') {
+        done.completeError(FormatException(message[1] as String));
+      } else if (message is List) {
+        done.completeError(StateError(message.first.toString()));
+      } else if (message == null) {
+        done.completeError(
+          StateError('File loader stopped before returning a recording'),
+        );
+      }
+    });
+    try {
+      worker = await Isolate.spawn(
+        _recordingWorker,
+        (path, xdfStreamId, port.sendPort),
+        onError: port.sendPort,
+        onExit: port.sendPort,
+      );
+      if (done.isCompleted) worker.kill(priority: Isolate.immediate);
+      return await done.future;
+    } finally {
+      _pendingLoads.remove(cancel);
+      worker?.kill(priority: Isolate.immediate);
+      await subscription.cancel();
+      port.close();
+    }
+  }
+
+  Future<EegRecording> _loadInWorker(
+    String path, {
+    int? xdfStreamId,
+    void Function(double)? onProgress,
+  }) async {
+    if (path.toLowerCase().endsWith('.xdf'))
+      return XdfLoader().load(
+        path,
+        streamId: xdfStreamId,
+        onProgress: onProgress,
+      );
     if (path.toLowerCase().endsWith('.ccseeg') ||
         path.toLowerCase().endsWith('.ccseeg.json') ||
         path.toLowerCase().endsWith('.json'))
@@ -295,5 +362,39 @@ class RecordingLoader {
       markers: markers,
       epochTmin: (json['epoch_tmin'] as num?)?.toDouble(),
     );
+  }
+}
+
+Future<void> _recordingWorker((String, int?, SendPort) request) async {
+  final (path, streamId, port) = request;
+  try {
+    port.send(['progress', null, 'Reading and decoding recording…']);
+    final loader = RecordingLoader();
+    var last = -1;
+    final loaded = await loader._loadInWorker(
+      path,
+      xdfStreamId: streamId,
+      onProgress: (value) {
+        final percent = (value * 100).floor();
+        if (percent != last) {
+          last = percent;
+          port.send([
+            'progress',
+            value * .95,
+            value < .75
+                ? 'Reading XDF streams…'
+                : 'Aligning XDF samples and markers…',
+          ]);
+        }
+      },
+    );
+    port.send([
+      'progress',
+      null,
+      'Restoring annotations and recording metadata…',
+    ]);
+    port.send(loader._restoreExternalMetadata(loaded));
+  } catch (error) {
+    port.send(['error', error.toString()]);
   }
 }

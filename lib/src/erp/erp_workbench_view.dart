@@ -22,10 +22,10 @@ class ErpConditionConfig {
     required this.name,
     List<String>? codes,
     List<String>? savedGroups,
-  })  : codes = codes != null ? List<String>.from(codes) : [],
-        savedGroups = savedGroups != null ? List<String>.from(savedGroups) : [],
-        nameController = TextEditingController(text: name),
-        codesController = TextEditingController(text: (codes ?? []).join(', '));
+  }) : codes = codes != null ? List<String>.from(codes) : [],
+       savedGroups = savedGroups != null ? List<String>.from(savedGroups) : [],
+       nameController = TextEditingController(text: name),
+       codesController = TextEditingController(text: (codes ?? []).join(', '));
 
   String name;
   List<String> codes;
@@ -48,6 +48,7 @@ class ErpWorkbenchView extends StatefulWidget {
     this.initialResultPath,
     this.batchMode = true,
     this.onPrepare,
+    this.onOpenRecording,
     this.onOpenBatch,
     this.initialInspection,
   });
@@ -57,6 +58,7 @@ class ErpWorkbenchView extends StatefulWidget {
   final String? initialResultPath;
   final bool batchMode;
   final Map<String, dynamic>? initialInspection;
+  final VoidCallback? onOpenRecording;
   final VoidCallback? onPrepare, onOpenBatch;
   @override
   State<ErpWorkbenchView> createState() => _ErpWorkbenchViewState();
@@ -119,8 +121,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
   final Map<String, String> _participantGroups = {};
   String _gallerySearch = '';
 
-  List<String> get _savedA => _conditions.isNotEmpty ? _conditions[0].savedGroups : [];
-  List<String> get _savedB => _conditions.length > 1 ? _conditions[1].savedGroups : [];
+  List<String> get _savedA =>
+      _conditions.isNotEmpty ? _conditions[0].savedGroups : [];
+  List<String> get _savedB =>
+      _conditions.length > 1 ? _conditions[1].savedGroups : [];
 
   bool get _isPrepared =>
       !widget.batchMode && (widget.activeRecording?.isEpoched ?? false) ||
@@ -132,7 +136,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       (widget.batchMode || _isPrepared) &&
       !(_isPrepared &&
           _profile != null &&
-          (_conditions.isEmpty || _conditions.any((c) => c.savedGroups.isEmpty))) &&
+          (_conditions.isEmpty ||
+              _conditions.any((c) => c.savedGroups.isEmpty))) &&
       _timingIssue == null;
   String? get _timingIssue {
     if (!_isPrepared || _profile == null) return null;
@@ -335,11 +340,11 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
             'codes': _isPrepared
                 ? c.savedGroups
                 : c.codesController.text
-                    .split(',')
-                    .map((s) => s.trim())
-                    .where((s) => s.isNotEmpty)
-                    .toList(),
-          }
+                      .split(',')
+                      .map((s) => s.trim())
+                      .where((s) => s.isNotEmpty)
+                      .toList(),
+          },
       ];
       if (_conditions.isNotEmpty) {
         final c0 = _conditions[0];
@@ -445,7 +450,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
         final sg = _isPrepared
             ? _savedGroups.where((g) => markerListContains(cds, g)).toList()
             : <String>[];
-        _conditions.add(ErpConditionConfig(name: name, codes: cds, savedGroups: sg));
+        _conditions.add(
+          ErpConditionConfig(name: name, codes: cds, savedGroups: sg),
+        );
       }
     } else {
       final aName = p['a_name']?.toString() ?? 'Class A';
@@ -454,32 +461,38 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       final bCodes = (p['b_codes'] as List? ?? []).cast<String>();
       final aSaved = _isPrepared
           ? _savedGroups
-              .where(
-                (g) => markerListContains(
-                  ((p['saved_a_groups'] ?? aCodes) as List).cast<String>(),
-                  g,
-                ),
-              )
-              .toList()
+                .where(
+                  (g) => markerListContains(
+                    ((p['saved_a_groups'] ?? aCodes) as List).cast<String>(),
+                    g,
+                  ),
+                )
+                .toList()
           : <String>[];
       final bSaved = _isPrepared
           ? _savedGroups
-              .where(
-                (g) => markerListContains(
-                  ((p['saved_b_groups'] ?? bCodes) as List).cast<String>(),
-                  g,
-                ),
-              )
-              .toList()
+                .where(
+                  (g) => markerListContains(
+                    ((p['saved_b_groups'] ?? bCodes) as List).cast<String>(),
+                    g,
+                  ),
+                )
+                .toList()
           : <String>[];
-      _conditions.add(ErpConditionConfig(name: aName, codes: aCodes, savedGroups: aSaved));
-      _conditions.add(ErpConditionConfig(name: bName, codes: bCodes, savedGroups: bSaved));
+      _conditions.add(
+        ErpConditionConfig(name: aName, codes: aCodes, savedGroups: aSaved),
+      );
+      _conditions.add(
+        ErpConditionConfig(name: bName, codes: bCodes, savedGroups: bSaved),
+      );
 
       if (_isPrepared && _savedGroups.length > 2) {
         final assigned = {...aSaved, ...bSaved};
         for (final g in _savedGroups) {
           if (!assigned.contains(g)) {
-            _conditions.add(ErpConditionConfig(name: g, codes: [g], savedGroups: [g]));
+            _conditions.add(
+              ErpConditionConfig(name: g, codes: [g], savedGroups: [g]),
+            );
           }
         }
       }
@@ -800,6 +813,11 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                   ],
                 ),
               ] else ...[
+                TextButton.icon(
+                  onPressed: _busy ? null : widget.onOpenRecording,
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Open preprocessed EEG / saved epochs…'),
+                ),
                 Text(
                   widget.activeRecording?.path.split(RegExp(r'[/\\]')).last ??
                       'No recording selected',
@@ -807,7 +825,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 Text(
                   _isPrepared
                       ? 'Saved trials are reused. Select condition groups below; no marker selection or epoching is repeated.'
-                      : 'Prepare event-based trials in Preprocess before comparing ERP groups here.',
+                      : 'Create event-based trials in Epochs before comparing ERP groups here.',
                 ),
                 if (!_isPrepared)
                   OutlinedButton.icon(
@@ -819,7 +837,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                   TextButton(
                     onPressed: widget.onPrepare,
                     child: const Text(
-                      'Change epoch locking / window in Preprocess',
+                      'Change event groups / trial window in Epochs',
                     ),
                   ),
                 TextButton(
@@ -1360,16 +1378,26 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                                 ButtonSegment(
                                   value: c.name,
                                   label: Text(
-                                    c.name.length > 8 ? '${c.name.substring(0, 7)}…' : c.name,
+                                    c.name.length > 8
+                                        ? '${c.name.substring(0, 7)}…'
+                                        : c.name,
                                     style: const TextStyle(fontSize: 11),
                                   ),
                                 ),
-                              const ButtonSegment(value: '-', label: Text('Ignore', style: TextStyle(fontSize: 11))),
+                              const ButtonSegment(
+                                value: '-',
+                                label: Text(
+                                  'Ignore',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
                             ],
                             selected: {
                               () {
                                 for (final c in _conditions) {
-                                  final list = c.codesController.text.split(',').map((s) => s.trim());
+                                  final list = c.codesController.text
+                                      .split(',')
+                                      .map((s) => s.trim());
                                   if (list.contains(key)) return c.name;
                                 }
                                 return '-';
@@ -1431,7 +1459,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       final profile = erpMap(file['profile']);
       final subjid = file['subject'].toString();
       final groupVal = _participantGroups[subjid] ?? 'Unknown';
-      final condNames = (file['condition_names'] as List?)?.cast<String>() ?? [];
+      final condNames =
+          (file['condition_names'] as List?)?.cast<String>() ?? [];
       final keys = difference
           ? ['B_minus_A']
           : (condNames.isNotEmpty ? condNames : ['A', 'B']);
@@ -1441,10 +1470,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
         final label = difference
             ? 'B - A'
             : (condNames.contains(key)
-                ? key
-                : (profile['lateralized'] == true
-                    ? (key == 'A' ? 'Ipsilateral' : 'Contralateral')
-                    : profile[key == 'A' ? 'a_name' : 'b_name']));
+                  ? key
+                  : (profile['lateralized'] == true
+                        ? (key == 'A' ? 'Ipsilateral' : 'Contralateral')
+                        : profile[key == 'A' ? 'a_name' : 'b_name']));
         lines.add(
           [
             quote(file['path']),
@@ -1511,8 +1540,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
             ),
           ],
         ),
-        for (var i = 0; i < _conditions.length; i++)
-          _buildConditionCard(i),
+        for (var i = 0; i < _conditions.length; i++) _buildConditionCard(i),
         if (!_isPrepared)
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -1522,7 +1550,11 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
               label: const Text('Assign from detected markers…'),
             ),
           ),
-        if (_conditions.any((c) => _isPrepared ? c.savedGroups.isEmpty : c.codesController.text.trim().isEmpty))
+        if (_conditions.any(
+          (c) => _isPrepared
+              ? c.savedGroups.isEmpty
+              : c.codesController.text.trim().isEmpty,
+        ))
           const Text(
             'Ensure every condition has at least one event code or saved group selected.',
             style: TextStyle(color: Colors.orangeAccent, fontSize: 11),
@@ -1578,8 +1610,15 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
             const SizedBox(height: 6),
             if (_isPrepared) ...[
               Text(
-                '${index == 0 ? "Group A · " : index == 1 ? "Group B · " : ""}${c.savedGroups.isEmpty ? (c.name.isNotEmpty ? c.name : "not selected") : c.savedGroups.join(" + ")}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                '${index == 0
+                    ? "Group A · "
+                    : index == 1
+                    ? "Group B · "
+                    : ""}${c.savedGroups.isEmpty ? (c.name.isNotEmpty ? c.name : "not selected") : c.savedGroups.join(" + ")}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
               ),
               const SizedBox(height: 4),
               Wrap(
@@ -1598,10 +1637,16 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                               setState(() {
                                 if (sel) {
                                   c.savedGroups.add(g);
-                                  for (var other = 0; other < _conditions.length; other++) {
-                                    if (other != index) _conditions[other].savedGroups.remove(g);
+                                  for (
+                                    var other = 0;
+                                    other < _conditions.length;
+                                    other++
+                                  ) {
+                                    if (other != index)
+                                      _conditions[other].savedGroups.remove(g);
                                   }
-                                  if (c.name.startsWith('Condition ') || c.name.isEmpty) {
+                                  if (c.name.startsWith('Condition ') ||
+                                      c.name.isEmpty) {
                                     c.name = c.savedGroups.join(' + ');
                                     c.nameController.text = c.name;
                                   }
@@ -1621,7 +1666,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
               TextField(
                 controller: c.codesController,
                 decoration: InputDecoration(
-                  labelText: '${c.name.isEmpty ? "Condition ${index + 1}" : c.name} Event Codes (comma-separated)',
+                  labelText:
+                      '${c.name.isEmpty ? "Condition ${index + 1}" : c.name} Event Codes (comma-separated)',
                   isDense: true,
                 ),
                 onChanged: (_) => setState(() {}),
@@ -1641,14 +1687,14 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
     final visible = filter.isEmpty
         ? current
         : current
-            .where(
-              (f) =>
-                  f['subject'].toString().toLowerCase().contains(filter) ||
-                  (_participantGroups[f['subject'].toString()] ?? '')
-                      .toLowerCase()
-                      .contains(filter),
-            )
-            .toList();
+              .where(
+                (f) =>
+                    f['subject'].toString().toLowerCase().contains(filter) ||
+                    (_participantGroups[f['subject'].toString()] ?? '')
+                        .toLowerCase()
+                        .contains(filter),
+              )
+              .toList();
 
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -1710,16 +1756,26 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 final isSelected = _file == f['path'];
 
                 final measurements = erpMap(f['measurements']);
-                final condNames = (f['condition_names'] as List?)?.cast<String>() ?? [];
-                final primaryCond = condNames.isNotEmpty ? condNames.first : 'A';
-                final m = erpMap(measurements[primaryCond] ?? (measurements.isNotEmpty ? measurements.values.first : null));
+                final condNames =
+                    (f['condition_names'] as List?)?.cast<String>() ?? [];
+                final primaryCond = condNames.isNotEmpty
+                    ? condNames.first
+                    : 'A';
+                final m = erpMap(
+                  measurements[primaryCond] ??
+                      (measurements.isNotEmpty
+                          ? measurements.values.first
+                          : null),
+                );
 
                 return Card(
                   elevation: isSelected ? 4 : 1,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                     side: BorderSide(
-                      color: isSelected ? const Color(0xFF2563EB) : Colors.grey.shade300,
+                      color: isSelected
+                          ? const Color(0xFF2563EB)
+                          : Colors.grey.shade300,
                       width: isSelected ? 2 : 1,
                     ),
                   ),
@@ -1733,23 +1789,29 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                           children: [
                             Text(
                               subjid,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: grp.toLowerCase().contains('med')
                                     ? Colors.purple.shade50
                                     : (grp.toLowerCase().contains('con')
-                                        ? Colors.blue.shade50
-                                        : Colors.grey.shade100),
+                                          ? Colors.blue.shade50
+                                          : Colors.grey.shade100),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
                                   color: grp.toLowerCase().contains('med')
                                       ? Colors.purple.shade300
                                       : (grp.toLowerCase().contains('con')
-                                          ? Colors.blue.shade300
-                                          : Colors.grey.shade400),
+                                            ? Colors.blue.shade300
+                                            : Colors.grey.shade400),
                                 ),
                               ),
                               child: Text(
@@ -1760,8 +1822,8 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                                   color: grp.toLowerCase().contains('med')
                                       ? Colors.purple.shade800
                                       : (grp.toLowerCase().contains('con')
-                                          ? Colors.blue.shade800
-                                          : Colors.grey.shade800),
+                                            ? Colors.blue.shade800
+                                            : Colors.grey.shade800),
                                 ),
                               ),
                             ),
@@ -1777,16 +1839,13 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                             ),
                             child: CustomPaint(
                               size: Size.infinite,
-                              painter: ErpWorkbenchWavePainter(
-                                {
-                                  ...f,
-                                  'times': f['times'],
-                                  'condition_names': f['condition_names'],
-                                  'condition_waves': f['condition_waves'],
-                                  'profile': f['profile'],
-                                },
-                                negativeUp: _negativeUp,
-                              ),
+                              painter: ErpWorkbenchWavePainter({
+                                ...f,
+                                'times': f['times'],
+                                'condition_names': f['condition_names'],
+                                'condition_waves': f['condition_waves'],
+                                'profile': f['profile'],
+                              }, negativeUp: _negativeUp),
                             ),
                           ),
                         ),
@@ -1796,7 +1855,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                           children: [
                             Text(
                               'Peak: ${m['peak_amplitude'] != null ? (m['peak_amplitude'] as num).toStringAsFixed(1) : "—"} µV @ ${m['peak_latency'] != null ? ((m['peak_latency'] as num) * 1000).toStringAsFixed(0) : "—"} ms',
-                              style: const TextStyle(fontSize: 11, color: Colors.black87),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.black87,
+                              ),
                             ),
                             TextButton(
                               style: TextButton.styleFrom(
@@ -1809,7 +1871,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                                   _tabs.animateTo(0);
                                 });
                               },
-                              child: const Text('Inspect →', style: TextStyle(fontSize: 12)),
+                              child: const Text(
+                                'Inspect →',
+                                style: TextStyle(fontSize: 12),
+                              ),
                             ),
                           ],
                         ),
@@ -1845,7 +1910,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                     ? 'Choose a task folder, review the input type and task definitions, then run the batch.'
                     : _isPrepared
                     ? '${widget.activeRecording?.epochCount ?? 0} saved trials are ready. No new epoching is required.\n\n1. Choose the ERP task at left.\n2. Select condition groups A and B.\n3. Review the ROI, baseline and measurement window.\n4. Click Average & analyse ERP.\n\nTrials are averaged separately within A and B.\nResults include A, B and B−A waveforms, measurements and statistics.'
-                    : '1. Define locking events and named groups using Epoch Events or Preprocess.\n2. Save event epochs (with cleaning if needed).\n3. Select saved groups A/B here, review the task and window, then average.',
+                    : '1. Define locking events and named groups in the Epochs step.\n2. Save event epochs (with cleaning if needed).\n3. Select saved groups A/B here, review the task and window, then average.',
                 textAlign: TextAlign.center,
               ),
               if ((_result?['failures'] as List? ?? []).isNotEmpty)
@@ -1925,13 +1990,20 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                         ? null
                         : () {
                             if (_file == null) {
-                              setState(() => _file = current.last['path'] as String);
+                              setState(
+                                () => _file = current.last['path'] as String,
+                              );
                             } else {
-                              final idx = current.indexWhere((f) => f['path'] == _file);
+                              final idx = current.indexWhere(
+                                (f) => f['path'] == _file,
+                              );
                               if (idx <= 0) {
                                 setState(() => _file = null);
                               } else {
-                                setState(() => _file = current[idx - 1]['path'] as String);
+                                setState(
+                                  () => _file =
+                                      current[idx - 1]['path'] as String,
+                                );
                               }
                             }
                           },
@@ -1940,7 +2012,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                     _file == null
                         ? 'Grand Average'
                         : 'Participant ${current.indexWhere((f) => f['path'] == _file) + 1} of ${current.length}',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.chevron_right),
@@ -1949,13 +2024,20 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                         ? null
                         : () {
                             if (_file == null) {
-                              setState(() => _file = current.first['path'] as String);
+                              setState(
+                                () => _file = current.first['path'] as String,
+                              );
                             } else {
-                              final idx = current.indexWhere((f) => f['path'] == _file);
+                              final idx = current.indexWhere(
+                                (f) => f['path'] == _file,
+                              );
                               if (idx >= current.length - 1) {
                                 setState(() => _file = null);
                               } else {
-                                setState(() => _file = current[idx + 1]['path'] as String);
+                                setState(
+                                  () => _file =
+                                      current[idx + 1]['path'] as String,
+                                );
                               }
                             }
                           },

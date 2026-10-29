@@ -145,7 +145,7 @@ class ExtractionService {
 
         if (!File(recording.path).existsSync() ||
             (recording.isEpoched && recording.format != 'ccseeg') ||
-            recording.format == 'orb') {
+            (recording.format == 'orb' || recording.format == 'xdf')) {
           final tempInput = File('${temp.path}/input_temp_$i.ccseeg.json');
           final jsonMap = {
             'format': 'ccseeg-v1',
@@ -384,7 +384,7 @@ class ExtractionService {
 
       if (!File(recording.path).existsSync() ||
           (recording.isEpoched && recording.format != 'ccseeg') ||
-          recording.format == 'orb') {
+          (recording.format == 'orb' || recording.format == 'xdf')) {
         final tempInput = File('${temp.path}/input_temp.ccseeg.json');
         final jsonMap = {
           'format': 'ccseeg-v1',

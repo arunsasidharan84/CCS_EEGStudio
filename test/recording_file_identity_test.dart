@@ -12,6 +12,12 @@ void main() {
     addTearDown(() => dir.deleteSync(recursive: true));
     for (final name in [
       'x.preprocessing.json',
+      'x.ccsmeta',
+      'x.ccsprotocol',
+      'x.ccssettings',
+      'x.ccserp',
+      'x.features.csv',
+      'x.ccsanalysis',
       'x.preparation.json',
       'protocol.json',
       'erp_results.json',

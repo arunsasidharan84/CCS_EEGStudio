@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <b>Current version: 1.2.23</b> ·
+  <b>Current version: 1.2.24</b> ·
   <a href="CHANGELOG.md">Detailed changelog</a> ·
   <a href="https://github.com/arunsasidharan84/CCS_EEGStudio/issues">Report a problem</a>
 </p>
@@ -134,6 +134,25 @@ The updater fetches the current installer on each run. Downloads use a private t
 | ⬆️ | Built-in update checker downloads and installs verified packages directly from GitHub Releases |
 
 ---
+
+## What's new in 1.2.24: recording and ERP workflow
+
+Update from the app using **Updates → Check for updates**, then download and install v1.2.24. The updater selects the package for your platform and verifies its checksum. Linux per-user installations update without sudo.
+
+Choose **ERP Analysis** in the workflow selector. The sidebar follows this order:
+
+1. **Open Recording** — open raw EEG, preprocessed continuous EEG, or saved epochs. Supported inputs include EDF/EDF+, BrainVision VHDR, SET, FIF, MAT, CCSEEG, ORB and XDF.
+2. **Preprocess (optional)** — filter, re-reference and clean. In this ERP workflow, continuous input stays continuous; event trials are created in the next step. Skip cleaning when the input is already preprocessed.
+3. **Epochs** — choose locking events, name condition groups, set trial and baseline windows, and save reusable trials. Protocols can be saved and reused. Existing saved epochs proceed directly to averaging.
+4. **ERP Analysis** — use **Open preprocessed EEG / saved epochs…** to start directly from an existing recording, or use the current recording. Choose saved condition groups, ROI and measurement windows, then average and analyse. Continuous recordings link back to **Epochs**.
+
+The header displays the installed app version. Loading runs in a cancellable worker: use **Cancel loading** to stop parsing; the app remains responsive. XDF shows byte-reading progress; other readers show their current phase without inventing a percentage. The recording picker hides companion metadata, settings, protocols and analysis results and labels signal files by their likely next step. Open the signal file (`.edf`, `.fif`, `.ccseeg`, etc.), keeping its `.ccsmeta` companion beside it.
+
+### XDF import
+
+The native Dart importer requires no Python installation. It reads numeric signal streams and string/numeric irregular marker streams, offers a signal-stream selector, converts declared voltage units to µV, applies clock-offset interpolation, and puts markers on the corrected EEG timeline. Signal samples are linearly interpolated to a uniform grid spanning the corrected timestamps; the effective rate and selected stream are recorded in provenance. Unspecified units are treated as µV.
+
+Clock resets, non-monotonic timestamps and gaps larger than five nominal sample intervals are rejected rather than silently moving ERP events. Repair or split such recordings with an XDF specialist tool before import. Compressed `.xdfz` is not supported. This is a baseline importer, not a claim of full pyxdf recovery/dejittering parity. See the [XDF format specification](https://github.com/sccn/xdf/wiki/Specifications) and [pyxdf](https://github.com/xdf-modules/pyxdf) for reference.
 
 ## What's new in 1.2.23
 

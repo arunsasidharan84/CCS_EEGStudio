@@ -6,6 +6,37 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.24]
+
+### Clearer recording-to-ERP workflow
+
+- Rename Load Raw to **Open Recording** to clarify that raw signals, preprocessed continuous signals and saved epochs are accepted.
+- Add a separate **Epochs** stage to the ERP and Full Pipeline sidebars. The ERP sequence is Open Recording → optional Preprocess → Epochs → ERP Analysis.
+- In the single-recording ERP profile, preprocessing preserves continuous input as continuous data. Event-group definitions and trial windows remain available for the subsequent Epochs step; saved trials keep their boundaries when cleaned.
+- Add **Next: Epochs (skip cleaning)** for already preprocessed data. The Epochs step explains locking events, named condition groups, trial/baseline windows, reusable protocols and the handoff to averaging.
+- Add **Open preprocessed EEG / saved epochs…** directly in ERP Analysis. Existing epochs proceed to condition averaging without re-epoching; continuous recordings link to the Epochs step.
+- Move event-trial construction off the UI isolate and preserve legacy combined preprocessing/epoching behavior outside the single-recording ERP profile.
+
+### XDF signal and marker import
+
+- Add a chunked Dart XDF importer requiring no Python installation. Support float32, double64, int8, int16, int32 and int64 numeric signal samples and string/numeric irregular event streams, including implicit timestamps.
+- Offer explicit selection when a container has multiple numeric signal streams. Preserve channel names, normalize declared voltage units to µV, apply stream clock-offset interpolation, align markers to the corrected signal origin, and uniformly resample the selected signal using linear interpolation.
+- Record selected stream, nominal rate, resampling and unit assumptions in provenance. Preprocessing and feature extraction stage XDF samples into the native engine's portable representation, retaining annotations.
+- Reject malformed/truncated chunks, non-finite signals, clock resets, non-monotonic timestamps and gaps larger than five nominal sample intervals rather than silently shifting ERP events.
+- Limitations: compressed .xdfz is not supported; unspecified channel units are assumed to be µV; specialist clock-reset/gap recovery is not implemented. This is a baseline importer, not full pyxdf recovery/dejittering parity. Verification used generated XDF fixtures; user-recording validation remains pending.
+
+### Responsive loading and clearer file selection
+
+- Display the installed version beside the app title.
+- Run recording parsing in a cancellable isolate. **Cancel loading** terminates the worker, including cancellation during startup, and another file can then be loaded.
+- Show loading phases and XDF reading/alignment progress. Other readers use an indeterminate indicator when a meaningful percentage is unavailable.
+- Hide settings, protocols, metadata and analysis results from recording selection. Label saved epochs, preprocessed signals and XDF containers with their likely next step; continue accepting legacy signal JSON and matching .ccsmeta companions.
+
+### Validation and updates
+
+- Validate the revised workflow and visible version with widget tests, recording identity/backward compatibility with loader tests, and XDF units, clocks, markers, all numeric sample formats, malformed data and cancellation with generated fixtures.
+- Ship the standard macOS ZIP, Windows installer, Linux DEB/RPM and portable per-user Linux archive with SHA256SUMS.txt. Existing installations can use **Updates → Check for updates**; portable Linux updates remain available without sudo.
+
 ## [1.2.23]
 
 ### Independent app instances

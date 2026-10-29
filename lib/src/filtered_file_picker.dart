@@ -24,8 +24,19 @@ bool matchesFilename(String path, String patterns) {
 /// Check a small header, never decode a multi-hundred-MB signal just to list it.
 bool isEegRecordingFile(String path) {
   final lower = path.toLowerCase();
-  if (lower.endsWith('.ccsmeta') || lower.endsWith('.ccssettings'))
-    return false;
+  const signalExtensions = [
+    'edf',
+    'set',
+    'fif',
+    'vhdr',
+    'mat',
+    'orb',
+    'signal',
+    'ccseeg',
+    'xdf',
+    'json',
+  ];
+  if (!signalExtensions.any((ext) => lower.endsWith('.$ext'))) return false;
   if (!lower.endsWith('.json')) return true;
   if (RegExp(
     r'\.(?:preprocessing|preparation|analysis)\.json$',
@@ -44,6 +55,49 @@ bool isEegRecordingFile(String path) {
   }
 }
 
+/// A role label, not a new filename: companion files stay beside the signal.
+String recordingFileDescription(String path) {
+  final lower = path.toLowerCase();
+  if (lower.endsWith('.xdf'))
+    return 'XDF container · choose signal stream on open';
+  final trialName = RegExp(
+    r'(?:-epo|_epo|_epoched)(?:[_.-]|$)',
+  ).hasMatch(lower);
+  final cleaned = RegExp(r'(?:_clean|-clean|_preprocessed)').hasMatch(lower);
+  var epochs = trialName;
+  if (lower.endsWith('.ccseeg') || lower.endsWith('.json')) {
+    try {
+      final file = File(path).openSync();
+      try {
+        final head = utf8.decode(file.readSync(65536), allowMalformed: true);
+        epochs =
+            epochs ||
+            RegExp(r'"source_epoch_samples"\s*:\s*[1-9]').hasMatch(head);
+      } finally {
+        file.closeSync();
+      }
+    } catch (_) {
+      /* The loader reports unreadable recordings on open. */
+    }
+  } else {
+    try {
+      final sidecar = File('$path.ccsmeta');
+      if (sidecar.existsSync() && sidecar.lengthSync() < 4 * 1024 * 1024) {
+        final meta = jsonDecode(sidecar.readAsStringSync()) as Map;
+        epochs = epochs || ((meta['source_epoch_samples'] as num?) ?? 0) > 0;
+      }
+    } catch (_) {
+      /* Companion validation happens during loading. */
+    }
+  }
+  return '${epochs
+          ? 'Saved epochs → ERP averaging'
+          : cleaned
+          ? 'Preprocessed EEG → Epochs / features'
+          : 'EEG recording → inspect / preprocess / epoch'}'
+      '${lower.endsWith('.json') ? ' · legacy signal JSON' : ''}';
+}
+
 Future<FilePickerResult?> pickFilteredFiles(
   BuildContext context, {
   bool allowMultiple = false,
@@ -60,7 +114,10 @@ Future<FilePickerResult?> pickFilteredFiles(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: Text(dialogTitle ?? 'Open files'),
+        title: Text(
+          dialogTitle ??
+              (recordingsOnly ? 'Open an EEG recording' : 'Open files'),
+        ),
         content: SizedBox(
           width: 600,
           height: 420,
@@ -159,11 +216,7 @@ Future<FilePickerResult?> pickFilteredFiles(
                         dense: true,
                         title: Text(p.split(RegExp(r'[\\/]')).last),
                         subtitle: recordingsOnly
-                            ? Text(
-                                p.toLowerCase().endsWith('.json')
-                                    ? 'EEG recording · legacy JSON'
-                                    : 'EEG recording',
-                              )
+                            ? Text(recordingFileDescription(p))
                             : null,
                         value: selected.contains(p),
                         onChanged: (v) => setState(() {

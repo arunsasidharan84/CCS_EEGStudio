@@ -10,18 +10,20 @@ class ErpAnalysisView extends StatelessWidget {
     this.config,
     this.extraFiles = const [],
     this.onPrepare,
+    this.onOpenRecording,
     this.onOpenBatch,
   });
   final EegRecording? activeRecording;
   final AnalysisConfig? config;
   final List<String> extraFiles;
-  final VoidCallback? onPrepare, onOpenBatch;
+  final VoidCallback? onPrepare, onOpenBatch, onOpenRecording;
   @override
   Widget build(BuildContext context) => ErpWorkbenchView(
     activeRecording: activeRecording,
     config: config,
     batchMode: false,
     onPrepare: onPrepare,
+    onOpenRecording: onOpenRecording,
     onOpenBatch: onOpenBatch,
   );
 }
