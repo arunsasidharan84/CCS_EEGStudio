@@ -120,10 +120,11 @@ class RecordingLoader {
     // the same error is still forwarded by the await below.
     done.future.ignore();
     Isolate? worker;
+    SendPort? control;
+    var cancelled = false;
     void cancel() {
-      worker?.kill(priority: Isolate.immediate);
-      if (!done.isCompleted)
-        done.completeError(StateError('File loading cancelled'));
+      cancelled = true;
+      control?.send('cancel');
     }
 
     _pendingLoads.add(cancel);
@@ -138,12 +139,24 @@ class RecordingLoader {
         return;
       }
       if (done.isCompleted) return;
-      if (message is List && message.first == 'progress') {
+      if (message is List && message.first == 'control') {
+        control = message[1] as SendPort;
+        if (cancelled) control!.send('cancel');
+      } else if (message is List && message.first == 'progress') {
+        if (cancelled) return;
         onProgress?.call(message[1] as double?, message[2] as String);
       } else if (message is EegRecording) {
-        done.complete(message);
+        if (cancelled) {
+          done.completeError(StateError('File loading cancelled'));
+        } else {
+          done.complete(message);
+        }
       } else if (message is List && message.first == 'error') {
-        done.completeError(FormatException(message[1] as String));
+        done.completeError(
+          cancelled
+              ? StateError('File loading cancelled')
+              : FormatException(message[1] as String),
+        );
       } else if (message is List) {
         done.completeError(StateError(message.first.toString()));
       }
@@ -155,11 +168,10 @@ class RecordingLoader {
         onError: port.sendPort,
         onExit: port.sendPort,
       );
-      if (done.isCompleted) worker.kill(priority: Isolate.immediate);
       return await done.future;
     } finally {
       _pendingLoads.remove(cancel);
-      worker?.kill(priority: Isolate.immediate);
+      // Let file-owning finally blocks finish; Isolate.kill skips them.
       // Windows cannot reopen/delete a file until the parsing worker has exited.
       // Keep the exit port alive even when the result was cancelled earlier.
       if (worker != null) await exited.future;
@@ -172,12 +184,14 @@ class RecordingLoader {
     String path, {
     int? xdfStreamId,
     void Function(double)? onProgress,
+    bool Function()? isCancelled,
   }) async {
     if (path.toLowerCase().endsWith('.xdf'))
       return XdfLoader().load(
         path,
         streamId: xdfStreamId,
         onProgress: onProgress,
+        isCancelled: isCancelled,
       );
     if (path.toLowerCase().endsWith('.ccseeg') ||
         path.toLowerCase().endsWith('.ccseeg.json') ||
@@ -376,13 +390,22 @@ class RecordingLoader {
 
 Future<void> _recordingWorker((String, int?, SendPort) request) async {
   final (path, streamId, port) = request;
+  var cancelled = false;
+  final commands = ReceivePort()
+    ..listen((message) {
+      if (message == 'cancel') cancelled = true;
+    });
+  port.send(['control', commands.sendPort]);
   try {
     port.send(['progress', null, 'Reading and decoding recording…']);
+    await Future<void>.delayed(Duration.zero);
+    if (cancelled) throw StateError('File loading cancelled');
     final loader = RecordingLoader();
     var last = -1;
     final loaded = await loader._loadInWorker(
       path,
       xdfStreamId: streamId,
+      isCancelled: () => cancelled,
       onProgress: (value) {
         final percent = (value * 100).floor();
         if (percent != last) {
@@ -402,8 +425,12 @@ Future<void> _recordingWorker((String, int?, SendPort) request) async {
       null,
       'Restoring annotations and recording metadata…',
     ]);
+    await Future<void>.delayed(Duration.zero);
+    if (cancelled) throw StateError('File loading cancelled');
     port.send(loader._restoreExternalMetadata(loaded));
   } catch (error) {
     port.send(['error', error.toString()]);
+  } finally {
+    commands.close();
   }
 }

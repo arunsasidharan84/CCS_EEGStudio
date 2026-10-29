@@ -6,9 +6,9 @@ its matching section is missing.
 
 ## [Unreleased]
 
-## [1.2.25]
+## [1.2.26]
 
-- Supersede the unpublished v1.2.24 build after Windows tests caught a file-handle lifetime race during load cancellation. Wait for the parsing worker's exit notification before reporting completion or cancellation, so its file can be reopened or removed immediately.
+- Supersede the unpublished v1.2.24/v1.2.25 builds after Windows tests exposed that forcibly killing an isolate can skip file-closing finally blocks. Use cooperative XDF cancellation checkpoints, allow decoder cleanup to finish, and await worker exit before returning. Other readers finish their current decoding phase before reporting cancellation. Add a Windows loading/epoch-worker preflight before desktop compilation.
 
 
 ### Epoch creation and compact condition editing
@@ -43,7 +43,7 @@ its matching section is missing.
 ### Responsive loading and clearer file selection
 
 - Display the installed version beside the app title.
-- Run recording parsing in a cancellable isolate. **Cancel loading** terminates the worker, including cancellation during startup, and another file can then be loaded.
+- Run recording parsing in a cancellable isolate. **Cancel loading** requests a safe stop, including during startup. XDF checks between chunks and sample blocks; other readers finish their current decoding phase before cancellation returns. File handles close before another file is loaded.
 - Show loading phases and XDF reading/alignment progress. Other readers use an indeterminate indicator when a meaningful percentage is unavailable.
 - Hide settings, protocols, metadata and analysis results from recording selection. Label saved epochs, preprocessed signals and XDF containers with their likely next step; continue accepting legacy signal JSON and matching .ccsmeta companions.
 

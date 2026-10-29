@@ -1,7 +1,6 @@
 import 'feature_window_warnings.dart';
 import 'app_instance.dart';
 import 'xdf_loader.dart';
-import 'dart:isolate';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:async';
 import 'dart:io';
@@ -816,7 +815,7 @@ class _FeatureHomeState extends State<FeatureHome>
     try {
       int? streamId;
       if (path.toLowerCase().endsWith('.xdf')) {
-        final streams = await Isolate.run(() => XdfLoader().inspect(path));
+        final streams = await inspectXdfInWorker(path);
         if (_stopRequested || !mounted)
           throw StateError('File loading cancelled');
         if (streams.length > 1) {

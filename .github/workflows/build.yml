@@ -76,9 +76,25 @@ jobs:
   # Runner: macos-15 (runner-native architecture)
   # Output: CCSEEGStudio-macos.zip (ad-hoc signed .app bundle)
   # ──────────────────────────────────────────────────────────────────────────
+  validate-loading:
+    name: Windows loading and epoch worker preflight
+    needs: validate-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.9
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.yaml') }}
+      - run: flutter pub get
+      - name: Verify cancellation closes files and epochs use data-only workers
+        run: flutter test test/xdf_loader_test.dart test/epoch_worker_compact_test.dart test/recording_file_identity_test.dart
+
   build-macos:
     name: macOS
-    needs: validate-release
+    needs: [validate-release, validate-loading]
     runs-on: macos-15
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -163,7 +179,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   build-windows:
     name: Windows
-    needs: validate-release
+    needs: [validate-release, validate-loading]
     runs-on: windows-2022
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -245,7 +261,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   build-linux:
     name: Linux
-    needs: validate-release
+    needs: [validate-release, validate-loading]
     runs-on: ubuntu-22.04
     if: >-
       github.event_name == 'workflow_dispatch' ||

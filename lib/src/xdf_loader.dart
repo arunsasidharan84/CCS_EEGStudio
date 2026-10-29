@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:xml/xml.dart';
 import 'models.dart';
@@ -81,12 +82,13 @@ class _Reader {
 /// Chunked XDF 1.0 import. Refuse clock resets/data gaps rather than silently
 /// compressing time and moving ERP events. No Python dependency is required.
 class XdfLoader {
-  Map<int, _Stream> _read(
+  Future<Map<int, _Stream>> _read(
     String path, {
     bool headersOnly = false,
     int? streamId,
+    bool Function()? isCancelled,
     void Function(double)? onProgress,
-  }) {
+  }) async {
     final file = File(path).openSync();
     final streams = <int, _Stream>{};
     try {
@@ -94,6 +96,7 @@ class XdfLoader {
       if (ascii.decode(file.readSync(4)) != 'XDF:')
         throw const FormatException('Not an XDF file');
       while (file.positionSync() < length) {
+        await _checkpoint(isCancelled);
         final size = file.readByteSync();
         if (![1, 4, 8].contains(size))
           throw const FormatException('Invalid XDF chunk length');
@@ -147,6 +150,7 @@ class XdfLoader {
             if (count > n)
               throw const FormatException('Invalid XDF sample count');
             for (var i = 0; i < count; i++) {
+              if (i % 2048 == 0) await _checkpoint(isCancelled);
               final flag = reader.u8();
               final time = flag == 8
                   ? reader.number('double64')
@@ -189,20 +193,22 @@ class XdfLoader {
     }
   }
 
-  List<XdfStreamInfo> inspect(String path) => _read(path, headersOnly: true)
-      .values
-      .where((s) => s.rate > 0 && s.format != 'string')
-      .map((s) => s.info)
-      .toList();
+  Future<List<XdfStreamInfo>> inspect(String path) async =>
+      (await _read(path, headersOnly: true)).values
+          .where((s) => s.rate > 0 && s.format != 'string')
+          .map((s) => s.info)
+          .toList();
 
-  EegRecording load(
+  Future<EegRecording> load(
     String path, {
     int? streamId,
     void Function(double)? onProgress,
-  }) {
-    final streams = _read(
+    bool Function()? isCancelled,
+  }) async {
+    final streams = await _read(
       path,
       streamId: streamId,
+      isCancelled: isCancelled,
       onProgress: (p) => onProgress?.call(p * .75),
     );
     var candidates = streams.values
@@ -274,6 +280,7 @@ class XdfLoader {
     ];
     var left = 0;
     for (var i = 0; i < times.length; i++) {
+      if (i % 2048 == 0) await _checkpoint(isCancelled);
       if (i % 2048 == 0) onProgress?.call(.75 + .25 * i / times.length);
       final t = times.first + i / rate;
       while (left + 1 < times.length - 1 && times[left + 1] < t) {
@@ -341,3 +348,11 @@ class XdfLoader {
     _ => 1,
   };
 }
+
+Future<void> _checkpoint(bool Function()? isCancelled) async {
+  await Future<void>.delayed(Duration.zero);
+  if (isCancelled?.call() ?? false) throw StateError('File loading cancelled');
+}
+
+Future<List<XdfStreamInfo>> inspectXdfInWorker(String path) =>
+    Isolate.run(() => XdfLoader().inspect(path));

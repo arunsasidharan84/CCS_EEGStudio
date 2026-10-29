@@ -80,7 +80,7 @@ List<int> fixture({
     ...utf8.encode('S 10'),
   ]),
 ];
-void main() {
+void main() async {
   late Directory temp;
   late File file;
   setUp(() {
@@ -91,9 +91,9 @@ void main() {
   for (final format in ['float32', 'double64']) {
     test(
       '$format samples, implicit timestamps, units and cross-stream clock offsets',
-      () {
+      () async {
         file.writeAsBytesSync(fixture(format: format));
-        final rec = XdfLoader().load(file.path);
+        final rec = await XdfLoader().load(file.path);
         expect(rec.sampleRate, closeTo(100, 1e-8));
         expect(rec.labels, ['Fz']);
         expect(rec.preview.single, orderedEquals([1, 2, 3]));
@@ -104,21 +104,27 @@ void main() {
   }
   test(
     'stream inventory does not decode samples; selected stream preserved',
-    () {
+    () async {
       file.writeAsBytesSync(fixture(extra: true));
-      expect(XdfLoader().inspect(file.path).map((s) => s.id), [1, 3]);
+      expect((await XdfLoader().inspect(file.path)).map((s) => s.id), [1, 3]);
       expect(
-        XdfLoader().load(file.path, streamId: 1).provenance['xdf_stream_id'],
+        (await XdfLoader().load(
+          file.path,
+          streamId: 1,
+        )).provenance['xdf_stream_id'],
         1,
       );
     },
   );
-  test('reject gaps and truncated files rather than shifting markers', () {
-    file.writeAsBytesSync(fixture(gap: true));
-    expect(() => XdfLoader().load(file.path), throwsFormatException);
-    file.writeAsBytesSync(fixture().sublist(0, fixture().length - 1));
-    expect(() => XdfLoader().load(file.path), throwsFormatException);
-  });
+  test(
+    'reject gaps and truncated files rather than shifting markers',
+    () async {
+      file.writeAsBytesSync(fixture(gap: true));
+      await expectLater(XdfLoader().load(file.path), throwsFormatException);
+      file.writeAsBytesSync(fixture().sublist(0, fixture().length - 1));
+      await expectLater(XdfLoader().load(file.path), throwsFormatException);
+    },
+  );
   test('worker loader returns XDF signals and reports phases', () async {
     file.writeAsBytesSync(fixture());
     final progress = <String>[];
@@ -148,24 +154,42 @@ void main() {
     await expectLater(future, throwsStateError);
   });
   for (final format in ['int8', 'int16', 'int32', 'int64']) {
-    test('$format numeric EEG values are decoded as signed samples', () {
+    test('$format numeric EEG values are decoded as signed samples', () async {
       final width = {'int8': 1, 'int16': 2, 'int32': 4, 'int64': 8}[format]!;
       List<int> sample(int value) {
         final data = ByteData(width);
-        if (width == 1) { data.setInt8(0, value); }
-        if (width == 2) { data.setInt16(0, value, Endian.little); }
-        if (width == 4) { data.setInt32(0, value, Endian.little); }
-        if (width == 8) { data.setInt64(0, value, Endian.little); }
+        if (width == 1) {
+          data.setInt8(0, value);
+        }
+        if (width == 2) {
+          data.setInt16(0, value, Endian.little);
+        }
+        if (width == 4) {
+          data.setInt32(0, value, Endian.little);
+        }
+        if (width == 8) {
+          data.setInt64(0, value, Endian.little);
+        }
         return data.buffer.asUint8List();
       }
+
       file.writeAsBytesSync([
-        ...ascii.encode('XDF:'), ...header(1, format, 100, unit: 'uV'),
-        ...chunk(3, [...integer(1, 4), 1, 3,
-          8, ...real(10), ...sample(-1),
-          0, ...sample(2), 0, ...sample(3)]),
+        ...ascii.encode('XDF:'),
+        ...header(1, format, 100, unit: 'uV'),
+        ...chunk(3, [
+          ...integer(1, 4),
+          1,
+          3,
+          8,
+          ...real(10),
+          ...sample(-1),
+          0,
+          ...sample(2),
+          0,
+          ...sample(3),
+        ]),
       ]);
-      expect(XdfLoader().load(file.path).preview.single, [-1, 2, 3]);
+      expect((await XdfLoader().load(file.path)).preview.single, [-1, 2, 3]);
     });
   }
-
 }
