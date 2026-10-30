@@ -1118,7 +1118,7 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
     let mut warnings = Vec::new();
     if let Some(meta) = metadata.as_ref() {
         if let Some(notes) = meta["provenance"]["summary"]["warnings"].as_array() {
-            warnings.extend(notes.iter().filter_map(|n| n.as_str()).map(|n| format!("Input preprocessing: {n}")));
+            warnings.extend(notes.iter().filter_map(|n| n.as_str()).filter(|n| !n.starts_with("Blink detection filters saved trials independently")).map(|n| format!("Input preprocessing: {n}")));
         }
     }
     let mirrors: Vec<_> = labels

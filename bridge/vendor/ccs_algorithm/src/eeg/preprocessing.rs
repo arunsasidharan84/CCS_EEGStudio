@@ -561,7 +561,7 @@ pub fn run(
         .map(|ch| ch.iter().map(|v| *v as f32).collect())
         .collect();
 
-    eprintln!("PROGRESS 90 Saving portable JSON to {}...", output);
+    eprintln!("PROGRESS 90 Writing buffered recording transfer to {}...", output);
     save_portable_with(output, rec, epoch_meta)?;
     Ok(PreprocessSummary {
         input: input.into(),
@@ -599,18 +599,27 @@ fn save_portable(path: &str, rec: &Recording) -> Result<(), String> {
 }
 
 fn save_portable_with(path: &str, rec: &Recording, epoch_meta: Option<EpochMeta>) -> Result<(), String> {
-    let portable = PortableRecording {
-        epoch_meta,
-        format: "ccseeg-v1".into(),
-        sample_rate: rec.rate,
-        labels: rec.labels.clone(),
-        channels: rec.channels.clone(),
-        source_epoch_samples: rec.source_epoch_samples,
-        epoch_labels: rec.epoch_labels.clone(),
+    #[derive(Serialize)]
+    struct PortableRef<'a> {
+        format: &'static str,
+        sample_rate: f64,
+        labels: &'a [String],
+        channels: &'a [Vec<f32>],
+        source_epoch_samples: Option<usize>,
+        epoch_labels: &'a Option<Vec<String>>,
+        #[serde(flatten)]
+        epoch_meta: Option<EpochMeta>,
+    }
+    let portable = PortableRef {
+        epoch_meta, format: "ccseeg-v1", sample_rate: rec.rate,
+        labels: &rec.labels, channels: &rec.channels,
+        source_epoch_samples: rec.source_epoch_samples, epoch_labels: &rec.epoch_labels,
     };
-    let mut file = fs::File::create(path).map_err(err)?;
-    serde_json::to_writer(&mut file, &portable).map_err(err)?;
-    file.write_all(b"\n").map_err(err)
+    let file = fs::File::create(path).map_err(err)?;
+    let mut writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
+    serde_json::to_writer(&mut writer, &portable).map_err(err)?;
+    writer.write_all(b"\n").map_err(err)?;
+    writer.flush().map_err(err)
 }
 
 fn normalize_channel_set(rec: &mut Recording, non_eeg: &[String]) {
@@ -1822,6 +1831,35 @@ mod tests {
     }
 
     #[test]
+    fn buffered_portable_matches_legacy_bytes() {
+        let rec = Recording { rate: 1000., labels: vec!["Pz".into()],
+            channels: vec![(0..100_000).map(|i| (i as f32 * 0.013).sin()).collect()],
+            source_epoch_samples: Some(1000), epoch_labels: Some(vec!["Standard".into();100]) };
+        let base = std::env::temp_dir().join(format!("ccs-buffer-check-{}", std::process::id()));
+        let legacy_path = base.with_extension("legacy");
+        let buffered_path = base.with_extension("buffered");
+        let owned = PortableRecording { format: "ccseeg-v1".into(), sample_rate:rec.rate,
+            labels: rec.labels.clone(), channels: rec.channels.clone(), source_epoch_samples: rec.source_epoch_samples,
+            epoch_labels:rec.epoch_labels.clone(), epoch_meta:None };
+        let started = std::time::Instant::now();
+        let mut legacy = fs::File::create(&legacy_path).unwrap();
+        serde_json::to_writer(&mut legacy, &owned).unwrap(); legacy.write_all(b"\n").unwrap();
+        drop(legacy);
+        let old = started.elapsed(); let started = std::time::Instant::now();
+        save_portable(buffered_path.to_str().unwrap(), &rec).unwrap();
+        eprintln!("Portable save 100k samples: legacy {:?}, buffered {:?}", old, started.elapsed());
+        let old_bytes = fs::read(&legacy_path).unwrap();
+        let new_bytes = fs::read(&buffered_path).unwrap();
+        // JSON property order is immaterial; values, labels and samples must match.
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&old_bytes).unwrap(), serde_json::from_slice::<serde_json::Value>(&new_bytes).unwrap());
+        let restored = load_portable(&buffered_path).unwrap();
+        assert_eq!(restored.channels, rec.channels);
+        assert_eq!(restored.epoch_labels, rec.epoch_labels);
+        assert_eq!(restored.source_epoch_samples, rec.source_epoch_samples);
+        fs::remove_file(legacy_path).unwrap(); fs::remove_file(buffered_path).unwrap();
+    }
+
+    #[test]
     fn gedai_runs_on_synthetic_data() {
         let labels = vec!["Fz".into(), "Cz".into(), "Pz".into(), "Oz".into()];
         let rate = 100.0;
@@ -1922,11 +1960,13 @@ fn run_ica_asr(
             "ran": s.ran, "components": s.components, "removed": s.removed, "removed_class": s.removed_class,
             "signals_lost": s.signals_lost, "note": s.note,
         });
-        for n in &rep.notes { warnings.push(n.clone()); }
+        for n in &rep.notes {
+            if !n.starts_with("Blink detection filters saved trials independently") { warnings.push(n.clone()); }
+        }
         if !rep.stage1.note.is_empty() { warnings.push(rep.stage1.note.clone()); }
         report["ica"] = serde_json::json!({
             "method": options.ica_method, "channels_used": good.iter().map(|&i| labels[i].clone()).collect::<Vec<_>>(),
-            "eye_channel": rep.eye_chan, "blink_events": rep.blink_events, "blink_epochs": rep.blink_epochs_used,
+            "notes": rep.notes, "eye_channel": rep.eye_chan, "blink_events": rep.blink_events, "blink_epochs": rep.blink_epochs_used,
             "blink_stage": stage(&rep.stage1), "other_stage": stage(&rep.stage2),
         });
     }

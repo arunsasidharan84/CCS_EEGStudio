@@ -1241,7 +1241,13 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                   ),
                 ],
                 const SizedBox(height: 8),
-                SelectableText(_status),
+                SelectableText(
+                  _busy || !_isPrepared
+                      ? _status
+                      : (_canRun
+                            ? 'Ready: ${_conditions.length} conditions · ${_roi.text} · ${_window0.text}–${_window1.text} ms'
+                            : 'Choose saved groups for each condition before averaging.'),
+                ),
                 if (_result != null)
                   TextButton.icon(
                     onPressed: () => Process.run(
@@ -1682,11 +1688,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
             const SizedBox(height: 6),
             if (_isPrepared) ...[
               Text(
-                '${index == 0
-                    ? "Group A · "
-                    : index == 1
-                    ? "Group B · "
-                    : ""}${c.savedGroups.isEmpty ? (c.name.isNotEmpty ? c.name : "not selected") : c.savedGroups.join(" + ")}',
+                c.savedGroups.isEmpty
+                    ? (c.name.isNotEmpty ? c.name : 'not selected')
+                    : c.savedGroups.join(' + '),
                 style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 12,
@@ -2218,7 +2222,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                       onChanged: (v) => setState(() => _displaySmoothing = v!),
                     ),
                     Text(
-                      'A: ${erpMap(d['profile'])['a_name']} · B: ${erpMap(d['profile'])['b_name']} · Difference = B − A. Peak polarity selects a measurement; it never flips voltages.',
+                      'Comparison: ${erpMap(d['profile'])['b_name']} − ${erpMap(d['profile'])['a_name']}. All named conditions are averaged separately.',
                     ),
                     ErpAxisControls(
                       onChanged: (v) => setState(() => _axisLimits = v),
@@ -2241,17 +2245,10 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                           valueListenable: _hover,
                           builder: (context, hover, child) => CustomPaint(
                             painter: ErpWorkbenchWavePainter(
-                              {
+                              smoothedErpDisplay({
                                 ...d,
                                 ..._axisLimits,
-                                for (final key in ['a', 'b', 'difference'])
-                                  key: smoothErp(
-                                    erpNumbers(d[key]),
-                                    erpNumbers(d['times']),
-                                    _displaySmoothing,
-                                  ),
-                                if (_displaySmoothing > 0) 'sem_difference': [],
-                              },
+                              }, _displaySmoothing),
                               negativeUp: _negativeUp,
                               hoverX: hover,
                             ),
@@ -2290,10 +2287,16 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 ],
                 [
                   for (final f in current)
-                    for (final item in erpMap(f['measurements']).entries)
+                    for (final item in erpMap(f['measurements']).entries.where(
+                      (e) =>
+                          f['condition_names'] is! List ||
+                          !(const ['A', 'B'].contains(e.key)),
+                    ))
                       [
                         f['subject'],
-                        item.key,
+                        item.key == 'B_minus_A'
+                            ? '${erpMap(f['profile'])['b_name']} − ${erpMap(f['profile'])['a_name']}'
+                            : item.key,
                         erpMap(item.value)['mean'],
                         erpMap(item.value)['signed_auc'],
                         erpMap(item.value)['peak_amplitude'],

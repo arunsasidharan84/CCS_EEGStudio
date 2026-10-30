@@ -6,6 +6,24 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.28]
+
+### Faster saving and clearer ERP displays
+
+- Buffer native JSON transfer writes (1 MiB) and borrow signal arrays rather than cloning them for serialization. Preserve the existing portable recording schema and samples. A local 100,000-sample comparison measured 285 ms for the previous unbuffered writer versus 2.6 ms buffered; this is a serialization microbenchmark, not an end-to-end processing speed claim.
+- Record within-trial reflection as an ICA method note rather than a processing failure warning, including compatible interpretation of older history. Actual skipped-step and cleaning warnings remain visible.
+- Show named conditions instead of Group A/B on condition cards and remove duplicate A/B aliases from the on-screen measurement table. Label the retained difference with the two condition names. Update readiness text after editing conditions.
+- Apply display smoothing to every named-condition waveform, fixing three-or-more-condition plots. Preserve unsmoothed analysis measurements.
+- Replace fixed interaction-plot amplitude limits with a shared data/SEM range, including negative amplitudes. Missing observations are omitted instead of plotted as zero; repeated recordings are averaged within participant before SEM.
+- Start publication figures from the active component/window, use an All participants group when labels are absent, keep unlabelled participants separate when labels are partially assigned, separate legends/headings, clip traces to axes and allow horizontal scrolling of figures and controls. Interaction SVG export uses the same measurements and range.
+- Validation: full app suite 237 passed, six skipped; native engine/epoch checks passed; portable serialization round-trip and benchmark passed; Data_v2 interaction figure rendered and inspected. A repeated 12-trial ICA run completed with zero warnings and retained the reflection explanation under method notes.
+
+### Installation and compatibility
+
+Open **Updates → Check for updates → Download and install**. The app selects the macOS, Windows or Linux package and verifies its published SHA-256 checksum. Per-user Linux installations continue to update without sudo.
+
+EDF+ remains the default recording output, with its `.ccsmeta` companion retained. Existing FIF, CCSEEG and legacy JSON inputs remain supported. This release preserves the portable recording schema and measurement CSV aliases; the on-screen table hides redundant A/B rows. Smoothing remains a display operation and does not change exported analysis measurements.
+
 ## [1.2.27]
 
 ### Saved-trial ERP workflow and preprocessing

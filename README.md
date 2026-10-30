@@ -135,6 +135,16 @@ The updater fetches the current installer on each run. Downloads use a private t
 
 ---
 
+## New in 1.2.28: faster saving and clearer ERP displays
+
+Install v1.2.28 through **Updates → Check for updates → Download and install**. Release packages for macOS, Windows and Linux include verified checksums.
+
+Native recording transfers use buffered JSON output without cloning the full signal array. In **Processing history**, within-trial reflection is a method note; actual skipped cleaning remains a warning.
+
+Condition cards and measurement tables use the saved names. The first two conditions define the displayed named difference (second minus first); additional conditions are averaged separately. Reorder conditions to change that comparison. Existing result/CSV A/B aliases remain readable, while the interactive table avoids duplicate alias rows.
+
+ERP smoothing affects **all displayed condition waveforms** and leaves measurements unchanged. Publication plots use the active component window; interaction plots share data-driven axes, omit absent data rather than drawing zero observations, and report SEM across participants. Without group labels the plot shows **All participants**; assign labels for group comparisons. Figures and their controls can be scrolled horizontally on narrow windows.
+
 ## New in 1.2.27: simpler saved-trial ERP analysis
 
 Install using **Updates → Check for updates → Download and install**. Version 1.2.27 is distributed through GitHub Releases with package checksums for macOS, Windows and Linux.

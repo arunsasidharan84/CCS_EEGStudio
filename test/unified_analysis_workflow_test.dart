@@ -127,8 +127,8 @@ void main() {
       await tester.ensureVisible(b);
       await tester.tap(b);
       await tester.pump();
-      expect(find.text('Group A · Congruent'), findsOneWidget);
-      expect(find.text('Group B · Incongruent'), findsOneWidget);
+      expect(find.text('Congruent'), findsOneWidget);
+      expect(find.text('Incongruent'), findsOneWidget);
       expect(find.text('Average & analyse ERP'), findsOneWidget);
       expect(
         tester.getRect(find.text('Average & analyse ERP')).bottom,

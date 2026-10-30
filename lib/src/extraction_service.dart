@@ -477,6 +477,9 @@ class ExtractionService {
         if (icaReport is Map<String, dynamic>) {
           final icaInfo = icaReport['ica'];
           if (icaInfo is Map<String, dynamic>) {
+            for (final note in icaInfo['notes'] as List? ?? []) {
+              emit(.92, 'ℹ $note');
+            }
             String stage(Object? v) {
               if (v is! Map<String, dynamic> || v['ran'] != true) {
                 return 'not run';
@@ -503,7 +506,10 @@ class ExtractionService {
           }
         }
         for (final w in (summary['warnings'] as List?) ?? const []) {
-          emit(.92, '⚠ $w');
+          emit(
+            .92,
+            '${'$w'.startsWith('Blink detection filters saved trials independently') ? 'ℹ' : '⚠'} $w',
+          );
         }
       }
       final resultSummary = stdout.trim().isEmpty

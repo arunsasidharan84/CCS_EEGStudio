@@ -33,7 +33,8 @@ Map<String, double?> reviewMeasures(
   final effPolarity = polarity.abs() > 1e-6
       ? polarity
       : () {
-          final winMean = indices.map((i) => y[i]).reduce((a, b) => a + b) / indices.length;
+          final winMean =
+              indices.map((i) => y[i]).reduce((a, b) => a + b) / indices.length;
           var maxPos = 0.0, maxNeg = 0.0;
           for (final i in indices) {
             final diff = y[i] - winMean;
@@ -63,7 +64,9 @@ Map<String, double?> reviewMeasures(
   final localPeaks = <int>[];
   final oppLocalPeaks = <int>[];
   for (var k = 1; k < indices.length - 1; k++) {
-    final prev = y[indices[k - 1]], curr = y[indices[k]], next = y[indices[k + 1]];
+    final prev = y[indices[k - 1]],
+        curr = y[indices[k]],
+        next = y[indices[k + 1]];
     if (effPolarity > 0) {
       if (curr >= prev && curr >= next && (curr > prev || curr > next)) {
         localPeaks.add(indices[k]);
@@ -96,7 +99,8 @@ Map<String, double?> reviewMeasures(
     // If the extremum lands on the window endpoint, but an interior local peak exists
     // (e.g. component polarity was positive like P2/P3a but setting was negative),
     // pick the prominent interior local peak instead of an endpoint artifact.
-    if ((peak == indices.first || peak == indices.last) && oppLocalPeaks.isNotEmpty) {
+    if ((peak == indices.first || peak == indices.last) &&
+        oppLocalPeaks.isNotEmpty) {
       var bestOpp = oppLocalPeaks.first;
       for (final p in oppLocalPeaks) {
         if (-effPolarity * y[p] > -effPolarity * y[bestOpp]) bestOpp = p;
@@ -272,3 +276,20 @@ String reviewCsv(
   }
   return '${lines.join('\n')}\n';
 }
+
+/// Smooth every displayed condition, leaving analysis arrays untouched.
+Map<String, dynamic> smoothedErpDisplay(
+  Map<String, dynamic> data,
+  double ms,
+) => {
+  ...data,
+  for (final key in ['a', 'b', 'difference'])
+    key: smoothErp(erpNumbers(data[key]), erpNumbers(data['times']), ms),
+  if (data['condition_waves'] is Map)
+    'condition_waves': {
+      for (final e in (data['condition_waves'] as Map).entries)
+        e.key: smoothErp(erpNumbers(e.value), erpNumbers(data['times']), ms),
+    },
+  if (ms > 0) 'sem_difference': [],
+  if (ms > 0) 'condition_sems': {},
+};

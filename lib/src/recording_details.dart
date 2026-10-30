@@ -7,6 +7,11 @@ Map<String, dynamic> _map(Object? value) =>
 List<String> recordingWarnings(EegRecording recording) =>
     (_map(recording.provenance['summary'])['warnings'] as List? ?? [])
         .map((w) => '$w')
+        .where(
+          (w) => !w.startsWith(
+            'Blink detection filters saved trials independently',
+          ),
+        )
         .toList();
 
 /// Recorded outcomes are kept separate from requested settings.
@@ -16,6 +21,12 @@ List<(String, String)> recordingHistory(EegRecording r) {
   final settings = _map(p['preprocessing']);
   final ica = _map(_map(summary['ica'])['ica']);
   final history = <(String, String)>[
+    for (final note in ica['notes'] as List? ?? []) ('Method note', '$note'),
+    for (final note in summary['warnings'] as List? ?? [])
+      if ('$note'.startsWith(
+        'Blink detection filters saved trials independently',
+      ))
+        ('Method note', '$note'),
     (
       'Data',
       '${r.labels.length} channels · ${r.sampleRate.toStringAsFixed(1)} Hz',

@@ -84,6 +84,33 @@ void main() {
       );
     },
   );
+  test('reflection is a method note while actual failures remain warnings', () {
+    final rec = EegRecording(
+      path: 'memory',
+      format: 'ccseeg',
+      sampleRate: 100,
+      labels: ['Pz'],
+      preview: [Float32List(10)],
+      sampleCount: 10,
+      provenance: {
+        'summary': {
+          'warnings': [
+            'Blink detection filters saved trials independently with within-trial reflection',
+            'ICA/ASR skipped: short filter',
+          ],
+        },
+      },
+    );
+    expect(recordingWarnings(rec), ['ICA/ASR skipped: short filter']);
+    expect(
+      recordingHistory(rec).any(
+        (row) =>
+            row.$1 == 'Method note' &&
+            row.$2.contains('within-trial reflection'),
+      ),
+      true,
+    );
+  });
   testWidgets(
     'processing shows elapsed time, iteration ceiling and cancellation',
     (tester) async {
