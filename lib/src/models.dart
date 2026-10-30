@@ -831,3 +831,26 @@ class AnalysisConfig {
     nonEegChannels: nonEegChannels,
   );
 }
+
+/// Restore legacy trial zero only from recorded timing, never from the filename.
+double? recordedEpochZero(Map<String, dynamic> meta, [int depth = 0]) {
+  if (depth > 16) return null;
+  final direct = meta['epoch_tmin'];
+  if (direct is num && direct.isFinite) return direct.toDouble();
+  final protocol = meta['epoch_protocol'];
+  if (protocol is Map &&
+      protocol['tmin'] is num &&
+      (protocol['tmin'] as num).isFinite) {
+    return (protocol['tmin'] as num).toDouble();
+  }
+  for (final key in ['provenance', 'parent_provenance']) {
+    if (meta[key] is Map) {
+      final value = recordedEpochZero(
+        Map<String, dynamic>.from(meta[key] as Map),
+        depth + 1,
+      );
+      if (value != null) return value;
+    }
+  }
+  return null;
+}

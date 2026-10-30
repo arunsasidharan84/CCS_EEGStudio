@@ -1,4 +1,5 @@
 import 'recording_storage.dart';
+import 'recording_save_dialog.dart';
 import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -111,10 +112,12 @@ class _PreparationState extends State<RecordingPreparationDialog> {
           double.parse(window.text),
           double.parse(overlap.text),
         );
-      final path = await FilePicker.saveFile(
+      if (!mounted) return;
+      final path = await saveRecordingDialog(
+        context,
         dialogTitle: 'Save prepared recording',
         fileName:
-            '${widget.recording.path.split(RegExp(r'[\\/]')).last.replaceFirst(RegExp(r'\.(ccseeg\.json|ccseeg|edf|set|fif|vhdr|mat)', caseSensitive: false), '')}_prepared.${RecordingStorage.extension}',
+            '${recordingDialogStem(widget.recording.path.split(RegExp(r'[\\/]')).last)}_prepared.${RecordingStorage.extension}',
         type: FileType.custom,
         allowedExtensions: [RecordingStorage.extension],
       );

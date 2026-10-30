@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models.dart';
+import '../recording_details.dart';
 import '../group_statistics.dart';
 import '../filtered_file_picker.dart';
 import 'workbench_service.dart';
@@ -134,6 +135,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
       _selectedPaths.isNotEmpty &&
       _inspection != null &&
       (widget.batchMode || _isPrepared) &&
+      (!_isPrepared || _profile != null) &&
       !(_isPrepared &&
           _profile != null &&
           (_conditions.isEmpty ||
@@ -541,7 +543,9 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
         _fillProfile(tasks.length == 1 ? profiles.first : null);
         _restoreProtocol();
         _status = _isPrepared
-            ? 'Choose saved groups A/B, review the ROI/window, then Average & analyse ERP.'
+            ? (_profile == null
+                  ? 'Saved trial metadata needs attention. Open Recording history or choose a complete signal/metadata pair.'
+                  : 'Ready: ${_conditions.length} conditions · ${_roi.text} · ${_window0.text}–${_window1.text} ms')
             : 'Review suggested classes and timing before running. ${_scanFiles.where((f) => f['error'] != null).length} input(s) need attention.';
       });
     } catch (e) {
@@ -755,332 +759,375 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
         child: Column(
           children: [
             if (widget.config != null)
-              ProtocolTools(
-                config: widget.config!,
-                beforeSave: () {
-                  _options();
-                },
-                onChanged: () => setState(_restoreProtocol),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: const Text('Protocol', style: TextStyle(fontSize: 13)),
+                children: [
+                  ProtocolTools(
+                    config: widget.config!,
+                    beforeSave: () {
+                      _options();
+                    },
+                    onChanged: () => setState(_restoreProtocol),
+                  ),
+                ],
               ),
-            const Tooltip(
-              message:
-                  'Trials are averaged separately within each selected condition. B minus A is the difference waveform. ROI and measurement windows control the reported ERP measurements.',
-              child: Text(
-                'Saved trials → condition groups → averages → measurements / statistics',
-              ),
-            ),
-            _card(widget.batchMode ? '1  Batch inputs' : '1  Active recording', [
-              TextButton.icon(
-                onPressed: _busy ? null : _openResult,
-                icon: const Icon(Icons.history),
-                label: const Text('Open saved ERP results…'),
-              ),
-              if (widget.batchMode) ...[
-                const Text(
-                  'Start from continuous recordings with events, or reuse saved epoched condition files.',
-                ),
-                const SizedBox(height: 10),
-                _field(
-                  _limit,
-                  'First N participants on folder import (0 = all)',
-                  helper:
-                      'Cleaned EDF counterparts are preferred; raw and cleaned copies are not counted twice.',
-                ),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _addFiles,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Files'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _addFolder,
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('Folder'),
-                    ),
-                    if (_paths.isNotEmpty)
-                      TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() {
-                                _paths.clear();
-                                _inspection = null;
-                                _fillProfile(null);
-                              }),
-                        child: const Text('Clear'),
-                      ),
-                  ],
-                ),
-              ] else ...[
-                TextButton.icon(
-                  onPressed: _busy ? null : widget.onOpenRecording,
-                  icon: const Icon(Icons.folder_open),
-                  label: const Text('Open preprocessed EEG / saved epochs…'),
-                ),
+            if (!widget.batchMode)
+              _card('1  Recording', [
                 Text(
                   widget.activeRecording?.path.split(RegExp(r'[/\\]')).last ??
-                      'No recording selected',
+                      'Open a recording',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
+                const SizedBox(height: 4),
                 Text(
                   _isPrepared
-                      ? 'Saved trials are reused. Select condition groups below; no marker selection or epoching is repeated.'
-                      : 'Create event-based trials in Epochs before comparing ERP groups here.',
+                      ? '${widget.activeRecording?.epochCount ?? 0} trials ready · use saved conditions below'
+                      : 'Create event trials in Epochs first',
+                  style: const TextStyle(fontSize: 11),
                 ),
-                if (!_isPrepared)
-                  OutlinedButton.icon(
-                    onPressed: widget.onPrepare,
-                    icon: const Icon(Icons.cut),
-                    label: const Text('Go to event epoching'),
-                  ),
-                if (_isPrepared)
-                  TextButton(
-                    onPressed: widget.onPrepare,
-                    child: const Text(
-                      'Change event groups / trial window in Epochs',
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    TextButton.icon(
+                      onPressed: _busy ? null : widget.onOpenRecording,
+                      icon: const Icon(Icons.folder_open, size: 16),
+                      label: const Text('Open EEG / epochs'),
                     ),
-                  ),
-                TextButton(
-                  onPressed: widget.onOpenBatch,
-                  child: const Text('Multiple recordings → Batch Workspace'),
-                ),
-              ],
-              if (widget.batchMode)
-                Text('${_selectedPaths.length} recordings selected'),
-              if (widget.batchMode && _paths.isNotEmpty)
-                TextButton(
-                  onPressed: _busy ? null : _reviewInputs,
-                  child: const Text('Review files and participant IDs…'),
-                ),
-            ]),
-            _card(
-              _isPrepared
-                  ? '2  ERP task and condition groups'
-                  : '2  Task and event markers',
-              [
-                if (!_isPrepared)
-                  DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    initialValue: _eventSource,
-                    decoration: const InputDecoration(
-                      labelText: 'Event timing source',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'auto',
-                        child: Text(
-                          'Sidecar preferred, otherwise native events',
+                    if (widget.activeRecording != null)
+                      IconButton(
+                        tooltip: 'Recording history',
+                        icon: const Icon(Icons.history, size: 18),
+                        onPressed: () => showRecordingDetails(
+                          context,
+                          widget.activeRecording!,
                         ),
                       ),
-                      DropdownMenuItem(
-                        value: 'sidecar',
-                        child: Text('EEGLAB .evt sidecar only'),
+                    IconButton(
+                      tooltip: 'Open saved ERP results',
+                      onPressed: _busy ? null : _openResult,
+                      icon: const Icon(Icons.restore, size: 18),
+                    ),
+                    IconButton(
+                      tooltip: 'Edit trial groups and windows in Epochs',
+                      onPressed: widget.onPrepare,
+                      icon: const Icon(Icons.content_cut, size: 18),
+                    ),
+                    IconButton(
+                      tooltip: 'Multiple recordings: Batch Workspace',
+                      onPressed: widget.onOpenBatch,
+                      icon: const Icon(Icons.account_tree, size: 18),
+                    ),
+                  ],
+                ),
+              ])
+            else
+              _card(widget.batchMode ? '1  Batch inputs' : '1  Active recording', [
+                TextButton.icon(
+                  onPressed: _busy ? null : _openResult,
+                  icon: const Icon(Icons.history),
+                  label: const Text('Open saved ERP results…'),
+                ),
+                if (widget.batchMode) ...[
+                  const Text(
+                    'Start from continuous recordings with events, or reuse saved epoched condition files.',
+                  ),
+                  const SizedBox(height: 10),
+                  _field(
+                    _limit,
+                    'First N participants on folder import (0 = all)',
+                    helper:
+                        'Cleaned EDF counterparts are preferred; raw and cleaned copies are not counted twice.',
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _addFiles,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Files'),
                       ),
-                      DropdownMenuItem(
-                        value: 'native',
-                        child: Text('EDF annotations / Status only'),
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _addFolder,
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('Folder'),
                       ),
+                      if (_paths.isNotEmpty)
+                        TextButton(
+                          onPressed: _busy
+                              ? null
+                              : () => setState(() {
+                                  _paths.clear();
+                                  _inspection = null;
+                                  _fillProfile(null);
+                                }),
+                          child: const Text('Clear'),
+                        ),
                     ],
-                    onChanged: _busy
-                        ? null
-                        : (v) {
-                            setState(() => _eventSource = v!);
-                            _inspect();
-                          },
                   ),
-
+                ] else ...[
+                  TextButton.icon(
+                    onPressed: _busy ? null : widget.onOpenRecording,
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Open preprocessed EEG / saved epochs…'),
+                  ),
+                  Text(
+                    widget.activeRecording?.path.split(RegExp(r'[/\\]')).last ??
+                        'No recording selected',
+                  ),
+                  Text(
+                    _isPrepared
+                        ? 'Saved trials are reused. Select condition groups below; no marker selection or epoching is repeated.'
+                        : 'Create event-based trials in Epochs before comparing ERP groups here.',
+                  ),
+                  if (!_isPrepared)
+                    OutlinedButton.icon(
+                      onPressed: widget.onPrepare,
+                      icon: const Icon(Icons.cut),
+                      label: const Text('Go to event epoching'),
+                    ),
+                  if (_isPrepared)
+                    TextButton(
+                      onPressed: widget.onPrepare,
+                      child: const Text(
+                        'Change event groups / trial window in Epochs',
+                      ),
+                    ),
+                  TextButton(
+                    onPressed: widget.onOpenBatch,
+                    child: const Text('Multiple recordings → Batch Workspace'),
+                  ),
+                ],
+                if (widget.batchMode)
+                  Text('${_selectedPaths.length} recordings selected'),
+                if (widget.batchMode && _paths.isNotEmpty)
+                  TextButton(
+                    onPressed: _busy ? null : _reviewInputs,
+                    child: const Text('Review files and participant IDs…'),
+                  ),
+              ]),
+            _card(_isPrepared ? '2  Compare conditions' : '2  Task and event markers', [
+              if (!_isPrepared)
                 DropdownButtonFormField<String>(
-                  initialValue: _task,
                   isExpanded: true,
+                  initialValue: _eventSource,
                   decoration: const InputDecoration(
-                    labelText: 'ERP to analyse',
+                    labelText: 'Event timing source',
                   ),
-                  items:
-                      [
-                            'Auto',
-                            'MMN',
-                            'N170',
-                            'N2pc',
-                            'N400',
-                            'P3',
-                            'LRP',
-                            'ERN',
-                            'Custom',
-                          ]
-                          .map(
-                            (v) => DropdownMenuItem(
-                              value: v,
-                              child: Text(
-                                v == 'Auto'
-                                    ? (widget.batchMode
-                                          ? 'Suggest per file (all ERP CORE tasks)'
-                                          : 'Suggest from active recording')
-                                    : v,
-                              ),
-                            ),
-                          )
-                          .toList(),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'auto',
+                      child: Text('Sidecar preferred, otherwise native events'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'sidecar',
+                      child: Text('EEGLAB .evt sidecar only'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'native',
+                      child: Text('EDF annotations / Status only'),
+                    ),
+                  ],
                   onChanged: _busy
                       ? null
                       : (v) {
-                          setState(() {
-                            _task = v!;
-                            if (v == 'Custom') _regroupEpochs = false;
-                          });
+                          setState(() => _eventSource = v!);
                           _inspect();
                         },
                 ),
-                const SizedBox(height: 10),
-                if (_profile != null)
-                  Text(
-                    erpTaskGuides[_profile!['task']] ??
-                        erpTaskGuides['Custom']!,
+
+              DropdownButtonFormField<String>(
+                initialValue: _task,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Component'),
+                items:
+                    [
+                          'Auto',
+                          'MMN',
+                          'N170',
+                          'N2pc',
+                          'N400',
+                          'P3',
+                          'LRP',
+                          'ERN',
+                          'Custom',
+                        ]
+                        .map(
+                          (v) => DropdownMenuItem(
+                            value: v,
+                            child: Text(
+                              v == 'Auto'
+                                  ? (widget.batchMode
+                                        ? 'Suggest per file (all ERP CORE tasks)'
+                                        : 'Suggest from active recording')
+                                  : v,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                onChanged: _busy
+                    ? null
+                    : (v) {
+                        setState(() {
+                          _task = v!;
+                          if (v == 'Custom') _regroupEpochs = false;
+                        });
+                        _inspect();
+                      },
+              ),
+              const SizedBox(height: 10),
+              if (_profile != null)
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Component guide',
+                    style: TextStyle(fontSize: 12),
                   ),
-                if (!_isPrepared)
-                  const Text(
-                    'Continuous-input marker definitions are configured here because no saved trial groups exist yet.',
-                  ),
-                if (widget.batchMode && _scanFiles.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  for (final task
-                      in _scanFiles
-                          .map((f) => erpMap(f['profile'])['task'])
-                          .whereType<String>()
-                          .toSet())
-                    ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        '$task · ${_scanFiles.where((f) => erpMap(f['profile'])['task'] == task).length} recordings',
-                      ),
-                      subtitle: Text(() {
-                        final p = erpMap(
-                          _scanFiles.firstWhere(
-                            (f) => erpMap(f['profile'])['task'] == task,
-                          )['profile'],
-                        );
-                        final w = erpNumbers(p['window']);
-                        return '${(p['roi'] as List).join(', ')} · ${(w.first * 1000).round()}–${(w.last * 1000).round()} ms';
-                      }()),
-                      trailing: TextButton(
-                        onPressed: _busy
-                            ? null
-                            : () {
-                                setState(() => _task = task);
-                                _inspect();
-                              },
-                        child: const Text('Review'),
-                      ),
+                  children: [
+                    Text(
+                      erpTaskGuides[_profile!['task']] ??
+                          erpTaskGuides['Custom']!,
                     ),
-                ],
-                if (_isPrepared && _profile == null)
-                  _check(
-                    'Use each task’s suggested saved-event comparison',
-                    _regroupEpochs,
-                    (v) {
-                      _regroupEpochs = v;
-                      _inspect();
-                    },
-                  ),
-                if (_profile != null) ...[
-                  const SizedBox(height: 8),
-                  _field(_componentLabel, 'Component name'),
-                  if (_isPrepared) ...[
-                    if (_scanFiles.any((f) => f['can_regroup'] == true) &&
-                        _profile!['task'] != 'Custom')
-                      _check(
-                        'Suggest task groups from saved locking events',
-                        _regroupEpochs,
-                        (v) {
-                          _regroupEpochs = v;
-                          _inspect();
-                        },
-                      ),
-                    if (_regroupEpochs)
-                      const Text(
-                        'Suggested groups are reconstructed from the original saved locking event of each existing trial. No re-epoching is performed.',
-                        style: TextStyle(fontSize: 11),
-                      ),
-                    _buildConditionEditor(),
-                  ] else ...[
-                    _buildConditionEditor(),
                   ],
-                  _field(
-                    _roi,
-                    _profile!['lateralized'] == true
-                        ? 'Left ROI, right ROI'
-                        : 'ROI channel(s), comma separated',
-                  ),
-                  if (_profile!['lateralized'] == true)
-                    const Text(
-                      'Conventional traces: ipsilateral vs contralateral. Original side classes are used for models/decoding.',
+                ),
+              if (!_isPrepared)
+                const Text(
+                  'Continuous-input marker definitions are configured here because no saved trial groups exist yet.',
+                ),
+              if (widget.batchMode && _scanFiles.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (final task
+                    in _scanFiles
+                        .map((f) => erpMap(f['profile'])['task'])
+                        .whereType<String>()
+                        .toSet())
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      '$task · ${_scanFiles.where((f) => erpMap(f['profile'])['task'] == task).length} recordings',
                     ),
-                  if (widget.batchMode)
-                    TextButton.icon(
+                    subtitle: Text(() {
+                      final p = erpMap(
+                        _scanFiles.firstWhere(
+                          (f) => erpMap(f['profile'])['task'] == task,
+                        )['profile'],
+                      );
+                      final w = erpNumbers(p['window']);
+                      return '${(p['roi'] as List).join(', ')} · ${(w.first * 1000).round()}–${(w.last * 1000).round()} ms';
+                    }()),
+                    trailing: TextButton(
                       onPressed: _busy
                           ? null
                           : () {
-                              try {
-                                final p = erpMap(
-                                  _options()['profile_override'],
-                                );
-                                setState(() {
-                                  _profiles[p['task'] as String] = p;
-                                  _status =
-                                      'Saved ${p['task']} settings for mixed-task batches.';
-                                });
-                              } catch (e) {
-                                setState(() => _status = 'Check settings: $e');
-                              }
+                              setState(() => _task = task);
+                              _inspect();
                             },
-                      icon: const Icon(Icons.save),
-                      label: const Text('Keep task settings for mixed batches'),
+                      child: const Text('Review'),
                     ),
-                  if (!_isPrepared)
-                    _pair('Epoch', _epoch0, _epoch1)
-                  else
-                    Text(
-                      'Saved trial window: ${_epoch0.text} to ${_epoch1.text} ms (preserved)',
-                    ),
-                  _pair('Baseline', _base0, _base1),
-                  _pair('Measurement window', _window0, _window1),
-                  DropdownButtonFormField<double>(
-                    initialValue: (_profile!['polarity'] as num).toDouble(),
-                    decoration: const InputDecoration(
-                      labelText: 'Component polarity',
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: -1, child: Text('Negative')),
-                      DropdownMenuItem(value: 1, child: Text('Positive')),
-                    ],
-                    onChanged: _busy
-                        ? null
-                        : (v) => setState(() => _profile!['polarity'] = v!),
-                  ),
-                ] else if (_scanFiles.isNotEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text(
-                      'Mixed-task batch uses each reviewed task preset. Select a task above to edit its event/timing rules.',
-                    ),
-                  ),
-                if (!_isPrepared)
-                  _check(
-                    'Require correct stimulus responses (where applicable)',
-                    _correct,
-                    (v) => _correct = v,
-                  ),
-                if (!_isPrepared)
-                  ExpansionTile(
-                    title: const Text('Behavior and timing notes'),
-                    children: const [
-                      Text(
-                        'ERP CORE stimulus tasks default to correct responses 200–1000 ms after the event (editable under solver/response parameters). MMN has no response filter. ERN includes correct and error responses; LRP uses correct left/right responses. No LCD-delay adjustment or extra filtering is applied automatically.',
-                      ),
-                    ],
                   ),
               ],
-            ),
+              if (_isPrepared && _profile == null)
+                _check('Use task presets', _regroupEpochs, (v) {
+                  _regroupEpochs = v;
+                  _inspect();
+                }),
+              if (_profile != null) ...[
+                const SizedBox(height: 8),
+                _field(_componentLabel, 'Component name'),
+                if (_isPrepared) ...[
+                  if (_scanFiles.any((f) => f['can_regroup'] == true) &&
+                      _profile!['task'] != 'Custom')
+                    _check('Regroup using task event codes', _regroupEpochs, (
+                      v,
+                    ) {
+                      _regroupEpochs = v;
+                      _inspect();
+                    }),
+                  if (_regroupEpochs)
+                    const Text(
+                      'Suggested groups are reconstructed from the original saved locking event of each existing trial. No re-epoching is performed.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  _buildConditionEditor(),
+                ] else ...[
+                  _buildConditionEditor(),
+                ],
+                _field(
+                  _roi,
+                  _profile!['lateralized'] == true
+                      ? 'Left ROI, right ROI'
+                      : 'Electrodes / ROI',
+                ),
+                if (_profile!['lateralized'] == true)
+                  const Text(
+                    'Conventional traces: ipsilateral vs contralateral. Original side classes are used for models/decoding.',
+                  ),
+                if (widget.batchMode)
+                  TextButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () {
+                            try {
+                              final p = erpMap(_options()['profile_override']);
+                              setState(() {
+                                _profiles[p['task'] as String] = p;
+                                _status =
+                                    'Saved ${p['task']} settings for mixed-task batches.';
+                              });
+                            } catch (e) {
+                              setState(() => _status = 'Check settings: $e');
+                            }
+                          },
+                    icon: const Icon(Icons.save),
+                    label: const Text('Keep task settings for mixed batches'),
+                  ),
+                if (!_isPrepared)
+                  _pair('Epoch', _epoch0, _epoch1)
+                else
+                  Text(
+                    'Saved trial window: ${_epoch0.text} to ${_epoch1.text} ms (preserved)',
+                  ),
+                _pair('Baseline', _base0, _base1),
+                _pair('Measurement window', _window0, _window1),
+                DropdownButtonFormField<double>(
+                  initialValue: (_profile!['polarity'] as num).toDouble(),
+                  decoration: const InputDecoration(
+                    labelText: 'Component polarity',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: -1, child: Text('Negative')),
+                    DropdownMenuItem(value: 1, child: Text('Positive')),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (v) => setState(() => _profile!['polarity'] = v!),
+                ),
+              ] else if (_scanFiles.isNotEmpty && widget.batchMode)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Mixed-task batch uses each reviewed task preset. Select a task above to edit its event/timing rules.',
+                  ),
+                ),
+              if (!_isPrepared)
+                _check(
+                  'Require correct stimulus responses (where applicable)',
+                  _correct,
+                  (v) => _correct = v,
+                ),
+              if (!_isPrepared)
+                ExpansionTile(
+                  title: const Text('Behavior and timing notes'),
+                  children: const [
+                    Text(
+                      'ERP CORE stimulus tasks default to correct responses 200–1000 ms after the event (editable under solver/response parameters). MMN has no response filter. ERN includes correct and error responses; LRP uses correct left/right responses. No LCD-delay adjustment or extra filtering is applied automatically.',
+                    ),
+                  ],
+                ),
+            ]),
             _card('3  Analyses', [
               ExpansionTile(
                 title: const Text('Solver, decoding and response parameters'),
@@ -1565,13 +1612,24 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
 
   Widget _buildConditionCard(int index) {
     final c = _conditions[index];
+    final count = _scanFiles.fold<int>(
+      0,
+      (n, f) =>
+          n +
+          c.savedGroups.fold<int>(
+            0,
+            (sum, g) =>
+                sum + (erpMap(f['marker_counts'])[g] as num? ?? 0).toInt(),
+          ),
+    );
     return Card(
+      key: ValueKey(c),
       margin: const EdgeInsets.symmetric(vertical: 4),
       elevation: 0,
-      color: Colors.grey.shade50,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(6),
-        side: BorderSide(color: Colors.grey.shade300),
+        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -1593,6 +1651,20 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                     },
                   ),
                 ),
+                if (index > 0)
+                  IconButton(
+                    tooltip:
+                        'Move condition earlier; first condition is the difference reference',
+                    icon: const Icon(Icons.arrow_upward, size: 17),
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                            _conditions.insert(
+                              index - 1,
+                              _conditions.removeAt(index),
+                            );
+                          }),
+                  ),
                 if (_conditions.length > 2)
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
@@ -1621,45 +1693,60 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 ),
               ),
               const SizedBox(height: 4),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
+              ExpansionTile(
+                key: ValueKey('groups-${identityHashCode(c)}'),
+                initiallyExpanded: c.savedGroups.isEmpty,
+                tilePadding: EdgeInsets.zero,
+                title: Text(
+                  c.savedGroups.isEmpty
+                      ? 'Choose saved groups'
+                      : '$count trials · edit groups',
+                  style: const TextStyle(fontSize: 11),
+                ),
                 children: [
-                  for (final g in _savedGroups)
-                    FilterChip(
-                      label: Text(
-                        '$g ×${_scanFiles.fold<int>(0, (n, f) => n + (erpMap(f['marker_counts'])[g] as num? ?? 0).toInt())}',
-                      ),
-                      selected: c.savedGroups.contains(g),
-                      onSelected: _busy
-                          ? null
-                          : (sel) {
-                              setState(() {
-                                if (sel) {
-                                  c.savedGroups.add(g);
-                                  for (
-                                    var other = 0;
-                                    other < _conditions.length;
-                                    other++
-                                  ) {
-                                    if (other != index)
-                                      _conditions[other].savedGroups.remove(g);
-                                  }
-                                  if (c.name.startsWith('Condition ') ||
-                                      c.name.isEmpty) {
-                                    c.name = c.savedGroups.join(' + ');
-                                    c.nameController.text = c.name;
-                                  }
-                                } else {
-                                  c.savedGroups.remove(g);
-                                  if (c.savedGroups.isNotEmpty) {
-                                    c.name = c.savedGroups.join(' + ');
-                                    c.nameController.text = c.name;
-                                  }
-                                }
-                              });
-                            },
-                    ),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    children: [
+                      for (final g in _savedGroups)
+                        FilterChip(
+                          label: Text(
+                            '$g ×${_scanFiles.fold<int>(0, (n, f) => n + (erpMap(f['marker_counts'])[g] as num? ?? 0).toInt())}',
+                          ),
+                          selected: c.savedGroups.contains(g),
+                          onSelected: _busy
+                              ? null
+                              : (sel) {
+                                  setState(() {
+                                    if (sel) {
+                                      c.savedGroups.add(g);
+                                      for (
+                                        var other = 0;
+                                        other < _conditions.length;
+                                        other++
+                                      ) {
+                                        if (other != index)
+                                          _conditions[other].savedGroups.remove(
+                                            g,
+                                          );
+                                      }
+                                      if (c.name.startsWith('Condition ') ||
+                                          c.name.isEmpty) {
+                                        c.name = c.savedGroups.join(' + ');
+                                        c.nameController.text = c.name;
+                                      }
+                                    } else {
+                                      c.savedGroups.remove(g);
+                                      if (c.savedGroups.isNotEmpty) {
+                                        c.name = c.savedGroups.join(' + ');
+                                        c.nameController.text = c.name;
+                                      }
+                                    }
+                                  });
+                                },
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ] else ...[
@@ -1909,7 +1996,7 @@ class _ErpWorkbenchViewState extends State<ErpWorkbenchView>
                 widget.batchMode
                     ? 'Choose a task folder, review the input type and task definitions, then run the batch.'
                     : _isPrepared
-                    ? '${widget.activeRecording?.epochCount ?? 0} saved trials are ready. No new epoching is required.\n\n1. Choose the ERP task at left.\n2. Select condition groups A and B.\n3. Review the ROI, baseline and measurement window.\n4. Click Average & analyse ERP.\n\nTrials are averaged separately within A and B.\nResults include A, B and B−A waveforms, measurements and statistics.'
+                    ? '${widget.activeRecording?.epochCount ?? 0} trials ready.\nChoose conditions and a measurement window at left, then Average & analyse ERP.'
                     : '1. Define locking events and named groups in the Epochs step.\n2. Save event epochs (with cleaning if needed).\n3. Select saved groups A/B here, review the task and window, then average.',
                 textAlign: TextAlign.center,
               ),

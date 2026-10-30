@@ -8,7 +8,7 @@ String erpOutputName(
   var stem = path.split(RegExp(r'[/\\]')).last;
   stem = stem.replaceFirst(
     RegExp(
-      r'(?:\.(?:json|ccseeg|edf|set|vhdr|fif|mat|orb))+$',
+      r'(?:\.(?:json|ccseeg|edf|set|vhdr|fif|mat|orb|xdf|signal))+$',
       caseSensitive: false,
     ),
     '',

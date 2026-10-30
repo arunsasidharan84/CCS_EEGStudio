@@ -6,6 +6,37 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.27]
+
+### Saved-trial ERP workflow and preprocessing
+
+- Repair ICA blink filtering for short saved trials using reflection within each trial, preserving sample timing and boundaries. Reuse filter coefficients across trials; retain the existing long-recording filter path.
+- Separate compact signal preparation and artifact-cleaning controls. Distinguish ASR used only on the ICA training copy from standalone ASR applied to continuous output; show the selected cleaning sequence.
+- Show elapsed processing time, ICA pass/iteration details and monotonic progress; reach completion only after export finishes. Retain the stop control.
+- Recover missing saved-trial time zero from recorded parent epoch protocols; preserve it during further preprocessing and export. Do not infer timing from filenames or assign epoch timing to continuous recordings.
+- Suggest actual saved condition groups instead of empty preset groups. Add explicit condition ordering, compact group selectors and readable preparation history with processing warnings. Carry input cleaning warnings into ERP results and reports.
+- Normalize recording-save names before the native dialog to avoid repeated extensions. Preserve legacy recording and metadata loading.
+- Correct named-condition trial counts in ERP measurement CSVs and quote condition labels safely. Existing A/B/contrast aliases remain compatible.
+- Validate the complete 360-trial Sakshi Data_v2 file with the P300 example at Pz, 300–600 ms; validate ICA on a 12-trial, eight-channel subset at 1000 Hz and 250 Hz. See the Data_v2 walkthrough in the README.
+
+### Outputs and compatibility
+
+- EDF+ remains the default recording output. Keep its `.ccsmeta` companion beside the signal file; FIF and CCSEEG options and legacy JSON inputs remain supported.
+- Existing saved epochs are reused without epoching again. The UI separates selecting saved condition groups from defining event codes for continuous recordings.
+- Existing ICA-skip warnings in older files remain visible; this release does not retroactively clean their samples. Re-run cleaning if required.
+- ERP measurement CSVs retain named conditions and legacy A/B/B_minus_A aliases. Select one representation for statistical input to avoid counting the same observations twice.
+
+### Validation and scope
+
+- Full Flutter suite: 234 passed, six skipped. Static analysis: no issues.
+- Native engine library: 14 tests passed; ERP parity: 12 passed; ICA library: 10 passed. Includes all seven ERP tasks reusing saved trials and correct named-condition counts.
+- Real Data_v2 validation: 61 channels, 360 saved trials, Pz, 300–600 ms, baseline −200–0 ms, original −500–1200 ms trial window; Standard 280, Pleasant 40 and Neurtral 40. Waveforms, measurements and a two-page PDF generated successfully. One participant is descriptive only.
+- Short-trial ICA validated separately on 12 complete trials and eight scalp channels at both 1000 Hz and 250 Hz. This is not a claim of full 61-channel ICA validation or identical reflected-edge behavior to other toolboxes.
+
+### Installation and in-app updates
+
+Open **Updates → Check for updates** to download and install v1.2.27. GitHub publishes macOS, Windows and Linux packages with `SHA256SUMS.txt`; the app verifies the selected package before installation. Existing per-user Linux installations continue to update without sudo.
+
 ## [1.2.26]
 
 - Supersede the unpublished v1.2.24/v1.2.25 builds after Windows tests exposed that forcibly killing an isolate can skip file-closing finally blocks. Use cooperative XDF cancellation checkpoints, allow decoder cleanup to finish, and await worker exit before returning. Other readers finish their current decoding phase before reporting cancellation. Add a Windows loading/epoch-worker preflight before desktop compilation.

@@ -1,5 +1,8 @@
 import 'feature_window_warnings.dart';
 import 'app_instance.dart';
+import 'recording_details.dart';
+import 'recording_save_dialog.dart';
+import 'processing_progress.dart';
 import 'xdf_loader.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:async';
@@ -925,7 +928,8 @@ class _FeatureHomeState extends State<FeatureHome>
         return;
       }
     }
-    final path = await FilePicker.saveFile(
+    final path = await saveRecordingDialog(
+      context,
       dialogTitle: 'Save cleaned EEG file',
       fileName: erpOutputName(
         input.path,
@@ -960,7 +964,7 @@ class _FeatureHomeState extends State<FeatureHome>
               .toPreprocessingOptions(nonEegChannels: _channels.nonEegChannels)
               .toJson(),
           if (_presetKey == 'erp') ...{
-            'stim_epochs': null,
+            'stim_epochs_spec': null,
             'epoch_before_gedai': false,
           },
         }),
@@ -984,7 +988,9 @@ class _FeatureHomeState extends State<FeatureHome>
               ? _Module.erpAnalysis
               : _Module.epochs,
         );
-      _log('✓ Preprocessed: ${cleaned.path}');
+      _log(
+        '${recordingWarnings(cleaned).isEmpty ? '✓ Preprocessed' : '⚠ Saved with processing warnings'}: ${cleaned.path}',
+      );
     } catch (e) {
       _log('✗ ERROR: $e');
     } finally {
@@ -998,7 +1004,8 @@ class _FeatureHomeState extends State<FeatureHome>
       _log('Run Stage 1 or load a preprocessed file first.');
       return;
     }
-    final path = await FilePicker.saveFile(
+    final path = await saveRecordingDialog(
+      context,
       dialogTitle: 'Save source localized EEG file',
       fileName: '${_stem(input.path)}_source.${RecordingStorage.extension}',
       allowedExtensions: [RecordingStorage.extension],
@@ -1508,6 +1515,11 @@ class _FeatureHomeState extends State<FeatureHome>
           ),
           const Spacer(),
           if (_activeRecording != null) ...[
+            IconButton(
+              tooltip: 'Processing history',
+              icon: const Icon(Icons.history, size: 18),
+              onPressed: () => showRecordingDetails(context, _activeRecording!),
+            ),
             _statusChip(
               '${_channels.eegCount} EEG'
               '${_channels.nonEegCount > 0 ? ' · ${_channels.nonEegCount} aux' : ''}',
@@ -2399,7 +2411,8 @@ class _FeatureHomeState extends State<FeatureHome>
       // Use the same selector as preprocessing, including regex and crop rules.
       final events = spec.selectEvents(input.markers);
       if (events.isEmpty) throw StateError('No events match this protocol.');
-      final pickedPath = await FilePicker.saveFile(
+      final pickedPath = await saveRecordingDialog(
+        context,
         dialogTitle: 'Save reusable event epochs',
         fileName: erpOutputName(
           input.path,
@@ -2557,10 +2570,10 @@ class _FeatureHomeState extends State<FeatureHome>
           if (_presetKey == 'erp') ...[
             _infoBox(
               _activeRecording?.isEpoched == true
-                  ? 'Clean the saved trials and retain their event labels and boundaries, then continue to ERP Analysis.'
+                  ? '${_activeRecording!.epochCount} saved trials · boundaries retained'
                   : _cfg.erpEpochFirst
-                  ? 'You chose Epoch → Clean. Create trials in Epochs first, then return here to clean the saved trials.'
-                  : 'Optional: clean this recording, then continue to Epochs. Already preprocessed? Skip this step.',
+                  ? 'Epoch → Clean · create trials first'
+                  : 'Clean → Epoch · cleaning is optional',
               _accentBlue,
             ),
             TextButton.icon(
@@ -3032,46 +3045,269 @@ class _FeatureHomeState extends State<FeatureHome>
     );
   }
 
-  Widget _progressBar() => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: LinearProgressIndicator(
-          value: _progress > 0 ? _progress : null,
-          backgroundColor: const Color(0xFF1E293B),
-          color: _accentGreen,
-          minHeight: 5,
-        ),
-      ),
-      TextButton.icon(
-        onPressed: _stopRequested ? null : _cancel,
-        icon: const Icon(Icons.stop_circle_outlined, size: 16),
-        label: Text(
-          _stopRequested
-              ? 'Stopping…'
-              : _loadingRecording
-              ? 'Cancel loading'
-              : 'Stop processing',
-        ),
-      ),
-      const SizedBox(height: 4),
-      Text(
-        _loadingRecording
-            ? '${_progress > 0 ? '${(_progress * 100).toStringAsFixed(0)}% · ' : ''}$_loadingMessage'
-            : _progress > 0
-            ? '${(_progress * 100).toStringAsFixed(0)}% · ${_logs.isEmpty ? 'Processing' : _logs.last}'
-            : (_logs.isEmpty ? 'Preparing data…' : _logs.last),
-        style: const TextStyle(color: _textMuted, fontSize: 11),
-      ),
-    ],
+  Widget _progressBar() => ProcessingProgress(
+    progress: _progress,
+    loading: _loadingRecording,
+    stopping: _stopRequested,
+    message: _loadingRecording
+        ? _loadingMessage
+        : (_logs.isEmpty ? 'Preparing…' : _logs.last),
+    onCancel: _cancel,
   );
 
   // ══════════════════════════════════════════════════════════════════════
   //  Shared option panels — used identically by both modes
   // ══════════════════════════════════════════════════════════════════════
 
+  Widget _preparationSection(
+    String title,
+    String summary,
+    List<Widget> children, {
+    bool open = false,
+  }) => ExpansionTile(
+    key: ValueKey('prep-$title'),
+    initiallyExpanded: open,
+    tilePadding: EdgeInsets.zero,
+    childrenPadding: const EdgeInsets.only(bottom: 8),
+    title: Text(
+      title,
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+    ),
+    subtitle: Text(
+      summary,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 11, color: _textMuted),
+    ),
+    children: children,
+  );
+
+  Widget _compactCleaner(
+    String label,
+    String value,
+    List<(String, String)> choices,
+    void Function(String) update,
+    String help, {
+    String? section,
+  }) => Row(
+    children: [
+      Expanded(
+        child: Tooltip(
+          message: help,
+          child: DropdownButtonFormField<String>(
+            key: ValueKey('$label-$value'),
+            initialValue: value,
+            isExpanded: true,
+            decoration: InputDecoration(labelText: label, isDense: true),
+            items: [
+              for (final choice in choices)
+                DropdownMenuItem(
+                  value: choice.$1,
+                  child: Text(choice.$2, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: _running ? null : (v) => setState(() => update(v!)),
+          ),
+        ),
+      ),
+      IconButton(
+        tooltip: help,
+        icon: const Icon(Icons.help_outline, size: 16),
+        onPressed: () => showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(label),
+            content: Text(help),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (section != null)
+        IconButton(
+          tooltip: '$label parameters',
+          icon: const Icon(Icons.tune, size: 17),
+          onPressed: _running
+              ? null
+              : () async {
+                  await showProcessingSettings(
+                    context,
+                    _cfg,
+                    'Preprocessing',
+                    section: section,
+                  );
+                  if (mounted) setState(() {});
+                },
+        ),
+    ],
+  );
+
   Widget _buildPreprocessingOptions() {
+    final steps = <String>[
+      if (_cfg.icaMethod != 'none') 'ICA / ICLabel',
+      if (_cfg.muscleMethod != 'none') 'Muscle',
+      if (_cfg.asrMode != 'off' && !_usesExistingEpochs) 'Output ASR',
+      if (_cfg.gedai) 'GEDAI',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _preparationSection(
+          'Signal preparation',
+          '${_cfg.filter ? '${_cfg.lowHz}–${_cfg.highHz} Hz' : 'Filter off'} · ${_cfg.referenceMode == 'average' ? 'Average reference' : 'Reference: ${_cfg.referenceMode}'}',
+          [
+            DropdownButtonFormField<String>(
+              key: ValueKey('compact-ref-${_cfg.referenceMode}'),
+              initialValue: _cfg.referenceMode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Output reference',
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'none', child: Text('Keep existing')),
+                DropdownMenuItem(
+                  value: 'average',
+                  child: Text('Common average'),
+                ),
+                DropdownMenuItem(
+                  value: 'channels',
+                  child: Text('Selected electrodes'),
+                ),
+              ],
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() => _cfg.referenceMode = v!),
+            ),
+            if (_cfg.referenceMode == 'channels')
+              TextFormField(
+                initialValue: _cfg.referenceChannels.join(', '),
+                decoration: const InputDecoration(
+                  labelText: 'Reference electrodes',
+                ),
+                onChanged: (v) => _cfg.referenceChannels = v
+                    .split(',')
+                    .map((s) => s.trim())
+                    .where((s) => s.isNotEmpty)
+                    .toList(),
+              ),
+            _check('Resample', _cfg.downsample, (v) => _cfg.downsample = v),
+            if (_cfg.downsample)
+              _field(_preDownsample, 'Target rate', suffix: 'Hz'),
+            _check('Bandpass + notch', _cfg.filter, (v) => _cfg.filter = v),
+            if (_cfg.filter)
+              Row(
+                children: [
+                  Expanded(child: _field(_preLow, 'High-pass')),
+                  const SizedBox(width: 6),
+                  Expanded(child: _field(_preHigh, 'Low-pass')),
+                  const SizedBox(width: 6),
+                  Expanded(child: _field(_preNotch, 'Notch')),
+                ],
+              ),
+            _check(
+              'Detect bad channels',
+              _cfg.badChannels,
+              (v) => _cfg.badChannels = v,
+            ),
+            _check(
+              'Interpolate bad channels',
+              _cfg.interpolate,
+              (v) => _cfg.interpolate = v,
+            ),
+          ],
+          open: true,
+        ),
+        _preparationSection(
+          'Artifact cleaning',
+          steps.isEmpty ? 'Off' : steps.join(' → '),
+          [
+            _compactCleaner(
+              'ICA / ICLabel',
+              _cfg.icaMethod,
+              const [
+                ('none', 'Off'),
+                ('runica', 'Infomax'),
+                ('picard', 'Picard'),
+              ],
+              (v) => _cfg.icaMethod = v,
+              'Removes classified components. Eye/ECG ICA runs first, followed by general artifact ICA. Saved trial boundaries are retained.',
+              section: 'ICA',
+            ),
+            if (_cfg.icaMethod != 'none')
+              Tooltip(
+                message:
+                    'ASR rejects bad samples from the temporary ICA fit copy only. The fitted ICA projection is then applied to the original samples; this is separate from output ASR below.',
+                child: _check(
+                  'ASR on ICA fit copy only',
+                  _cfg.icaFitAsr,
+                  (v) => _cfg.icaFitAsr = v,
+                ),
+              ),
+            _compactCleaner(
+              'ASR on output',
+              _cfg.asrMode,
+              const [
+                ('off', 'Off'),
+                ('correct', 'Reconstruct bursts'),
+                ('reject', 'Remove burst samples'),
+              ],
+              (v) {
+                if (_usesExistingEpochs && v != 'off') {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Output ASR requires continuous EEG. ICA fit-copy ASR supports saved trials.',
+                      ),
+                    ),
+                  );
+                } else {
+                  _cfg.asrMode = v;
+                }
+              },
+              'Separate output cleaning after ICA. Requires continuous EEG. Reconstruct keeps the time axis; Remove changes it. It is not the ASR used on ICA fitting data.',
+            ),
+            if (_usesExistingEpochs)
+              const Text(
+                'Output ASR: continuous input required',
+                style: TextStyle(fontSize: 11, color: _textMuted),
+              ),
+            _check('GEDAI', _cfg.gedai, (v) => _cfg.gedai = v),
+            if (_cfg.gedai) _field(_gedaiThreshold, 'GEDAI strength'),
+            if (_cfg.gedai && _cfg.icaMethod != 'none')
+              const Tooltip(
+                message:
+                    'ICA and GEDAI both remove artifacts. Using both can be redundant and may remove neural activity; inspect the output.',
+                child: Text(
+                  'ICA + GEDAI selected · review combined cleaning',
+                  style: TextStyle(fontSize: 11, color: _accentAmber),
+                ),
+              ),
+            if (steps.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Order: ${steps.join(' → ')}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+          ],
+          open: true,
+        ),
+        _preparationSection(
+          'Advanced settings & protocols',
+          'Filter design, muscle cleaning, GEDAI and saved windows',
+          [_buildDetailedPreprocessingOptions()],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailedPreprocessingOptions() {
     return Padding(
       padding: const EdgeInsets.only(left: 8, top: 2, bottom: 4),
       child: Column(
@@ -5371,6 +5607,32 @@ class _FeatureHomeState extends State<FeatureHome>
               ),
             ),
           ],
+        ),
+        InkWell(
+          onTap: () => showRecordingDetails(context, rec),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                Icon(
+                  recordingWarnings(rec).isEmpty
+                      ? Icons.history
+                      : Icons.warning_amber,
+                  size: 14,
+                  color: recordingWarnings(rec).isEmpty
+                      ? _textMuted
+                      : _accentAmber,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  recordingWarnings(rec).isEmpty
+                      ? 'Processing history'
+                      : 'History · warnings',
+                  style: const TextStyle(fontSize: 11, color: _textMuted),
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 6),
         Row(

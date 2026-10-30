@@ -270,7 +270,9 @@ class RecordingLoader {
       epochCount: pts == null ? 1 : count ~/ pts,
       pointsPerEpoch: pts,
       epochLabels: (m['epoch_labels'] as List?)?.cast<String>(),
-      epochTmin: (m['epoch_tmin'] as num?)?.toDouble(),
+      epochTmin:
+          (m['epoch_tmin'] as num?)?.toDouble() ??
+          (pts == null ? null : recordedEpochZero(m)),
       markers: [
         for (final v in m['markers'] as List? ?? [])
           EegMarker.fromJson(Map<String, dynamic>.from(v as Map)),
@@ -383,7 +385,9 @@ class RecordingLoader {
       pointsPerEpoch: pointsPerEpoch,
       epochLabels: epochLabels,
       markers: markers,
-      epochTmin: (json['epoch_tmin'] as num?)?.toDouble(),
+      epochTmin:
+          (json['epoch_tmin'] as num?)?.toDouble() ??
+          (pointsPerEpoch == null ? null : recordedEpochZero(provenance)),
     );
   }
 }

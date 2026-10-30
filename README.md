@@ -135,6 +135,24 @@ The updater fetches the current installer on each run. Downloads use a private t
 
 ---
 
+## New in 1.2.27: simpler saved-trial ERP analysis
+
+Install using **Updates → Check for updates → Download and install**. Version 1.2.27 is distributed through GitHub Releases with package checksums for macOS, Windows and Linux.
+
+The preprocessing panel groups **Signal preparation** and **Artifact cleaning**, with advanced protocols collapsed. **ASR on ICA fit copy** affects only decomposition training; **ASR on output** is a separate continuous-data cleaner. Progress shows elapsed time and ICA iterations, and completes after saving. Open **Processing history** on a recording to review completed steps and warnings.
+
+For the tested Pallavi `Data_v2` example:
+
+1. Open `Sakshi_task_post-epo_clean.edf` with its `.edf.ccsmeta` companion beside it. Existing trials are reused. The original file reports that ICA was skipped; inspect that warning before treating it as fully cleaned.
+2. Go to **ERP Analysis**, select **P3**, and retain the actual saved groups: **Standard (280)**, **Pleasant (40)** and **Neurtral (40)**. Labels are preserved exactly. Edit groups or reorder conditions to choose the comparison reference; review the displayed difference direction.
+3. Set **ROI Pz**, **measurement 300–600 ms**, and **baseline −200–0 ms**. The saved trial window is **−500–1200 ms**. Timing can be recovered from the recorded parent protocol when an older cleaned file omitted it.
+4. Average and analyse, then review waveforms, topography and measurements. Save the protocol for reuse in Batch Workspace. One participant supports descriptive results; group inference requires additional participants.
+5. Open `erp_results.ccserp` to resume results. Use `erp_measurements.csv` for condition-level summaries and `erp_report.pdf` for review. The CSV retains legacy A/B and B_minus_A aliases alongside named conditions: select either representation when preparing statistics to avoid duplicate observations. Trial-level exports are optional inputs for trial models, not participant-level ERP averages.
+
+Open `.vhdr` for original continuous data, `-epo.edf` for saved trials, or `-epo_clean.edf` for cleaned saved trials. Companion `.ccsmeta` files hold timing, groups and history and are loaded automatically. Saving now normalizes recording extensions before the dialog, preventing `.edf.edf` accumulation. Existing files remain compatible.
+
+Short-trial ICA uses within-trial reflected padding for blink filtering; this avoids the previous filter-length skip without joining neighboring trials. The long-trial detector retains its existing behavior. This boundary treatment is explicitly recorded and does not claim identical edge behavior to other toolboxes.
+
 ## What's new in 1.2.26: recording and ERP workflow
 
 Update from the app using **Updates → Check for updates**, then download and install v1.2.26. The updater selects the package for your platform and verifies its checksum. Linux per-user installations update without sudo.

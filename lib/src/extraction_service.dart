@@ -318,6 +318,12 @@ class ExtractionService {
     ViewerSelection selection = const ViewerSelection.empty(),
     required ProgressCallback onProgress,
   }) async {
+    var latestProgress = 0.0;
+    void emit(double p, String message) {
+      latestProgress = p.clamp(latestProgress, 1.0).toDouble();
+      onProgress(latestProgress, message);
+    }
+
     final outputWindow = outputWindowSeconds ?? options.gedaiEpochSeconds;
     if (!outputOverlapSeconds.isFinite ||
         outputOverlapSeconds < 0 ||
@@ -336,7 +342,7 @@ class ExtractionService {
       });
     }
     _cancelled = false;
-    onProgress(0, 'Preparing input…');
+    emit(0, 'Preparing input…');
     final executable = _enginePath ?? ExtractionService.findEngine();
     // Stimulus-locked epochs: pick the events from the raw markers here; the
     // engine cuts them after filtering and before GEDAI. Interval selections
@@ -358,7 +364,7 @@ class ExtractionService {
       for (final e in events) {
         counts[e.$2] = (counts[e.$2] ?? 0) + 1;
       }
-      onProgress(
+      emit(
         0,
         'Stimulus epochs: ${events.length} events '
         '(${counts.entries.map((e) => '${e.key} ×${e.value}').join(', ')}), ${stim.describe()}',
@@ -370,7 +376,7 @@ class ExtractionService {
         rejectedIntervals: const [],
       );
     } else if (stim != null) {
-      onProgress(0, 'Input is already epoched; stimulus epoching skipped.');
+      emit(0, 'Input is already epoched; stimulus epoching skipped.');
     }
     final temp = await Directory.systemTemp.createTemp('ccs_eeg_pre_');
     final requestedOutputPath = outputPath;
@@ -438,13 +444,13 @@ class ExtractionService {
           .listen((line) {
             if (line.startsWith('PROGRESS ')) {
               final fields = line.split(' ');
-              onProgress(
-                (double.tryParse(fields[1]) ?? 0) / 100,
+              emit(
+                .05 + .85 * (double.tryParse(fields[1]) ?? 0) / 100,
                 fields.skip(2).join(' '),
               );
             } else {
               stderr.add(line);
-              onProgress(0, line);
+              emit(0, line);
             }
           });
       final stdout = await process.stdout.transform(utf8.decoder).join();
@@ -463,8 +469,8 @@ class ExtractionService {
       if (stdout.trim().isNotEmpty) {
         final summary = jsonDecode(stdout) as Map<String, dynamic>;
         final bad = (summary['bad_channels'] as List?)?.join(', ') ?? '';
-        onProgress(
-          1,
+        emit(
+          .92,
           'Preprocessed ${summary['channels']} channels. Bad channels: ${bad.isEmpty ? 'none' : bad}',
         );
         final icaReport = summary['ica'];
@@ -481,23 +487,23 @@ class ExtractionService {
                   '${classes.isEmpty ? '' : ' ($classes)'}';
             }
 
-            onProgress(
-              1,
+            emit(
+              .92,
               'ICA (${icaInfo['method']}): blink stage ${stage(icaInfo['blink_stage'])}; '
               'second stage ${stage(icaInfo['other_stage'])}',
             );
           }
           final asrInfo = icaReport['asr'];
           if (asrInfo is Map<String, dynamic>) {
-            onProgress(
-              1,
+            emit(
+              .92,
               'ASR (${asrInfo['mode']}, cutoff ${asrInfo['cutoff']}): '
               '${asrInfo['samples_changed']} of ${asrInfo['samples_total']} samples modified',
             );
           }
         }
         for (final w in (summary['warnings'] as List?) ?? const []) {
-          onProgress(1, '⚠ $w');
+          emit(.92, '⚠ $w');
         }
       }
       final resultSummary = stdout.trim().isEmpty
@@ -608,6 +614,8 @@ class ExtractionService {
         jsonEncode({
           'source_path': recording.path,
           'parent_provenance': recording.provenance,
+          if (recording.isEpoched && recording.epochTmin != null)
+            'epoch_tmin': recording.epochTmin,
           if (stimulusOnsets.isNotEmpty ||
               (stim == null && (recording.isEpoched || preserveTimeline)))
             'epoch_start_seconds': stimulusOnsets.isNotEmpty
@@ -660,7 +668,7 @@ class ExtractionService {
       }
       _checkCancelled();
       if (requestedOutputPath != outputPath) {
-        onProgress(
+        emit(
           .98,
           'Exporting ${requestedOutputPath.toLowerCase().endsWith('.edf') ? 'EDF+ and metadata' : 'FIF and metadata'}…',
         );
@@ -676,6 +684,7 @@ class ExtractionService {
         _checkCancelled();
         cleaned = await RecordingLoader().load(requestedOutputPath);
       }
+      emit(1, 'Saved recording and processing history');
       return cleaned;
     } finally {
       await temp.delete(recursive: true);

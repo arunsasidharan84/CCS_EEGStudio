@@ -115,7 +115,9 @@ void main() {
       expect(find.text('Files'), findsNothing);
       expect(find.text('Choose from detected markers…'), findsNothing);
       expect(find.text('Event timing source'), findsNothing);
-      expect(find.textContaining('Saved trials are reused'), findsOneWidget);
+      expect(find.textContaining('trials ready · use saved'), findsOneWidget);
+      await tester.tap(find.text('Component guide'));
+      await tester.pumpAndSettle();
       expect(find.textContaining('RESPONSE-locked'), findsOneWidget);
       final a = find.text('Congruent ×202').first;
       await tester.ensureVisible(a);
@@ -132,7 +134,7 @@ void main() {
         tester.getRect(find.text('Average & analyse ERP')).bottom,
         lessThan(1100),
       );
-      await tester.ensureVisible(find.text('2  ERP task and condition groups'));
+      await tester.ensureVisible(find.text('2  Compare conditions'));
       await tester.pump();
       await tester.runAsync(() async {
         final boundary =

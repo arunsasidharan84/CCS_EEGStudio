@@ -108,6 +108,12 @@ pub fn filtfilt_fir(b: &[f64], x: &[f64]) -> Result<Vec<f64>, String> {
 
 /// EEGLAB `eegfilt(data, srate, locutoff, hicutoff)` (default `firls` design, zero phase) on one channel.
 pub fn eegfilt(x: &[f64], srate: f64, locutoff: f64, hicutoff: f64) -> Result<Vec<f64>, String> {
+    let w = eegfilt_coefficients(srate, locutoff, hicutoff)?;
+    filtfilt_fir(&w, x)
+}
+
+/// Design once for all trials; the continuous EEGLAB-compatible path is unchanged.
+pub fn eegfilt_coefficients(srate: f64, locutoff: f64, hicutoff: f64) -> Result<Vec<f64>, String> {
     let nyq = srate * 0.5;
     let trans = 0.15;
     let mut order = if locutoff > 0.0 { 3 * (srate / locutoff).trunc() as usize } else { 3 * (srate / hicutoff).trunc() as usize };
@@ -127,8 +133,26 @@ pub fn eegfilt(x: &[f64], srate: f64, locutoff: f64, hicutoff: f64) -> Result<Ve
     } else {
         (vec![0.0, hicutoff / nyq, hicutoff * (1.0 + trans) / nyq, 1.0], vec![1.0, 1.0, 0.0, 0.0])
     };
-    let w = firls(order, &f, &m)?;
-    filtfilt_fir(&w, x)
+    firls(order, &f, &m)
+}
+
+/// Reflect only within this trial when the unchanged FIR needs more padding.
+/// No neighboring trial contributes samples. This is the short-trial extension,
+/// not a claim of continuous EEGLAB equivalence at epoch edges.
+pub fn eyeblink_detection_epoch(x: &[f64], srate: f64, coefficients: &[f64]) -> Result<Vec<Vec<usize>>, String> {
+    if x.len() < 2 { return Ok(vec![]); }
+    let pad = 3 * coefficients.len().saturating_sub(1);
+    let filtered = if x.len() > pad {
+        filtfilt_fir(coefficients, x)?
+    } else {
+        let period = 2 * (x.len() - 1);
+        let reflected: Vec<f64> = (0..x.len() + 2 * pad).map(|i| {
+            let k = (i as isize - pad as isize).rem_euclid(period as isize) as usize;
+            x[if k < x.len() { k } else { period - k }]
+        }).collect();
+        filtfilt_fir(coefficients, &reflected)?[pad..pad+x.len()].to_vec()
+    };
+    detect_filtered(&filtered, srate)
 }
 
 fn std_dev(x: &[f64]) -> f64 {
@@ -156,13 +180,18 @@ fn corr(a: &[f64], b: &[f64]) -> f64 {
 
 /// `evt = accs_eyeblinkdetection(data, srate)`: groups of 1-based blink peak samples, most populated morphology first.
 pub fn eyeblink_detection(data_in: &[f64], srate: f64) -> Result<Vec<Vec<usize>>, String> {
-    let (bp_lo, bp_hi, threshold, blanking, maxcross, ampmin, noisethresh, corrval) = (1.5, 15.0, 2.0, 0.8, 10usize, 0.0, 2.5, 0.8);
+    if data_in.len() <= (0.8 * srate).round() as usize { return Ok(vec![]); }
+    let data = eegfilt(data_in, srate, 1.5, 15.0)?;
+    detect_filtered(&data, srate)
+}
+
+fn detect_filtered(data: &[f64], srate: f64) -> Result<Vec<Vec<usize>>, String> {
+    let (threshold, blanking, maxcross, ampmin, noisethresh, corrval) = (2.0, 0.8, 10usize, 0.0, 2.5, 0.8);
     let blank = (blanking * srate).round() as usize;
-    let len = data_in.len();
+    let len = data.len();
     if blank >= len {
         return Ok(vec![]);
     }
-    let data = eegfilt(data_in, srate, bp_lo, bp_hi)?;
     let fabs: Vec<f64> = data.iter().map(|v| v.abs()).collect();
     // nIgnore = round(min(2*srate, 0.02*len)); Fsig = Fsig(nIgnore:end-nIgnore+1) (1-based, inclusive)
     let n_ignore = ((2.0 * srate).min(len as f64 * 0.02)).round() as usize;
@@ -234,4 +263,26 @@ pub fn eyeblink_detection(data_in: &[f64], srate: f64) -> Result<Vec<Vec<usize>>
     let mut ok: Vec<usize> = if count.iter().any(|&c| c > 5) { (0..count.len()).filter(|&j| count[j] > 5).collect() } else { (0..count.len()).collect() };
     ok.sort_by(|&a, &b| count[b].cmp(&count[a])); // stable, descending
     Ok(ok.iter().map(|&t| (0..ev.len()).filter(|&k| ev_type[k] == t as i64).map(|k| ev[k]).collect()).collect())
+}
+
+
+#[cfg(test)]
+mod short_epoch_tests {
+    use super::*;
+    #[test]
+    fn short_trial_blink_filter_retains_original_sample_axis() {
+        let rate = 100.;
+        let x: Vec<f64> = (0..170).map(|i| (i as f64 * 0.13).sin()).collect();
+        let b = eegfilt_coefficients(rate, 1.5, 15.).unwrap();
+        assert!(filtfilt_fir(&b, &x).is_err());
+        let events = eyeblink_detection_epoch(&x, rate, &b).unwrap();
+        assert!(events.iter().flatten().all(|&i| i >= 1 && i <= x.len()));
+    }
+    #[test]
+    fn long_trial_preserves_existing_detector_results() {
+        let rate = 100.;
+        let x: Vec<f64> = (0..1200).map(|i| (i as f64 * 0.13).sin()).collect();
+        let b = eegfilt_coefficients(rate, 1.5, 15.).unwrap();
+        assert_eq!(eyeblink_detection(&x, rate).unwrap(), eyeblink_detection_epoch(&x, rate, &b).unwrap());
+    }
 }

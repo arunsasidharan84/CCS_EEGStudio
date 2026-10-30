@@ -643,9 +643,31 @@ fn portable_metadata(path: &Path) -> Result<Value, String> {
     parser.end().map_err(|e|e.to_string())?;
     Ok(result)
 }
+fn recorded_epoch_zero(v: &Value, depth: usize) -> Option<f64> {
+    if depth > 16 || !v.is_object() { return None; }
+    v["epoch_tmin"].as_f64().filter(|n| n.is_finite())
+        .or_else(|| v["epoch_protocol"]["tmin"].as_f64().filter(|n| n.is_finite()))
+        .or_else(|| recorded_epoch_zero(&v["provenance"], depth+1))
+        .or_else(|| recorded_epoch_zero(&v["parent_provenance"], depth+1))
+}
+fn restore_epoch_zero(mut v: Value, path: &str) -> Value {
+    if v["epoch_tmin"].as_f64().is_none() {
+        let zero = recorded_epoch_zero(&v, 0).or_else(|| {
+            let history: Value = serde_json::from_slice(&fs::read(format!("{path}.ccshistory")).ok()?).ok()?;
+            recorded_epoch_zero(&history, 0)
+        });
+        if let Some(tmin) = zero {
+            v["epoch_tmin"] = json!(tmin);
+            if let (Some(n),Some(rate)) = (v["source_epoch_samples"].as_u64(),v["sample_rate"].as_f64()) {
+                if rate > 0. && n > 0 { v["epoch_tmax"] = json!(tmin+(n-1) as f64/rate); }
+            }
+        }
+    }
+    v
+}
 fn epoch_metadata(path: &str) -> Option<Value> {
     if let Ok(Some(m))=crate::recording_metadata::read(Path::new(path)) {
-        return if m["source_epoch_samples"].as_u64().unwrap_or(0)>0 {Some(m)}else{None};
+        return if m["source_epoch_samples"].as_u64().unwrap_or(0)>0 {Some(restore_epoch_zero(m,path))}else{None};
     }
     if !path.to_lowercase().ends_with(".json") && !path.to_lowercase().ends_with(".ccseeg") {
         return None;
@@ -654,7 +676,7 @@ fn epoch_metadata(path: &str) -> Option<Value> {
     if value["source_epoch_samples"].as_u64().unwrap_or(0) == 0 {
         return None;
     }
-    Some(value)
+    Some(restore_epoch_zero(value,path))
 }
 fn original_epoch_codes(path: &str, meta: &Value) -> BTreeMap<usize, String> {
     let sidecar: Value = fs::read(format!("{}.ccshistory", path)).or_else(|_| fs::read(format!("{}.preprocessing.json", path)))
@@ -715,6 +737,21 @@ fn prepared_profile(path: &str, o: &Options, meta: Option<&Value>) -> Result<Pro
             .as_f64()
             .ok_or("Saved epochs need epoch_tmin; set epoch timing in preprocessing")?;
         p.epoch[1] = p.epoch[0] + (n - 1) as f64 / rate;
+    }
+    if let Some(v) = meta {
+        if !o.regroup_epochs && o.profile_override.is_none() && !o.profile_overrides.contains_key(&p.task) {
+            let mut saved = Vec::<String>::new();
+            for label in v["epoch_labels"].as_array().into_iter().flatten().filter_map(|v| v.as_str()) {
+                if !label.is_empty() && !saved.iter().any(|v| v == label) { saved.push(label.into()); }
+            }
+            let preset_matches = p.resolved_conditions().iter().any(|c|
+                saved.iter().any(|g| c.codes.iter().any(|code| code == g) || &c.name == g));
+            if !saved.is_empty() && !preset_matches {
+                p.conditions = saved.iter().map(|g| ConditionDef { name:g.clone(), codes:vec![g.clone()] }).collect();
+                p.a_name = saved[0].clone(); p.a_codes = vec![saved[0].clone()];
+                if saved.len() > 1 { p.b_name = saved[1].clone(); p.b_codes = vec![saved[1].clone()]; }
+            }
+        }
     }
     if meta.is_some()
         && o.regroup_epochs
@@ -1079,6 +1116,11 @@ fn analyse_file(input: &Input, rec: Recording, o: &Options) -> Result<FileResult
     let mut binned = Vec::new();
     let mut kept = Vec::new();
     let mut warnings = Vec::new();
+    if let Some(meta) = metadata.as_ref() {
+        if let Some(notes) = meta["provenance"]["summary"]["warnings"].as_array() {
+            warnings.extend(notes.iter().filter_map(|n| n.as_str()).map(|n| format!("Input preprocessing: {n}")));
+        }
+    }
     let mirrors: Vec<_> = labels
         .iter()
         .enumerate()
@@ -2049,11 +2091,13 @@ where
                 csv(&f.subject),
                 csv(&f.task),
                 csv(&f.path),
-                name,
+                csv(name),
                 if name == "A" {
                     f.n_a
                 } else if name == "B" {
                     f.n_b
+                } else if let Some(index) = f.condition_names.iter().position(|condition| condition == name) {
+                    f.condition_counts[index]
                 } else {
                     f.n_a + f.n_b
                 },
@@ -2215,4 +2259,37 @@ where
     .map_err(|e| e.to_string())?;
     eprintln!("PROGRESS 100 ERP workbench complete");
     Ok(result)
+}
+
+
+#[cfg(test)]
+mod saved_timing_recovery_tests {
+    use super::*;
+    #[test]
+    fn restores_only_recorded_parent_protocol_timing() {
+        let v = json!({"sample_rate":250.,"source_epoch_samples":426,
+            "provenance":{"parent_provenance":{"epoch_protocol":{"tmin":-0.5}}}});
+        let restored = restore_epoch_zero(v, "/nonexistent");
+        assert_eq!(restored["epoch_tmin"],json!(-0.5));
+        assert!((restored["epoch_tmax"].as_f64().unwrap()-1.2).abs()<1e-12);
+        assert!(restore_epoch_zero(json!({"source_epoch_samples":426}), "/nonexistent")["epoch_tmin"].is_null());
+    }
+}
+
+
+#[cfg(test)]
+mod prepared_condition_suggestion_tests {
+    use super::*;
+    #[test]
+    fn custom_saved_labels_become_conditions_without_empty_a_b() {
+        let meta = json!({"sample_rate":1000.,"source_epoch_samples":1701,"epoch_tmin":-0.5,
+            "epoch_labels":["Standard","Pleasant","Neurtral","Standard"]});
+        for task in ["Auto", "P3"] {
+            let mut opts = Options::default(); opts.task = task.into();
+            let p = prepared_profile("Sakshi_task_post-epo.edf", &opts, Some(&meta)).unwrap();
+            assert_eq!(p.conditions.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["Standard","Pleasant","Neurtral"]);
+            assert!(p.conditions.iter().all(|c| !c.codes.is_empty()));
+            if task=="P3" { assert_eq!(p.window,[0.3,0.6]); assert_eq!(p.roi,vec!["Pz"]); }
+        }
+    }
 }

@@ -80,6 +80,9 @@ void main() {
       await tester.tap(find.text('Preprocessing Options'));
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.text('Advanced settings & protocols'));
+      await tester.tap(find.text('Advanced settings & protocols'));
+      await tester.pumpAndSettle();
       expect(find.text('Fixed window length'), findsOneWidget);
       expect(
         find.text(

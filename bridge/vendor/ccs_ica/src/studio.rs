@@ -181,8 +181,15 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
         rep.eye_chan = locs[eye].label.clone();
         let mut events = Vec::new();
         let boundary = o.epoch_samples.unwrap_or(target[eye].len());
+        eprintln!("PROGRESS 47 ICA: blink detection within {} saved trial(s)", target[eye].len().div_ceil(boundary));
+        let trial_filter = if o.epoch_samples.is_some() {
+            rep.notes.push("Blink detection filters saved trials independently with within-trial reflection for short windows; event times and boundaries are retained".into());
+            Some(crate::blink::eegfilt_coefficients(srate, 1.5, 15.0)?)
+        } else { None };
         for (trial, samples) in target[eye].chunks(boundary).enumerate() {
-            let groups = eyeblink_detection(samples, srate)?;
+            let groups = if let Some(ref b) = trial_filter {
+                crate::blink::eyeblink_detection_epoch(samples, srate, b)?
+            } else { eyeblink_detection(samples, srate)? };
             events.extend(groups.iter().flatten().map(|&e| e + trial * boundary));
         }
         rep.blink_events = events.len();
@@ -196,6 +203,7 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
             o1.nsteps = o.nsteps;
             o1.threshold = o.blink_threshold.clone();
             o1.removeecg = o.remove_ecg;
+            eprintln!("PROGRESS 48 ICA pass 1/{}: eye/ECG fitting and ICLabel", if o.other_stage {2} else {1});
             let r = ica1_blink_ecg(&epochs, pnts, trials, srate, locs, &data, &o1, &mut rng)?;
             rep.stage1 = StageReport {
                 ran: true,
@@ -215,6 +223,7 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
     }
 
     if o.other_stage {
+        eprintln!("PROGRESS 49 ICA: prepare fit copy (training ASR {}; original output samples retained)", if o.fit_asr_cutoff.is_some() {"on"} else {"off"});
         let fit = match o.fit_asr_cutoff {
             Some(cut) if hpm.ncols() as f64 > 10.0 * srate => {
                 let rows = from_mat(&hpm);
@@ -257,6 +266,7 @@ pub fn clean_ica(target: &[Vec<f64>], hp: &[Vec<f64>], locs: &[ChanLoc], srate: 
             icachansind: vec![],
             reference: "common".to_string(),
         };
+        eprintln!("PROGRESS 50 ICA pass {}/{}: general artifact fitting and ICLabel", if o.blink_stage {2} else {1}, if o.blink_stage {2} else {1});
         let r = ica2_other(&fit, &target_eeg, &o2, &mut rng)?;
         rep.stage2 = StageReport {
             ran: true,

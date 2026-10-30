@@ -86,6 +86,23 @@ Future<String> writeErpWorkbenchReport(
         note(
           'Group inference uses participants, averaging repeated recordings within participant. The shaded difference band is between-participant SEM. Max-|t| sign-flip correction controls the reported channel or channel-time family; TANOVA compares normalized component-window maps. Measurement p values have within-component BH-FDR q values. Trial-level details and all model coefficients remain in the CSV/JSON exports.',
         ),
+        if (files.any(
+          (file) => (file['warnings'] as List? ?? []).any(
+            (w) => '$w'.startsWith('Input preprocessing:'),
+          ),
+        )) ...[
+          pw.SizedBox(height: 12),
+          pw.Text(
+            'Input processing warnings',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          for (final file in files)
+            for (final warning
+                in (file['warnings'] as List? ?? [])
+                    .where((w) => '$w'.startsWith('Input preprocessing:'))
+                    .take(6))
+              note('${file['subject']}: $warning'),
+        ],
         if (failures.isNotEmpty) ...[
           pw.SizedBox(height: 14),
           pw.Text(

@@ -56,7 +56,7 @@ void main() {
       await tester.tap(find.text('ERP Analysis').last);
       await tester.pumpAndSettle();
       expect(
-        find.text('Open preprocessed EEG / saved epochs…'),
+        find.text('Open EEG / epochs'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

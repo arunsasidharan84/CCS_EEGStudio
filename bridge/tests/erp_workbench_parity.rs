@@ -269,6 +269,13 @@ fn all_seven_tasks_reuse_saved_trials_without_re_epoching() {
         assert_eq!(f["channel_a"][0].as_array().unwrap().len(), n);
         assert_eq!(f["n_a"], 4);
         assert_eq!(f["n_b"], 4);
+        let measurements = fs::read_to_string(std::path::Path::new(&job.output).join("erp_measurements.csv")).unwrap();
+        for name in f["condition_names"].as_array().unwrap() {
+            let name = name.as_str().unwrap();
+            let row = measurements.lines().skip(1).find(|row| row.split(',').nth(3) == Some(name)).unwrap();
+            assert_eq!(row.split(',').nth(4), Some("4"), "named condition trial count: {name}");
+        }
+
         let trial_csv = std::path::Path::new(&job.output).join("erp_trial_measurements.csv");
         assert_eq!(trial_csv.exists(), task == "MMN");
         if task == "MMN" {
