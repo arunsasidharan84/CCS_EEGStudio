@@ -6,6 +6,20 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.29]
+
+### Compact workflow and preprocessing organization
+
+- Replace the full-height workflow sidebar with a compact horizontal step bar, restoring waveform width. Scroll the bar on narrow windows; select any step to return to its settings.
+- Keep the ERP clean-first/epoch-first selector beside the steps. Step order updates immediately and existing settings remain in memory when navigating.
+- Remove the duplicate preprocessing form from Advanced settings. Primary signal and artifact controls remain in their dedicated sections; protocols and additional processing parameters stay accessible without repeating those controls.
+- Retain non-ERP continuous/event/fixed output structure and fixed-window overlap settings. Existing saved trials retain their boundaries.
+- Update navigation regression tests to check horizontal ordering. Existing analysis methods and recording formats are unchanged.
+
+### In-app updates
+
+Install using **Updates → Check for updates → Download and install**. macOS, Windows and Linux packages include SHA-256 checksums verified by the updater. Existing per-user Linux updates remain supported.
+
 ## [1.2.28]
 
 ### Faster saving and clearer ERP displays

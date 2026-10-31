@@ -135,6 +135,12 @@ The updater fetches the current installer on each run. Downloads use a private t
 
 ---
 
+## New in 1.2.29: compact workflow navigation
+
+The horizontal workflow bar keeps recording space available. Click a step to revisit its settings; the ERP order selector changes the sequence between clean-first and epoch-first. Settings stay in memory across navigation. Run a changed processing step again to generate its revised output; changing settings alone does not modify saved data or recompute later results.
+
+Preprocessing has one primary set of signal and artifact controls. Advanced settings contains protocol reuse and additional parameter access rather than a duplicate form. Continuous-analysis output structure and overlap controls remain available. Use **Updates → Check for updates → Download and install** for the latest release.
+
 ## New in 1.2.28: faster saving and clearer ERP displays
 
 Install v1.2.28 through **Updates → Check for updates → Download and install**. Release packages for macOS, Windows and Linux include verified checksums.

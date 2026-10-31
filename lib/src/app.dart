@@ -193,14 +193,6 @@ Color _moduleColor(_Module m) => switch (m) {
   _Module.microstates => const Color(0xFF06B6D4),
 };
 
-bool _moduleHasViewer(_Module m) => switch (m) {
-  _Module.loadRaw ||
-  _Module.preprocess ||
-  _Module.epochs ||
-  _Module.sourceSpace => true,
-  _ => false,
-};
-
 class CcsEegApp extends StatelessWidget {
   const CcsEegApp({super.key});
   @override
@@ -1335,30 +1327,15 @@ class _FeatureHomeState extends State<FeatureHome>
         children: [
           _buildTopBar(),
           if (_running) _progressBar(),
+          if (_selectedModule != null &&
+              !_batchMaximized &&
+              !_workspaceMaximized &&
+              !_waveformMaximized)
+            _buildPipelineSidebar(),
           Expanded(
             child: _batchMaximized
                 ? _buildBatchBar(fillAvailable: true)
-                : Row(
-                    children: [
-                      if (_selectedModule != null &&
-                          !_sidebarCollapsed &&
-                          !_workspaceMaximized &&
-                          !_waveformMaximized)
-                        SizedBox(
-                          width: 260,
-                          child: Material(
-                            color: const Color(0xFF0A1628),
-                            child: _buildPipelineSidebar(),
-                          ),
-                        ),
-                      if (_selectedModule != null &&
-                          !_sidebarCollapsed &&
-                          !_workspaceMaximized &&
-                          !_waveformMaximized)
-                        const VerticalDivider(width: 1, color: _borderColor),
-                      Expanded(child: _buildModuleContent()),
-                    ],
-                  ),
+                : _buildModuleContent(),
           ),
           if (!_batchMaximized && !_workspaceMaximized && !_waveformMaximized)
             _buildLogPanel(),
@@ -1667,197 +1644,51 @@ class _FeatureHomeState extends State<FeatureHome>
   _Module get _afterEpochs =>
       _cfg.erpEpochFirst ? _Module.preprocess : _Module.erpAnalysis;
 
-  Widget _buildPipelineSidebar() {
-    return Column(
-      children: [
-        // Header
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-          child: Row(
-            children: [
-              const Icon(Icons.account_tree, size: 14, color: _accentBlue),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'WORKFLOW MODULES',
-                  style: TextStyle(
-                    color: _accentBlue,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-              ),
-              Text(
-                '${_orderedPipeline.length} modules',
-                style: const TextStyle(color: _textMuted, fontSize: 10),
-              ),
-            ],
+  Widget _buildPipelineSidebar() => Material(
+    color: const Color(0xFF0A1628),
+    child: SizedBox(
+      height: 58,
+      child: Row(
+        children: [
+          const SizedBox(width: 12),
+          const Text('WORKFLOW MODULES', style: TextStyle(fontSize: 10)),
+          const Tooltip(
+            message:
+                'Return to any step to edit settings. Run the step again to apply changes to a new output.',
+            child: Icon(Icons.account_tree, size: 18),
           ),
-        ),
-        if (_pipeline.contains(_Module.epochs)) _erpOrderChoice(),
-        const Divider(color: _borderColor, height: 1),
-        // Module list
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-            itemCount: _orderedPipeline.length,
-            itemBuilder: (context, i) {
-              final mod = _orderedPipeline[i];
-              final selected = mod == _selectedModule;
-              final color = _moduleColor(mod);
-              // Status indicators
-              final hasOutput = switch (mod) {
-                _Module.loadRaw => _raw != null,
-                _Module.epochs => _activeRecording?.isEpoched == true,
-                _Module.preprocess =>
-                  _preprocessed != null ||
-                      (_raw?.completedStages.contains('preprocess') ?? false),
-                _Module.sourceSpace =>
-                  _source != null ||
-                      (_raw?.completedStages.contains('source') ?? false),
-                _Module.featureExtraction => _featuresCsv != null,
-                _Module.plotsReport => _plotsDir != null,
-                _ => false,
-              };
-
-              return Column(
+          if (_pipeline.contains(_Module.epochs))
+            SizedBox(width: 190, child: _erpOrderChoice()),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
                 children: [
-                  // Connector line
-                  if (i > 0)
-                    Container(width: 2, height: 16, color: _borderColor),
-                  // Module card
-                  GestureDetector(
-                    onTap: () => setState(() => _selectedModule = mod),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? color.withValues(alpha: 0.12)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: selected
-                              ? color.withValues(alpha: 0.4)
-                              : _borderColor,
+                  for (var i = 0; i < _orderedPipeline.length; i++) ...[
+                    if (i > 0) const Icon(Icons.chevron_right, size: 16),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: ChoiceChip(
+                        avatar: Icon(
+                          _moduleIcon(_orderedPipeline[i]),
+                          size: 16,
+                        ),
+                        label: Text(_moduleLabel(_orderedPipeline[i])),
+                        selected: _selectedModule == _orderedPipeline[i],
+                        onSelected: (_) => setState(
+                          () => _selectedModule = _orderedPipeline[i],
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(7),
-                            ),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Icon(_moduleIcon(mod), size: 15, color: color),
-                                Positioned(
-                                  right: 2,
-                                  bottom: 0,
-                                  child: Text(
-                                    '${i + 1}',
-                                    style: TextStyle(
-                                      color: color,
-                                      fontSize: 7,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Tooltip(
-                                  message: switch (mod) {
-                                    _Module.loadRaw =>
-                                      'Open and inspect recordings. Switching between open recordings keeps derived files available.',
-                                    _Module.preprocess =>
-                                      'Choose events and named groups, set trial/baseline windows, then clean and save. Already epoched inputs retain their saved trials.',
-                                    _Module.erpAnalysis =>
-                                      'Choose saved conditions A and B, review the task, ROI and time window, then average and analyse. Use Batch Workspace for multiple recordings.',
-                                    _ =>
-                                      '${_moduleSubtitle(mod)}. Review the settings and run this stage using the active recording.',
-                                  },
-                                  child: Text(
-                                    _moduleLabel(mod),
-                                    style: TextStyle(
-                                      color: selected
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                Text(
-                                  _moduleSubtitle(mod),
-                                  style: const TextStyle(
-                                    color: _textMuted,
-                                    fontSize: 9.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          // Status / viewer / file icons
-                          if (hasOutput)
-                            const Icon(
-                              Icons.check_circle,
-                              size: 14,
-                              color: _accentGreen,
-                            ),
-                          if (_moduleHasViewer(mod) && hasOutput) ...[
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.visibility,
-                              size: 13,
-                              color: _textMuted.withValues(alpha: 0.6),
-                            ),
-                          ],
-                          if (mod == _Module.featureExtraction &&
-                              _featuresCsv != null) ...[
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.description,
-                              size: 13,
-                              color: _accentAmber.withValues(alpha: 0.7),
-                            ),
-                          ],
-                          if (mod == _Module.plotsReport &&
-                              _plotsDir != null) ...[
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.folder,
-                              size: 13,
-                              color: _accentAmber.withValues(alpha: 0.7),
-                            ),
-                          ],
-                        ],
-                      ),
                     ),
-                  ),
+                  ],
                 ],
-              );
-            },
+              ),
+            ),
           ),
-        ),
-      ],
-    );
-  }
-
-  // ── Module content router ───────────────────────────────────────────────
+        ],
+      ),
+    ),
+  );
 
   Widget _buildModuleContent() {
     final mod = _selectedModule;
@@ -2378,6 +2209,7 @@ class _FeatureHomeState extends State<FeatureHome>
                   'Name each condition and choose its event codes. Set the time window below; existing cleaning is preserved.',
                 ),
                 ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+
                 StimEpochPanel(
                   config: _cfg,
                   compact: true,
@@ -3300,408 +3132,81 @@ class _FeatureHomeState extends State<FeatureHome>
         ),
         _preparationSection(
           'Advanced settings & protocols',
-          'Filter design, muscle cleaning, GEDAI and saved windows',
+          'Reuse settings or configure additional parameters',
           [_buildDetailedPreprocessingOptions()],
         ),
       ],
     );
   }
 
-  Widget _buildDetailedPreprocessingOptions() {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, top: 2, bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: IconButton(
-              tooltip: 'Preprocessing parameters',
-              icon: const Icon(Icons.settings, size: 18),
-              onPressed: _running
-                  ? null
-                  : () async {
-                      await showProcessingSettings(
-                        context,
-                        _cfg,
-                        'Preprocessing',
-                      );
-                      if (mounted) setState(() {});
-                    },
+  Widget _buildDetailedPreprocessingOptions() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
+      if (!_usesExistingEpochs && _presetKey != 'erp')
+        DropdownButtonFormField<String>(
+          initialValue: _cfg.stimEpochs
+              ? 'events'
+              : _cfg.epochBeforeGedai
+              ? 'fixed'
+              : 'continuous',
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Saved data structure'),
+          items: const [
+            DropdownMenuItem(
+              value: 'continuous',
+              child: Text('Continuous recording'),
             ),
-          ),
-
-          ProtocolTools(config: _cfg, onChanged: () => setState(() {})),
-          if ((_activeRecording?.sampleRate ?? 0) > 500 &&
-              _cfg.icaMethod != 'none')
-            _infoBox(
-              'High-rate recording: ${_activeRecording!.sampleRate.round()} Hz × ${_activeRecording!.labels.length} channels. ICA scans the training samples repeatedly. Consider enabling downsampling to 250–500 Hz for conventional ERP work after checking the frequencies you need. Picard is also available as an alternative solver; results can differ.',
-              _accentAmber,
+            DropdownMenuItem(
+              value: 'events',
+              child: Text('Event-based trials (ERP)'),
             ),
-
-          if (_activeRecording?.isEpoched == true)
-            TextButton.icon(
-              onPressed: () =>
-                  setState(() => _selectedModule = _Module.erpAnalysis),
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text("Next: average and analyse saved trials"),
+            DropdownMenuItem(
+              value: 'fixed',
+              child: Text('Fixed-length windows'),
             ),
-          if (!_usesExistingEpochs && _presetKey != 'erp')
-            DropdownButtonFormField<String>(
-              initialValue: _cfg.stimEpochs
-                  ? 'events'
-                  : _cfg.epochBeforeGedai
-                  ? 'fixed'
-                  : 'continuous',
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Saved data structure',
-              ),
-              items: const [
-                DropdownMenuItem(
-                  value: 'continuous',
-                  child: Text('Continuous recording'),
-                ),
-                DropdownMenuItem(
-                  value: 'events',
-                  child: Text('Event-based trials (ERP)'),
-                ),
-                DropdownMenuItem(
-                  value: 'fixed',
-                  child: Text('Fixed-length windows'),
-                ),
-              ],
-              onChanged: _running
-                  ? null
-                  : (v) => setState(() {
-                      _cfg.stimEpochs = v == 'events';
-                      _cfg.epochBeforeGedai = v == 'fixed';
-                    }),
-            ),
-          if (!_usesExistingEpochs && _presetKey != 'erp')
-            StimEpochPanel(
-              showEnableControl: false,
-              config: _cfg,
-              markers: _raw?.markers ?? const [],
-              enabled: !_running,
-              onChanged: () => setState(() {}),
-            ),
-          if (!_usesExistingEpochs &&
-              _presetKey != 'erp' &&
-              !_cfg.stimEpochs &&
-              _cfg.epochBeforeGedai) ...[
-            _field(
-              _gedaiEpoch,
-              'Fixed window length',
-              suffix: 's',
-              helper:
-                  'Length of each saved fixed window. Event-based trials use their own event window.',
-              error: _gedaiEpochError,
-            ),
-            _field(_prepOverlap, 'Fixed window overlap', suffix: 's'),
           ],
-          _infoBox(
-            _presetKey == 'erp' && !_usesExistingEpochs
-                ? 'Clean → save continuous EEG → continue to Epochs. Your event protocol is retained for the Epochs step.'
-                : _usesExistingEpochs
-                ? 'Preserve existing trials → clean each trial → save.'
-                : _cfg.stimEpochs
-                ? 'Filter / ICA / ASR on continuous input → cut event trials → GEDAI per trial → save. Existing trials retain their boundaries.'
-                : _cfg.epochBeforeGedai
-                ? 'Filter → split into fixed windows → clean → save windows.'
-                : 'Filter → clean → save continuous data. GEDAI uses internal processing windows.',
-            _accentBlue,
-          ),
-          DropdownButtonFormField<String>(
-            key: ValueKey('reference-${_cfg.referenceMode}'),
-            initialValue: _cfg.referenceMode,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Output re-reference'),
-            items: const [
-              DropdownMenuItem(
-                value: 'none',
-                child: Text('Keep existing reference'),
-              ),
-              DropdownMenuItem(
-                value: 'average',
-                child: Text('Common average reference'),
-              ),
-              DropdownMenuItem(
-                value: 'channels',
-                child: Text('Selected / linked reference electrodes'),
-              ),
-            ],
-            onChanged: _running
-                ? null
-                : (v) => setState(() => _cfg.referenceMode = v!),
-          ),
-          if (_cfg.referenceMode == 'channels')
-            TextFormField(
-              key: ValueKey(_cfg.referenceChannels.join(',')),
-              initialValue: _cfg.referenceChannels.join(', '),
-              decoration: const InputDecoration(
-                labelText: 'Reference electrodes',
-                helperText:
-                    'Comma-separated labels, e.g. TP9, TP10. Applied after cleaning.',
-              ),
-              onChanged: (v) => _cfg.referenceChannels = v
-                  .split(',')
-                  .map((s) => s.trim())
-                  .where((s) => s.isNotEmpty)
-                  .toList(),
-            ),
-          _check(
-            'Downsample to target rate',
-            _cfg.downsample,
-            (v) => _cfg.downsample = v,
-          ),
-          if (_cfg.downsample)
-            Padding(
-              padding: const EdgeInsets.only(left: 24, bottom: 4),
-              child: _field(_preDownsample, 'Target Hz', suffix: 'Hz'),
-            ),
-          _check(
-            'Bandpass + notch filter',
-            _cfg.filter,
-            (v) => _cfg.filter = v,
-          ),
-          if (_cfg.filter)
-            Padding(
-              padding: const EdgeInsets.only(left: 24, bottom: 4),
-              child: Row(
-                children: [
-                  Expanded(child: _field(_preLow, 'HP Hz')),
-                  const SizedBox(width: 6),
-                  Expanded(child: _field(_preHigh, 'LP Hz')),
-                  const SizedBox(width: 6),
-                  Expanded(child: _field(_preNotch, 'Notch')),
-                ],
-              ),
-            ),
-          _check(
-            'Bad channel detection',
-            _cfg.badChannels,
-            (v) => _cfg.badChannels = v,
-          ),
-          TextButton.icon(
-            icon: const Icon(Icons.settings, size: 16),
-            label: const Text('ICA / ICLabel parameters'),
-            onPressed: _running
-                ? null
-                : () async {
-                    await showProcessingSettings(
-                      context,
-                      _cfg,
-                      'Preprocessing',
-                      section: 'ICA',
-                    );
-                    if (mounted) setState(() {});
-                  },
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 6),
-            child: DropdownButtonFormField<String>(
-              value: _cfg.icaMethod,
-              isExpanded: true,
-              dropdownColor: _cardColor,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-              decoration: const InputDecoration(
-                labelText: 'ICA cleaning (runs before ASR / GEDAI)',
-                helperText:
-                    'Blink-locked ICA + second ICA, components classified by ICLabel. Needs 10-05 electrode names.',
-                helperMaxLines: 3,
-              ),
-              items: const [
-                DropdownMenuItem(value: 'none', child: Text('Off')),
-                DropdownMenuItem(
-                  value: 'runica',
-                  child: Text('Infomax (EEGLAB runica) + ICLabel'),
-                ),
-                DropdownMenuItem(
-                  value: 'picard',
-                  child: Text('Picard + ICLabel'),
-                ),
-              ],
-              onChanged: _running
-                  ? null
-                  : (v) => setState(() => _cfg.icaMethod = v!),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: DropdownButtonFormField<String>(
-              value: _cfg.asrMode,
-              isExpanded: true,
-              dropdownColor: _cardColor,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-              decoration: InputDecoration(
-                labelText:
-                    'ASR burst cleaning (cutoff ${_cfg.asrCutoff.toStringAsFixed(0)} SD)',
-                helperText:
-                    'Artifact Subspace Reconstruction (clean_rawdata parity). Follows ICA when both are on; the cutoff is set in Preprocessing parameters.',
-                helperMaxLines: 3,
-              ),
-              items: const [
-                DropdownMenuItem(value: 'off', child: Text('Off')),
-                DropdownMenuItem(
-                  value: 'correct',
-                  child: Text('Correct (reconstruct bursts)'),
-                ),
-                DropdownMenuItem(
-                  value: 'reject',
-                  child: Text('Reject (drop burst samples)'),
-                ),
-              ],
-              onChanged: _running
-                  ? null
-                  : (v) => setState(() => _cfg.asrMode = v!),
-            ),
-          ),
-          if (_cfg.asrMode != 'off')
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: DropdownButtonFormField<String>(
-                value: _cfg.asrVariant,
-                isExpanded: true,
-                dropdownColor: _cardColor,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                decoration: const InputDecoration(
-                  labelText: 'ASR variant',
-                  helperText:
-                      'Standard and Riemannian are ports of EEGLAB clean_rawdata. The others are experimental (see report); E-ASR / VMD / EMD are for up to 8 channels.',
-                  helperMaxLines: 3,
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'standard',
-                    child: Text('Standard (clean_rawdata)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'riemannian',
-                    child: Text('Riemannian ASR (rASR)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'adaptive',
-                    child: Text('Adaptive ASR (own EMA design)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'juggler_dbscan',
-                    child: Text('ASR_DBSCAN (movement-heavy data)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'juggler_gev',
-                    child: Text('ASR_GEV (movement-heavy data)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'easr',
-                    child: Text('E-ASR (delay embedding, few channels)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'vmd',
-                    child: Text('VMD-ASR (few channels)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'emd',
-                    child: Text('EMD-ASR (few channels)'),
-                  ),
-                ],
-                onChanged: _running
-                    ? null
-                    : (v) => setState(() => _cfg.asrVariant = v!),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: DropdownButtonFormField<String>(
-              value: _cfg.muscleMethod,
-              isExpanded: true,
-              dropdownColor: _cardColor,
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-              decoration: const InputDecoration(
-                labelText: 'Muscle / motion cleaner',
-                helperText:
-                    'Runs after ICA and before ASR. BSS-CCA validated against canonical-correlation references; iCanClean (pseudo-reference) and wICA are interpretations.',
-                helperMaxLines: 3,
-              ),
-              items: const [
-                DropdownMenuItem(value: 'none', child: Text('Off')),
-                DropdownMenuItem(
-                  value: 'bss_cca',
-                  child: Text('BSS-CCA (muscle)'),
-                ),
-                DropdownMenuItem(
-                  value: 'icanclean',
-                  child: Text('iCanClean (pseudo-reference)'),
-                ),
-                DropdownMenuItem(
-                  value: 'wica',
-                  child: Text('wICA (HAPPE wavelet-enhanced ICA)'),
-                ),
-              ],
-              onChanged: _running
-                  ? null
-                  : (v) => setState(() => _cfg.muscleMethod = v!),
-            ),
-          ),
-          if ((_cfg.icaMethod != 'none' ||
-                  _cfg.asrMode != 'off' ||
-                  _cfg.muscleMethod != 'none') &&
-              (_usesExistingEpochs || _cfg.stimEpochs))
-            _infoBox(
-              'ICA supports saved trials and preserves their boundaries. Standalone ASR / muscle cleaners require continuous input.',
-              _accentBlue,
-            ),
-          if (_cfg.icaMethod != 'none' && _cfg.gedai)
-            _infoBox(
-              'ICA runs first and GEDAI afterwards. GEDAI already suppresses ocular and muscle artefacts, so enabling both is usually redundant: choose ICA (+ ASR) or GEDAI.',
-              _accentBlue,
-            ),
-          if (_cfg.asrMode == 'reject')
-            _infoBox(
-              'Reject mode removes burst samples, so output time stamps no longer map 1:1 to the input; use Correct to keep timing.',
-              _accentBlue,
-            ),
-          _check('GEDAI denoising', _cfg.gedai, (v) => _cfg.gedai = v),
-          if (_cfg.gedai)
-            Padding(
-              padding: const EdgeInsets.only(left: 24, bottom: 8),
-              child: _field(
-                _gedaiThreshold,
-                'GEDAI threshold',
-                helper:
-                    'auto: balanced; auto-: conservative; auto+: stronger. '
-                    'Numeric 0-12: lower removes less. Inspect rhythm preservation, especially with sparse montages.',
-              ),
-            ),
-          if (_usesExistingEpochs)
-            _infoBox(
-              'Existing trial boundaries are preserved. Use Crop / subepoch to change the window or overlap.',
-              _accentBlue,
-            ),
-          if (_cfg.gedai &&
-              !_usesExistingEpochs &&
-              !_cfg.stimEpochs &&
-              !_cfg.epochBeforeGedai)
-            Padding(
-              padding: const EdgeInsets.only(left: 24, bottom: 4),
-              child: _field(
-                _gedaiEpoch,
-                'GEDAI processing window',
-                suffix: 's',
-                helper:
-                    'Internal denoising window; the saved recording remains continuous.',
-                error: _gedaiEpochError,
-              ),
-            ),
-          _check(
-            'Interpolate bad channels',
-            _cfg.interpolate,
-            (v) => _cfg.interpolate = v,
-          ),
-        ],
+          onChanged: _running
+              ? null
+              : (v) => setState(() {
+                  _cfg.stimEpochs = v == 'events';
+                  _cfg.epochBeforeGedai = v == 'fixed';
+                }),
+        ),
+      if (!_usesExistingEpochs && _presetKey != 'erp')
+        StimEpochPanel(
+          showEnableControl: false,
+          config: _cfg,
+          markers: _raw?.markers ?? const [],
+          enabled: !_running,
+          onChanged: () => setState(() {}),
+        ),
+      if (!_usesExistingEpochs &&
+          _presetKey != 'erp' &&
+          !_cfg.stimEpochs &&
+          _cfg.epochBeforeGedai) ...[
+        _field(
+          _gedaiEpoch,
+          'Fixed window length',
+          suffix: 's',
+          helper:
+              'Length of each saved fixed window. Event-based trials use their own event window.',
+          error: _gedaiEpochError,
+        ),
+        _field(_prepOverlap, 'Fixed window overlap', suffix: 's'),
+      ],
+      TextButton.icon(
+        icon: const Icon(Icons.tune, size: 17),
+        label: const Text('Additional processing parameters'),
+        onPressed: _running
+            ? null
+            : () async {
+                await showProcessingSettings(context, _cfg, 'Preprocessing');
+                if (mounted) setState(() {});
+              },
       ),
-    );
-  }
+    ],
+  );
 
   Widget _buildEpochingOptions() {
     return Column(

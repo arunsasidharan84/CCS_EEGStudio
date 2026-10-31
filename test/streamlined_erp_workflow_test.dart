@@ -30,16 +30,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Epochs'), findsOneWidget);
       expect(
-        tester.getTopLeft(find.text('Preprocess')).dy,
-        lessThan(tester.getTopLeft(find.text('Epochs')).dy),
+        tester.getTopLeft(find.text('Preprocess')).dx,
+        lessThan(tester.getTopLeft(find.text('Epochs')).dx),
       );
       await tester.tap(find.byKey(const ValueKey('erp-order-false')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Epoch → Clean').last);
       await tester.pumpAndSettle();
       expect(
-        tester.getTopLeft(find.text('Epochs')).dy,
-        lessThan(tester.getTopLeft(find.text('Preprocess')).dy),
+        tester.getTopLeft(find.text('Epochs')).dx,
+        lessThan(tester.getTopLeft(find.text('Preprocess')).dx),
       );
       await tester.tap(find.byKey(const ValueKey('erp-order-true')));
       await tester.pumpAndSettle();
@@ -55,10 +55,7 @@ void main() {
       expect(find.text('Open recording / preprocessed EEG…'), findsOneWidget);
       await tester.tap(find.text('ERP Analysis').last);
       await tester.pumpAndSettle();
-      expect(
-        find.text('Open EEG / epochs'),
-        findsOneWidget,
-      );
+      expect(find.text('Open EEG / epochs'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
