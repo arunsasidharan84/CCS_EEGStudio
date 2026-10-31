@@ -815,3 +815,9 @@ Legacy file names can be reviewed and renamed from **Settings → Organise legac
 output filenames**; recordings, protocols, results, and histories have distinct
 extensions. See the [Pallavi ERP review and file migration guide](docs/pallavi_erp_review.md)
 for validation findings, limitations, and method references.
+
+## New in 1.2.30: microstate syntax and sample exports
+
+Install through **Updates → Check for updates → Download and install**. Platform packages and checksums are published in the GitHub release.
+
+Microstate analysis now offers per-sample state/fit/GFP exports, explicit epoch DC removal, Microsynt entropy representation ratios and dictionary discovery in both interactive and batch workflows. Progress includes model restarts, iterations and per-recording phases. See the [microstate syntax workflow, formulas and validation](docs/microstate_syntax.md).

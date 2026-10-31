@@ -78,7 +78,9 @@ fn main() -> Result<(), String> {
             job.microstate_inputs.clone()
         };
         let mut recordings = Vec::new();
+        let total=paths.len();
         for (index, path) in paths.into_iter().enumerate() {
+            eprintln!("PROGRESS 0 Reading microstate input {}/{}",index+1,total);
             let recording = preprocessing::load_portable(Path::new(&path))?;
             let name = job.microstate_names.get(index).cloned().unwrap_or_else(|| {
                 Path::new(&path)

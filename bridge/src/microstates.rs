@@ -22,6 +22,9 @@ pub struct MicrostateOptions {
     pub gfp_threshold_sd: f64,
     pub min_segment_ms: f64,
     pub seed: u64,
+    pub syntax_word_length: usize,
+    pub remove_epoch_dc: bool,
+    pub syntax_legacy_windows: bool,
 }
 
 impl Default for MicrostateOptions {
@@ -38,6 +41,9 @@ impl Default for MicrostateOptions {
             gfp_threshold_sd: 1.5,
             min_segment_ms: 30.0,
             seed: 12345,
+            syntax_word_length: 6,
+            remove_epoch_dc: true,
+            syntax_legacy_windows: false,
         }
     }
 }
@@ -91,11 +97,14 @@ pub struct RecordingResult {
     pub state_probabilities: Vec<Vec<f64>>,
     pub sequence_metrics: SequenceStats,
     pub sequence_plot: String,
+    pub sample_csv: String,
+    pub syntax: crate::microstate_syntax::SyntaxResult,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MicrostateResult {
     pub algorithm: String,
+    pub remove_epoch_dc: bool,
     pub selected_states: usize,
     pub state_labels: Vec<String>,
     pub channel_labels: Vec<String>,
@@ -117,6 +126,9 @@ struct Prepared {
     rate: f64,
     data: Vec<Vec<f64>>,
     gfp: Vec<f64>,
+    raw_gfp: Vec<f64>,
+    centered_gfp: Vec<f64>,
+    epoch_samples: usize,
 }
 
 #[derive(Deserialize)]
@@ -149,10 +161,12 @@ pub fn analyse(
     if common.len() < 4 {
         return Err("microstate analysis requires at least four common EEG channels".into());
     }
-    let prepared: Vec<Prepared> = recordings
-        .into_iter()
-        .map(|(name, r)| prepare(name, r, &common))
-        .collect::<Result<_, _>>()?;
+    let total_recordings=recordings.len();
+    let mut prepared=Vec::new();
+    for (i,(name,r)) in recordings.into_iter().enumerate() {
+        progress(2+6*i/total_recordings,&format!("Preparing {}/{}: {}",i+1,total_recordings,name));
+        prepared.push(prepare(name,r,&common,options.remove_epoch_dc)?);
+    }
     progress(8, "Selecting GFP peaks");
     let mut peak_maps = Vec::new();
     for p in &prepared {
@@ -180,7 +194,11 @@ pub fn analyse(
             10 + (k - min_k) * 35 / (max_k - min_k + 1),
             &format!("Fitting {k}-state model"),
         );
-        let (maps, gev, residual) = modified_kmeans(&peak_maps, k, options)?;
+        let (maps, gev, residual) = modified_kmeans(&peak_maps, k, options, &mut |rep, iteration| {
+            let base=10.0+(k-min_k) as f64*35.0/(max_k-min_k+1) as f64;
+            let fraction=rep as f64/options.repetitions.max(1) as f64;
+            progress((base+fraction*35.0/(max_k-min_k+1) as f64) as usize, &format!("Model {k}/{max_k} · restart {}/{} · iteration {} (convergence dependent)",rep+1,options.repetitions,iteration+1));
+        })?;
         let correction = (common.len() - 1) as f64 / (common.len() - k - 1) as f64;
         models.push((
             maps,
@@ -222,11 +240,35 @@ pub fn analyse(
     // recording in order.  Keep the same MT19937 stream for exact parity.
     let mut sequence_rng = NumpyMt19937::new(options.seed as u32);
     for (ri, p) in prepared.iter().enumerate() {
-        let (mut labels, correlations) = backfit(&p.data, &prototypes);
-        smooth_short_segments(&mut labels, &correlations, p.rate, options.min_segment_ms);
+        let (mut labels, correlations) = backfit(&p.data, &prototypes, &mut |t,n| progress(52+ri*30/prepared.len(), &format!("Backfit {}/{} · sample {}/{}: {}",ri+1,prepared.len(),t,n,p.name)));
+        progress(52+ri*30/prepared.len(), &format!("Backfitting {}/{}: {}",ri+1,prepared.len(),p.name));
+        for (epoch, chunk) in labels.chunks_mut(p.epoch_samples).enumerate() {
+            let start=epoch*p.epoch_samples;
+            let epoch_correlations: Vec<Vec<f64>> = correlations.iter().map(|state| state[start..start+chunk.len()].to_vec()).collect();
+            smooth_short_segments(chunk, &epoch_correlations, p.rate, options.min_segment_ms);
+        }
+        let trials=labels.chunks(p.epoch_samples).map(|x|x.to_vec()).collect::<Vec<_>>();
+        progress(52+ri*30/prepared.len(), &format!("Syntax and sample export {}/{}: {}",ri+1,prepared.len(),p.name));
+        let mut syntax=crate::microstate_syntax::analyse(&trials,selected,options.syntax_word_length,options.syntax_legacy_windows)?;
+        syntax.dictionary_discovery=crate::microstate_syntax::discover(&trials,selected,options.seed);
+        let sample_csv=format!("{:03}_{}.samples.csv",ri+1,safe_stem(&p.name));
+        let mut samples=std::io::BufWriter::new(fs::File::create(output_dir.join(&sample_csv)).map_err(|e|e.to_string())?);
+        write!(samples,"sample_index,epoch_index,epoch_sample,time_in_epoch_s,state_index,state_label,gfp_uv,fitting_gfp_uv,gfp_normalized,assigned_fit_pct").map_err(|e|e.to_string())?;
+        for name in &state_labels {write!(samples,",fit_{}_pct,relative_fit_{}_pct",name,name).map_err(|e|e.to_string())?;}
+        writeln!(samples).map_err(|e|e.to_string())?;
+        for (t,&state) in labels.iter().enumerate() {
+            let denominator=correlations.iter().map(|r|r[t]*r[t]).sum::<f64>();
+            write!(samples,"{},{},{},{},{},{},{},{},{},{}",t,t/p.epoch_samples,t%p.epoch_samples,(t%p.epoch_samples) as f64/p.rate,state+1,state_labels[state],p.raw_gfp[t],p.centered_gfp[t],p.gfp[t],100.*correlations[state][t].powi(2)).map_err(|e|e.to_string())?;
+            for row in &correlations {let r=row[t];write!(samples,",{},{}",100.*r*r,if denominator>0.{100.*r*r/denominator}else{0.}).map_err(|e|e.to_string())?;}
+            writeln!(samples).map_err(|e|e.to_string())?;
+        }
+        samples.flush().map_err(|e|e.to_string())?;
+
         let state_probabilities = normalized_fit_probabilities(&correlations);
         let state_stats = calculate_stats(p, &labels, &correlations, &prototypes, &state_labels);
-        let transition_matrix = transitions(&labels, selected);
+        let mut transition_matrix = vec![vec![0.;selected];selected];
+        let count=trials.iter().map(|t|t.len().saturating_sub(1)).sum::<usize>();
+        if count>0 {for trial in &trials {for pair in trial.windows(2) {transition_matrix[pair[0]][pair[1]]+=1./count as f64;}}}
         let seq_stats = sequence_stats(&labels, &mut sequence_rng);
         let filename = p.name.clone();
         let plot_name = format!("{}.microstates.svg", safe_stem(&filename));
@@ -242,7 +284,7 @@ pub fn analyse(
             sequence: labels.iter().map(|x| x + 1).collect(),
             state_probabilities,
             sequence_metrics: seq_stats,
-            sequence_plot: plot_name,
+            sequence_plot: plot_name, sample_csv, syntax,
         });
         progress(
             52 + (ri + 1) * 30 / prepared.len(),
@@ -250,6 +292,15 @@ pub fn analyse(
         );
     }
 
+    progress(84,"Writing syntax and summary tables");
+    let mut syntax_csv=std::io::BufWriter::new(fs::File::create(output_dir.join("MicrostateSyntax.csv")).map_err(|e|e.to_string())?);
+    writeln!(syntax_csv,"filename,word_length,jump_symbols,windows,entropy_bits,count,TER,EER,MER,EER_over_TER,EER_over_MER").map_err(|e|e.to_string())?;
+    for r in &results {for c in &r.syntax.classes {writeln!(syntax_csv,"{},{},{},{},{},{},{},{},{},{},{}",csv(&r.filename),r.syntax.word_length,r.syntax.jump_symbols,r.syntax.windows,c.entropy_bits,c.count,c.theoretical,c.empirical,c.markov,c.ratio_theoretical.map(|x|x.to_string()).unwrap_or_default(),c.ratio_markov.map(|x|x.to_string()).unwrap_or_default()).map_err(|e|e.to_string())?;}}
+    syntax_csv.flush().map_err(|e|e.to_string())?;
+    let mut discovery_csv=std::io::BufWriter::new(fs::File::create(output_dir.join("MicrostateDictionaryDiscovery.csv")).map_err(|e|e.to_string())?);
+    writeln!(discovery_csv,"filename,word_length,theoretical_words,observed_words,random_words_mean,random_words_min,random_words_max").map_err(|e|e.to_string())?;
+    for r in &results {for d in &r.syntax.dictionary_discovery {writeln!(discovery_csv,"{},{},{},{},{},{},{}",csv(&r.filename),d.word_length,d.theoretical_words,d.observed_words,d.random_words_mean,d.random_words_min,d.random_words_max).map_err(|e|e.to_string())?;}}
+    discovery_csv.flush().map_err(|e|e.to_string())?;
     let topo_name = "TemplateMicrostateTopos.svg".to_string();
     write_topographies_svg(
         &output_dir.join(&topo_name),
@@ -267,6 +318,7 @@ pub fn analyse(
     write_transitions_csv(&output_dir.join(&transitions_name), &results)?;
     write_categorical_csv(&output_dir.join(&categorical_name), &results)?;
     let result = MicrostateResult {
+        remove_epoch_dc: options.remove_epoch_dc,
         algorithm: "polarity-invariant modified k-means (EEGLAB Microstate parity)".into(),
         selected_states: selected,
         state_labels,
@@ -282,6 +334,7 @@ pub fn analyse(
         categorical_summary_csv: categorical_name,
         template_plot: topo_name,
     };
+    progress(94,"Saving microstate results");
     fs::write(
         output_dir.join("microstates.json"),
         serde_json::to_vec_pretty(&result).map_err(|e| e.to_string())?,
@@ -328,7 +381,7 @@ fn common_labels(recordings: &[(String, Recording)]) -> Result<Vec<String>, Stri
         .collect())
 }
 
-fn prepare(name: String, r: Recording, common: &[String]) -> Result<Prepared, String> {
+fn prepare(name: String, r: Recording, common: &[String], remove_dc: bool) -> Result<Prepared, String> {
     let n = r.channels.iter().map(Vec::len).min().unwrap_or(0);
     if n < 3 || r.rate <= 0.0 {
         return Err(format!("{name}: recording is empty"));
@@ -353,6 +406,10 @@ fn prepare(name: String, r: Recording, common: &[String]) -> Result<Prepared, St
             c[t] -= mean;
         }
     }
+    let raw_gfp = (0..n).map(|t| (data.iter().map(|c| c[t]*c[t]).sum::<f64>() / data.len() as f64).sqrt()).collect();
+    let epoch_samples = r.source_epoch_samples.unwrap_or(n).max(1);
+    if remove_dc {for channel in &mut data {for epoch in channel.chunks_mut(epoch_samples) {let mean=epoch.iter().sum::<f64>()/epoch.len() as f64;for v in epoch {*v-=mean;}}}}
+    let centered_gfp=(0..n).map(|t| (data.iter().map(|c|c[t]*c[t]).sum::<f64>()/data.len() as f64).sqrt()).collect();
     // pop_micro_selectdata(... normalise=1): equalise channel variance before
     // pooling datasets, then re-reference each sample.
     for c in &mut data {
@@ -377,7 +434,7 @@ fn prepare(name: String, r: Recording, common: &[String]) -> Result<Prepared, St
         name,
         rate: r.rate,
         data,
-        gfp,
+        gfp, raw_gfp, centered_gfp, epoch_samples,
     })
 }
 
@@ -387,7 +444,7 @@ fn select_peaks(p: &Prepared, o: &MicrostateOptions) -> Vec<usize> {
     let ceiling = mean + o.gfp_threshold_sd * sd;
     let distance = ((o.min_peak_distance_ms * p.rate / 1000.0).round() as usize).max(1);
     let mut candidates: Vec<usize> = (1..p.gfp.len() - 1)
-        .filter(|i| p.gfp[*i] >= p.gfp[*i - 1] && p.gfp[*i] > p.gfp[*i + 1] && p.gfp[*i] <= ceiling)
+        .filter(|i| *i % p.epoch_samples != 0 && (*i+1)%p.epoch_samples != 0 && p.gfp[*i] >= p.gfp[*i - 1] && p.gfp[*i] > p.gfp[*i + 1] && p.gfp[*i] <= ceiling)
         .collect();
     candidates.sort_by(|a, b| p.gfp[*b].total_cmp(&p.gfp[*a]));
     let mut selected = Vec::new();
@@ -424,6 +481,7 @@ fn modified_kmeans(
     maps: &[Vec<f64>],
     k: usize,
     o: &MicrostateOptions,
+    progress: &mut dyn FnMut(usize,usize),
 ) -> Result<(Vec<Vec<f64>>, f64, f64), String> {
     let mut best: Option<(Vec<Vec<f64>>, f64, f64)> = None;
     for rep in 0..o.repetitions.max(1) {
@@ -444,7 +502,8 @@ fn modified_kmeans(
             })
             .collect();
         let mut previous = f64::NEG_INFINITY;
-        for _ in 0..o.max_iterations.max(1) {
+        for iteration in 0..o.max_iterations.max(1) {
+            if iteration % 10 == 0 {progress(rep,iteration);}
             let assignments: Vec<usize> = maps
                 .iter()
                 .map(|m| {
@@ -757,11 +816,12 @@ fn scalp_positions(labels: &[String], meta: &MetaMapsResource) -> Vec<ScalpPosit
         .collect()
 }
 
-fn backfit(data: &[Vec<f64>], prototypes: &[Vec<f64>]) -> (Vec<usize>, Vec<Vec<f64>>) {
+fn backfit(data: &[Vec<f64>], prototypes: &[Vec<f64>], progress: &mut dyn FnMut(usize,usize)) -> (Vec<usize>, Vec<Vec<f64>>) {
     let n = data[0].len();
     let mut labels = vec![0; n];
     let mut correlations = vec![vec![0.0; n]; prototypes.len()];
     for t in 0..n {
+        if t%4096==0 {progress(t,n);}
         let mut map: Vec<f64> = data.iter().map(|c| c[t]).collect();
         normalize(&mut map);
         for (s, p) in prototypes.iter().enumerate() {
@@ -843,7 +903,7 @@ fn calculate_stats(
     state_labels: &[String],
 ) -> Vec<StateStats> {
     let total_gfp2 = p.gfp.iter().map(|x| x * x).sum::<f64>().max(1e-15);
-    let rr = runs(labels);
+    let rr: Vec<_> = labels.chunks(p.epoch_samples).enumerate().flat_map(|(epoch,chunk)| runs(chunk).into_iter().map(move |(state,a,b)| (state,a+epoch*p.epoch_samples,b+epoch*p.epoch_samples))).collect();
     let duration = labels.len() as f64 / p.rate;
     (0..prototypes.len())
         .map(|s| {
@@ -1498,4 +1558,15 @@ mod tests {
         let assignment = priority_assignment(&[vec![0.50, 0.49], vec![0.20, -0.70]], 0.5);
         assert_eq!(assignment, vec![None, Some(1)]);
     }
+}
+
+#[cfg(test)] mod epoch_preparation_tests {
+ use super::*;
+ #[test] fn per_epoch_dc_and_original_gfp_are_distinct(){
+  let labels=vec!["Fz".into(),"Cz".into(),"Pz".into(),"Oz".into()];
+  let channels:Vec<Vec<f32>>=(0..4).map(|c|(0..400).map(|t|((c+1)*1000+(t/200)*500) as f32+((t%200) as f32*0.1+c as f32).sin()).collect()).collect();
+  let p=prepare("test".into(),Recording{rate:100.,labels:labels.clone(),channels,source_epoch_samples:Some(200),epoch_labels:None},&labels,true).unwrap();
+  for ch in &p.data {for epoch in ch.chunks(200) {assert!((epoch.iter().sum::<f64>()/epoch.len() as f64).abs()<1e-8);}}
+  assert!(p.raw_gfp[0]>100.);assert!(p.centered_gfp[0]<2.);
+ }
 }

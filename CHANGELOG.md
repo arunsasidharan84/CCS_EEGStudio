@@ -6,6 +6,28 @@ its matching section is missing.
 
 ## [Unreleased]
 
+## [1.2.30]
+
+### Microstate syntax and sample-level exports
+
+- Add native Microsynt TER/EER/MER, entropy representation ratios, observed word counts and seeded dictionary discovery, with editable word length and an explicit legacy-window compatibility option.
+- Export per-sample final labels, epoch/sample indices, original and fitting GFP, assigned squared-correlation fit and each state's absolute/relative fit percentages.
+- Respect epoch boundaries in peak selection, smoothing, state durations, transitions and syntax. Add visible per-epoch channel DC subtraction for analysis, recorded in results; keep original GFP separately.
+- Show loading, preparation, model/restart/iteration, sample backfit and output phases with elapsed time and Stop in the workspace centre as well as the controls. Stage JSON serialization/result decoding off the UI thread.
+- Validate four complete supplied 15-second epochs (60,000 samples), paper worked examples and supplied Python-reference parity. Document sparse-dictionary limits and distinguish legacy sequence complexity from the paper's LZMA2 measure.
+
+### Interpretation, compatibility and validation
+
+- Sample fit means `100 × r²` for the final assigned state. Relative per-state fits are normalized squared correlations, not calibrated probabilities. Original µV GFP, post-DC-removal µV GFP and normalized unitless GFP have separate columns.
+- Default syntax uses no-permanence sequences and includes the final valid word window, as in the paper. Enable legacy window counting to match the supplied `microsynt.py` off-by-one convention. Sparse dictionaries are flagged; dictionary discovery does not claim a cohort-level statistical optimum.
+- Per-epoch channel DC removal is visible and defaults on for new analyses; its setting is stored in results. Source files remain unchanged. Older saved microstate results without syntax fields remain readable. Historical LZ/sequence complexity retains its previous convention and is not presented as the paper's LZMA2 measure.
+- Four complete 63-channel, 15-second SET/FDT recordings were tested: 60,000 sample rows, correct assigned/per-state fits, normalized relative fits, epoch indices and monotonic progress. Single-recording analysis was also checked. Rust TER/EER/MER match the supplied Python reference to 1e-10 with the documented window convention.
+- Local validation: 238 app tests passed (six skipped), 18 native library tests passed, and static analysis was clean. A reusable real-data validation tool and method/license documentation are included.
+
+### Installation and in-app updates
+
+Use **Updates → Check for updates → Download and install**. GitHub provides macOS, Windows and Linux packages with SHA-256 checksums verified by the app. Existing per-user Linux installations continue to update without sudo.
+
 ## [1.2.29]
 
 ### Compact workflow and preprocessing organization

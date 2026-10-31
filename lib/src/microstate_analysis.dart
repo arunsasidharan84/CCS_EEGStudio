@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
+import 'processing_progress.dart';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -25,6 +27,9 @@ class MicrostateOptions {
     this.gfpThresholdSd = 1.5,
     this.minSegmentMs = 30,
     this.seed = 12345,
+    this.syntaxWordLength = 6,
+    this.removeEpochDc = true,
+    this.syntaxLegacyWindows = false,
   });
 
   final int minStates;
@@ -38,6 +43,9 @@ class MicrostateOptions {
   final double gfpThresholdSd;
   final double minSegmentMs;
   final int seed;
+  final int syntaxWordLength;
+  final bool removeEpochDc;
+  final bool syntaxLegacyWindows;
 
   Map<String, Object> toJson() => {
     'min_states': minStates,
@@ -51,12 +59,16 @@ class MicrostateOptions {
     'gfp_threshold_sd': gfpThresholdSd,
     'min_segment_ms': minSegmentMs,
     'seed': seed,
+    'syntax_word_length': syntaxWordLength,
+    'remove_epoch_dc': removeEpochDc,
+    'syntax_legacy_windows': syntaxLegacyWindows,
   };
 }
 
 class MicrostateResult {
   const MicrostateResult({
     required this.outputDirectory,
+    this.removeEpochDc = false,
     required this.selectedStates,
     required this.stateLabels,
     required this.channelLabels,
@@ -68,6 +80,7 @@ class MicrostateResult {
   });
 
   final String outputDirectory;
+  final bool removeEpochDc;
   final int selectedStates;
   final List<String> stateLabels;
   final List<String> channelLabels;
@@ -82,6 +95,7 @@ class MicrostateResult {
     Map<String, dynamic> json,
   ) => MicrostateResult(
     outputDirectory: outputDirectory,
+    removeEpochDc: json['remove_epoch_dc'] == true,
     selectedStates: (json['selected_states'] as num).toInt(),
     stateLabels: json['state_labels'] is List
         ? [for (final x in json['state_labels'] as List) x as String]
@@ -143,6 +157,8 @@ class MicrostateRecordingResult {
     required this.sequence,
     required this.stateProbabilities,
     required this.sequenceMetrics,
+    this.syntax = const {},
+    this.sampleCsv = '',
   });
 
   final String filename;
@@ -153,9 +169,13 @@ class MicrostateRecordingResult {
   final List<int> sequence;
   final List<List<double>> stateProbabilities;
   final Map<String, num> sequenceMetrics;
+  final Map<String, dynamic> syntax;
+  final String sampleCsv;
 
   factory MicrostateRecordingResult.fromJson(Map<String, dynamic> json) =>
       MicrostateRecordingResult(
+        syntax: Map<String, dynamic>.from(json['syntax'] as Map? ?? {}),
+        sampleCsv: json['sample_csv'] as String? ?? '',
         filename: json['filename'] as String,
         sampleRate: (json['sample_rate'] as num).toDouble(),
         gevTotal: (json['gev_total'] as num).toDouble(),
@@ -184,8 +204,12 @@ class MicrostateRecordingResult {
 
 class MicrostateService {
   Process? _process;
+  bool _cancelled = false;
 
-  void cancel() => _process?.kill();
+  void cancel() {
+    _cancelled = true;
+    _process?.kill();
+  }
 
   Future<MicrostateResult> run({
     required List<EegRecording> recordings,
@@ -194,25 +218,32 @@ class MicrostateService {
     required MicrostateProgress onProgress,
   }) async {
     if (recordings.isEmpty) throw ArgumentError('No recordings selected.');
+    _cancelled = false;
     final temp = await Directory.systemTemp.createTemp('ccs_microstates_');
     try {
       final inputs = <String>[];
       final names = <String>[];
       for (var i = 0; i < recordings.length; i++) {
-        final recording = recordings[i];
-        final file = File('${temp.path}/input_$i.ccseeg.json');
-        await file.writeAsString(
-          jsonEncode({
-            'format': 'ccseeg-v1',
-            'sample_rate': recording.sampleRate,
-            'labels': recording.labels,
-            'channels': [
-              for (final ch in recording.preview) [for (final x in ch) x],
-            ],
-            if (recording.pointsPerEpoch != null)
-              'source_epoch_samples': recording.pointsPerEpoch,
-          }),
+        onProgress(
+          i / recordings.length * .1,
+          'Loading full-resolution input ${i + 1}/${recordings.length}',
         );
+        final recording = await RecordingLoader().loadFull(recordings[i]);
+        final file = File('${temp.path}/input_$i.ccseeg.json');
+        onProgress(
+          i / recordings.length * .1,
+          'Preparing input ${i + 1}/${recordings.length}: ${names.isEmpty ? recording.path : File(recording.path).uri.pathSegments.last}',
+        );
+        final signal = {
+          'format': 'ccseeg-v1',
+          'sample_rate': recording.sampleRate,
+          'labels': recording.labels,
+          'channels': recording.preview,
+          if (recording.pointsPerEpoch != null)
+            'source_epoch_samples': recording.pointsPerEpoch,
+        };
+        await Isolate.run(() => file.writeAsString(jsonEncode(signal)));
+        if (_cancelled) throw StateError('Analysis cancelled');
         inputs.add(file.path);
         names.add(File(recording.path).uri.pathSegments.last);
       }
@@ -235,15 +266,16 @@ class MicrostateService {
         job.path,
       ]);
       _process = process;
+      if (_cancelled) process.kill();
       final errors = <String>[];
-      process.stderr
+      final stderrDone = process.stderr
           .transform(utf8.decoder)
           .transform(const LineSplitter())
-          .listen((line) {
+          .forEach((line) {
             if (line.startsWith('PROGRESS ')) {
               final parts = line.split(' ');
               onProgress(
-                (double.tryParse(parts[1]) ?? 0) / 100,
+                .1 + .88 * (double.tryParse(parts[1]) ?? 0) / 100,
                 parts.skip(2).join(' '),
               );
             } else if (line.trim().isNotEmpty) {
@@ -252,6 +284,7 @@ class MicrostateService {
           });
       final stdout = await process.stdout.transform(utf8.decoder).join();
       final code = await process.exitCode;
+      await stderrDone;
       _process = null;
       if (code != 0) {
         throw StateError(
@@ -260,10 +293,13 @@ class MicrostateService {
               : errors.join('\n'),
         );
       }
-      return MicrostateResult.fromJson(
-        outputDirectory,
-        jsonDecode(stdout) as Map<String, dynamic>,
+      onProgress(.99, 'Reading microstate and syntax results…');
+      final decoded = await Isolate.run(
+        () => jsonDecode(stdout) as Map<String, dynamic>,
       );
+      final result = MicrostateResult.fromJson(outputDirectory, decoded);
+      onProgress(1, 'Microstate analysis and exports complete');
+      return result;
     } finally {
       _process = null;
       await temp.delete(recursive: true);
@@ -319,6 +355,10 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
   bool get _batch => widget.batchMode;
   bool _running = false;
   double _progress = 0;
+  int _syntaxWordLength = 6;
+  bool _syntaxLegacyWindows = false;
+  bool _removeEpochDc = true;
+  bool _cancelRequested = false;
   String _message = '';
   String? _outputDirectory;
   MicrostateResult? _result;
@@ -417,25 +457,41 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
       _running = true;
       _progress = 0;
       _message = 'Loading recordings…';
+      _cancelRequested = false;
       _outputDirectory = output;
     });
     try {
-      final recordings = _batch
-          ? <EegRecording>[for (final path in paths) await _loader.load(path)]
-          : [_interactiveInput!];
+      final recordings = <EegRecording>[];
+      if (_batch) {
+        for (var i = 0; i < paths.length; i++) {
+          if (_cancelRequested) throw StateError('Analysis cancelled');
+          if (mounted)
+            setState(() {
+              _progress = .12 * i / paths.length;
+              _message = 'Loading ${i + 1}/${paths.length}: ${_name(paths[i])}';
+            });
+          recordings.add(await _loader.load(paths[i]));
+        }
+      } else {
+        recordings.add(_interactiveInput!);
+      }
+      if (_cancelRequested) throw StateError('Analysis cancelled');
       final k = int.tryParse(_states.text)?.clamp(3, 8) ?? 8;
       final result = await _service.run(
         recordings: recordings,
         outputDirectory: output,
         options: MicrostateOptions(
           selectedStates: k,
+          syntaxWordLength: _syntaxWordLength,
+          removeEpochDc: _removeEpochDc,
+          syntaxLegacyWindows: _syntaxLegacyWindows,
           peaksPerRecording: int.tryParse(_peaks.text)?.clamp(20, 5000) ?? 300,
           minSegmentMs: double.tryParse(_segment.text)?.clamp(0, 1000) ?? 30,
         ),
         onProgress: (p, m) {
           if (mounted)
             setState(() {
-              _progress = p;
+              _progress = math.max(_progress, .12 + .88 * p);
               _message = m;
             });
         },
@@ -604,6 +660,41 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
                 ),
               ),
               const SizedBox(height: 8),
+              CheckboxListTile(
+                dense: true,
+                title: const Text('Remove per-epoch channel DC before fitting'),
+                subtitle: const Text(
+                  'Analysis only. Original GFP is retained in sample exports.',
+                ),
+                value: _removeEpochDc,
+                onChanged: _running
+                    ? null
+                    : (v) => setState(() => _removeEpochDc = v!),
+              ),
+              DropdownButtonFormField<int>(
+                initialValue: _syntaxWordLength,
+                decoration: const InputDecoration(
+                  labelText: 'Syntax word length',
+                ),
+                items: [
+                  for (final w in [2, 3, 4, 5, 6, 7])
+                    DropdownMenuItem(value: w, child: Text('$w')),
+                ],
+                onChanged: _running
+                    ? null
+                    : (v) => setState(() => _syntaxWordLength = v!),
+              ),
+              CheckboxListTile(
+                dense: true,
+                title: const Text('Legacy microsynt.py window count'),
+                subtitle: const Text(
+                  'Default includes the final valid word, as in the paper.',
+                ),
+                value: _syntaxLegacyWindows,
+                onChanged: _running
+                    ? null
+                    : (v) => setState(() => _syntaxLegacyWindows = v!),
+              ),
               FilledButton.icon(
                 onPressed:
                     _running ||
@@ -618,7 +709,15 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
               ),
               if (_running) ...[
                 const SizedBox(height: 8),
-                LinearProgressIndicator(value: _progress),
+                ProcessingProgress(
+                  progress: _progress,
+                  message: _message,
+                  stopping: _cancelRequested,
+                  onCancel: () {
+                    setState(() => _cancelRequested = true);
+                    _service.cancel();
+                  },
+                ),
               ],
               if (_message.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -636,7 +735,22 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
       ),
       const VerticalDivider(width: 1),
       Expanded(
-        child: _result == null
+        child: _running
+            ? Center(
+                child: SizedBox(
+                  width: 640,
+                  child: ProcessingProgress(
+                    progress: _progress,
+                    message: _message,
+                    stopping: _cancelRequested,
+                    onCancel: () {
+                      setState(() => _cancelRequested = true);
+                      _service.cancel();
+                    },
+                  ),
+                ),
+              )
+            : _result == null
             ? Center(
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 480),
@@ -661,6 +775,8 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
                       Text(
                         _interactiveInput == null && !_batch
                             ? 'Choose a recording to begin'
+                            : _running
+                            ? 'Microstate analysis in progress'
                             : 'Ready for microstate analysis',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
@@ -731,6 +847,9 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         Text(
+          'Analysis preparation: per-epoch channel DC removal ${result.removeEpochDc ? 'on' : 'off'}. Original and fitting GFP are exported separately.',
+        ),
+        Text(
           'GEV ${(recording.gevTotal * 100).toStringAsFixed(2)}%  ·  normalized LZ ${_n(recording.sequenceMetrics['normalized_lz'])}  ·  MDV ${_n(recording.sequenceMetrics['duration_variance_samples2'])}  ·  entropy production ${_n(recording.sequenceMetrics['entropy_production'])}',
           style: const TextStyle(color: Color(0xFF94A3B8)),
         ),
@@ -742,7 +861,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
           child: DataTable(
             columns: const [
               DataColumn(label: Text('State')),
-              DataColumn(label: Text('GFP')),
+              DataColumn(label: Text('GFP (normalized)')),
               DataColumn(label: Text('Occurrence/s')),
               DataColumn(label: Text('Duration ms')),
               DataColumn(label: Text('Coverage')),
@@ -766,6 +885,104 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
           ),
         ),
         const SizedBox(height: 14),
+        if ((recording.syntax['windows'] as num? ?? 0) == 0 &&
+            recording.syntax.isNotEmpty)
+          const Text(
+            'No complete syntax words at this length. Review the sequence and try a shorter word length; epochs are not joined.',
+          ),
+        if (recording.syntax['dictionary_discovery'] is List)
+          ExpansionTile(
+            title: const Text(
+              'Syntax dictionary discovery (word lengths 1–10)',
+            ),
+            subtitle: const Text(
+              'Observed versus three seeded uniform no-repeat random sequences. Review across subjects; no automatic optimum or significance claim.',
+            ),
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    for (final label in [
+                      'Length',
+                      'Theoretical',
+                      'Observed',
+                      'Random mean',
+                      'Random min',
+                      'Random max',
+                    ])
+                      DataColumn(label: Text(label)),
+                  ],
+                  rows: [
+                    for (final row
+                        in recording.syntax['dictionary_discovery'] as List)
+                      DataRow(
+                        cells: [
+                          for (final key in [
+                            'word_length',
+                            'theoretical_words',
+                            'observed_words',
+                            'random_words_mean',
+                            'random_words_min',
+                            'random_words_max',
+                          ])
+                            DataCell(Text('${row[key]}')),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        if (recording.syntax.isNotEmpty) ...[
+          for (final warning in recording.syntax['warnings'] as List? ?? [])
+            Text('$warning', style: const TextStyle(color: Colors.orange)),
+          Text(
+            'Microstate syntax · ${recording.syntax['word_length']}-symbol words · ${recording.syntax['windows']} within-epoch windows',
+          ),
+          const Text(
+            'No-permanence sequences; TER = theoretical, EER = empirical, MER = first-order Markov. Ratios are descriptive, not significance tests.',
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                for (final name in [
+                  'Entropy bits',
+                  'TER',
+                  'EER',
+                  'MER',
+                  'EER/TER',
+                  'EER/MER',
+                ])
+                  DataColumn(label: Text(name)),
+              ],
+              rows: [
+                for (final row in recording.syntax['classes'] as List? ?? [])
+                  DataRow(
+                    cells: [
+                      for (final key in [
+                        'entropy_bits',
+                        'theoretical',
+                        'empirical',
+                        'markov',
+                        'ratio_theoretical',
+                        'ratio_markov',
+                      ])
+                        DataCell(
+                          Text(
+                            row[key] == null
+                                ? '—'
+                                : (row[key] as num).toStringAsFixed(4),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          Text('Sample labels, GFP and fit: ${recording.sampleCsv}'),
+        ],
         Text(
           'Transition probability matrix',
           style: Theme.of(context).textTheme.titleMedium,
@@ -779,7 +996,7 @@ class _MicrostateAnalysisViewState extends State<MicrostateAnalysisView> {
         ),
         const SizedBox(height: 12),
         Text(
-          'Exports: microstates.json, MicrostateAnalysisResults.csv, MicrostateSequenceMetrics.csv, MicrostateTransitions.csv, template topographies SVG, and per-recording sequence SVG in ${result.outputDirectory}',
+          'Exports: MicrostateDictionaryDiscovery.csv, MicrostateSyntax.csv, per-recording samples.csv (labels/GFP/fit), microstates.json, MicrostateAnalysisResults.csv, MicrostateSequenceMetrics.csv, MicrostateTransitions.csv, template topographies SVG, and per-recording sequence SVG in ${result.outputDirectory}',
           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
         ),
       ],
